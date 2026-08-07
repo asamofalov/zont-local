@@ -1,0 +1,71 @@
+{
+  "title": "ZONT WebSocket",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Подключение к ZONT",
+        "description": "Укажите локальный WebSocket-адрес и учётные данные контроллера.",
+        "data": {
+          "url": "WebSocket URL",
+          "username": "Имя пользователя",
+          "password": "Пароль"
+        }
+      },
+      "reconfigure": {
+        "title": "Изменение адреса контроллера",
+        "description": "Укажите новый локальный WebSocket-адрес.",
+        "data": {
+          "url": "WebSocket URL"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Повторная авторизация ZONT",
+        "description": "Контроллер отклонил сохранённые учётные данные. Укажите актуальные данные.",
+        "data": {
+          "username": "Имя пользователя",
+          "password": "Пароль"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Не удалось подключиться к контроллеру",
+      "invalid_auth": "Неверное имя пользователя или пароль",
+      "invalid_url": "Укажите корректный адрес ws:// или wss://",
+      "unknown": "Непредвиденная ошибка"
+    },
+    "abort": {
+      "reauth_successful": "Повторная авторизация выполнена",
+      "reconfigure_successful": "Адрес контроллера обновлён"
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "connected": {
+        "name": "Подключение"
+      }
+    }
+  },
+  "exceptions": {
+    "cannot_connect": {
+      "message": "Не удалось подключиться к контроллеру ZONT"
+    },
+    "invalid_auth": {
+      "message": "Контроллер ZONT отклонил учётные данные"
+    },
+    "entry_not_configured": {
+      "message": "Интеграция ZONT WebSocket не настроена"
+    },
+    "entry_not_loaded": {
+      "message": "Конфигурация ZONT WebSocket не загружена"
+    },
+    "controller_offline": {
+      "message": "Контроллер ZONT не подключён"
+    },
+    "command_timeout": {
+      "message": "Контроллер ZONT не ответил на команду {id}"
+    },
+    "protocol_error": {
+      "message": "Контроллер ZONT вернул некорректный ответ"
+    }
+  }
+}

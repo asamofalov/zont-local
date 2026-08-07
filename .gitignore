@@ -1,0 +1,11 @@
+.DS_Store
+.idea/
+.pytest_cache/
+.ruff_cache/
+.venv/
+.devcontainer/config/*
+!.devcontainer/config/configuration.yaml
+__pycache__/
+*.py[cod]
+coverage.xml
+htmlcov/

@@ -1,9 +1,0 @@
-{
-  "domain": "zont_ws",
-  "name": "ZONT WS Client",
-  "version": "0.1.0",
-  "requirements": [],
-  "codeowners": [],
-  "config_flow": true,
-  "iot_class": "local_push"
-}

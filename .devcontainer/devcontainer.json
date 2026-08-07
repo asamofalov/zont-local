@@ -1,0 +1,43 @@
+{
+  "name": "ZONT WebSocket for Home Assistant",
+  "image": "mcr.microsoft.com/devcontainers/python:3.14-bookworm",
+  "remoteUser": "vscode",
+  "postCreateCommand": {
+    "dependencies": "python -m pip install --user -r requirements_test.txt",
+    "integration": "mkdir -p .devcontainer/config/custom_components && ln -sfn ${containerWorkspaceFolder}/custom_components/zont_ws .devcontainer/config/custom_components/zont_ws"
+  },
+  "forwardPorts": [8123],
+  "portsAttributes": {
+    "8123": {
+      "label": "Home Assistant",
+      "onAutoForward": "notify"
+    }
+  },
+  "containerEnv": {
+    "PYTHONASYNCIODEBUG": "1"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "charliermarsh.ruff",
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "keesschollaart.vscode-home-assistant",
+        "redhat.vscode-yaml"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "python.testing.pytestEnabled": true,
+        "python.testing.pytestArgs": ["tests"],
+        "[python]": {
+          "editor.defaultFormatter": "charliermarsh.ruff",
+          "editor.formatOnSave": true,
+          "editor.codeActionsOnSave": {
+            "source.fixAll.ruff": "explicit",
+            "source.organizeImports.ruff": "explicit"
+          }
+        }
+      }
+    }
+  }
+}
