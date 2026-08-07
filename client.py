@@ -10,6 +10,8 @@ from typing import Any
 from aiohttp import ClientSession, WSMsgType
 from homeassistant.core import HomeAssistant
 
+from .const import EVENT_CONNECTION
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -38,14 +40,27 @@ class ZontWsClient:
         self._pending: dict[int, deque[asyncio.Future]] = defaultdict(deque)
 
         self._connected = asyncio.Event()
+        self._is_connected: bool = False
 
     async def start(self) -> None:
         if self._runner_task is None:
             self._runner_task = asyncio.create_task(self._runner())
 
+    @property
+    def is_connected(self) -> bool:
+        return self._is_connected
+
+    def _set_connected(self, value: bool) -> None:
+        """Update connection state and notify HA."""
+        if self._is_connected == value:
+            return
+        self._is_connected = value
+        self._hass.bus.async_fire(EVENT_CONNECTION, {"connected": value})
+
     async def stop(self) -> None:
         self._stop.set()
         self._connected.clear()
+        self._set_connected(False)
 
         if self._runner_task:
             self._runner_task.cancel()
@@ -67,10 +82,12 @@ class ZontWsClient:
             try:
                 await self._ensure_connected()
                 self._connected.set()
+                self._set_connected(True)
                 backoff = 1
                 await asyncio.sleep(60)
             except Exception as e:
                 self._connected.clear()
+                self._set_connected(False)
                 _LOGGER.warning("WS disconnected: %s. Reconnecting in %ss", e, backoff)
                 await self._close_ws()
                 await asyncio.sleep(backoff)
@@ -140,6 +157,7 @@ class ZontWsClient:
             raise
         except Exception as e:
             self._connected.clear()
+            self._set_connected(False)
             _LOGGER.warning("Reader stopped: %s", e)
             await self._close_ws()
 
