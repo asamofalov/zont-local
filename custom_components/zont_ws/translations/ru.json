@@ -72,6 +72,32 @@
       },
       "supply_voltage": {
         "name": "Напряжение питания"
+      },
+      "digital_bus_flow_temperature": {
+        "name": "Температура теплоносителя"
+      },
+      "digital_bus_dhw_temperature": {
+        "name": "Температура ГВС"
+      },
+      "digital_bus_return_temperature": {
+        "name": "Температура обратки"
+      },
+      "digital_bus_modulation": {
+        "name": "Модуляция"
+      },
+      "digital_bus_pressure": {
+        "name": "Давление теплоносителя"
+      },
+      "digital_bus_state": {
+        "name": "Состояние",
+        "state": {
+          "off": "Выключен",
+          "running": "Работает",
+          "error": "Ошибка"
+        }
+      },
+      "digital_bus_error_code": {
+        "name": "Код ошибки"
       }
     }
   },

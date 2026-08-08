@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from custom_components.zont_ws import (
+    _async_sync_object_devices,
     async_migrate_entry,
     async_setup_entry,
     async_unload_entry,
@@ -25,8 +26,15 @@ from custom_components.zont_ws.const import (
 )
 from custom_components.zont_ws.controller import ZontControllerInfo
 from custom_components.zont_ws.coordinator import (
+    ZontControllerData,
+    ZontData,
     ZontDataUpdateCoordinator,
     ZontRuntimeData,
+)
+from custom_components.zont_ws.objects import (
+    ZontDigitalBusAdapterData,
+    ZontDigitalBusState,
+    immutable_objects,
 )
 from homeassistant.config_entries import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_URL, CONF_USERNAME
@@ -112,6 +120,7 @@ async def test_setup_stores_runtime_data(hass: HomeAssistant) -> None:
     assert device.sw_version == "625"
     assert device.serial_number == SERIAL_NUMBER
     assert device.configuration_url == "http://192.0.2.10"
+    await entry.runtime_data.coordinator.async_shutdown()
 
 
 async def test_new_entities_use_device_prefix_and_stable_suffixes(
@@ -159,6 +168,127 @@ async def test_new_entities_use_device_prefix_and_stable_suffixes(
     }
     for (platform, unique_id), entity_id in expected_ids.items():
         assert registry.async_get_entity_id(platform, DOMAIN, unique_id) == entity_id
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_digital_bus_adapter_is_registered_as_child_device(
+    hass: HomeAssistant,
+) -> None:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=SERIAL_NUMBER,
+        data=ENTRY_DATA,
+    )
+    entry.add_to_hass(hass)
+    registry = dr.async_get(hass)
+    controller = registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, SERIAL_NUMBER)},
+        name="ZONT H1V02 PRO",
+    )
+    coordinator = MagicMock(spec=ZontDataUpdateCoordinator)
+    coordinator.data = ZontData(
+        controller=ZontControllerData(info=CONTROLLER_INFO),
+        objects=immutable_objects({4097: ZontDigitalBusAdapterData(4097, 6, "Navien")}),
+    )
+    entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontWsClient), coordinator)
+
+    _async_sync_object_devices(hass, entry, controller.id)
+
+    adapter = registry.async_get_device(
+        identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:4097")}
+    )
+    assert adapter is not None
+    assert adapter.name == "Navien"
+    assert adapter.manufacturer == "ZONT"
+    assert adapter.model == "Адаптер цифровой шины"
+    assert adapter.via_device_id == controller.id
+
+    registry.async_update_device(adapter.id, name_by_user="Мой котёл")
+    coordinator.data = ZontData(
+        controller=ZontControllerData(info=CONTROLLER_INFO),
+        objects=immutable_objects(
+            {4097: ZontDigitalBusAdapterData(4097, 6, "Новый Navien")}
+        ),
+    )
+    _async_sync_object_devices(hass, entry, controller.id)
+
+    adapter = registry.async_get(adapter.id)
+    assert adapter is not None
+    assert adapter.name == "Новый Navien"
+    assert adapter.name_by_user == "Мой котёл"
+
+
+async def test_discovered_adapter_creates_prefixed_entities(
+    hass: HomeAssistant,
+) -> None:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=CONFIG_ENTRY_VERSION,
+        unique_id=SERIAL_NUMBER,
+        data={
+            **ENTRY_DATA,
+            CONF_CONTROLLER: CONTROLLER_INFO.as_dict(),
+            CONF_AUTO_TITLE: "ZONT H1V02 PRO (192.0.2.10)",
+        },
+    )
+    entry.add_to_hass(hass)
+
+    def start_with_adapter(coordinator: ZontDataUpdateCoordinator) -> None:
+        coordinator.data = ZontData(
+            controller=ZontControllerData(info=CONTROLLER_INFO),
+            objects=immutable_objects(
+                {
+                    4097: ZontDigitalBusAdapterData(
+                        object_id=4097,
+                        object_type=6,
+                        name="Navien",
+                        flow_temperature=35,
+                        state=ZontDigitalBusState.OFF,
+                        error_code=0,
+                    )
+                }
+            ),
+        )
+        coordinator.async_update_listeners()
+
+    with (
+        patch.object(ZontWsClient, "async_start", new=AsyncMock()),
+        patch.object(
+            ZontDataUpdateCoordinator,
+            "async_start",
+            new=start_with_adapter,
+        ),
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    registry = er.async_get(hass)
+    assert (
+        registry.async_get_entity_id(
+            "sensor",
+            DOMAIN,
+            f"{SERIAL_NUMBER}_4097_flow_temperature",
+        )
+        == "sensor.navien_flow_temperature"
+    )
+    assert (
+        registry.async_get_entity_id(
+            "sensor",
+            DOMAIN,
+            f"{SERIAL_NUMBER}_4097_state",
+        )
+        == "sensor.navien_state"
+    )
+    assert (
+        registry.async_get_entity_id(
+            "sensor",
+            DOMAIN,
+            f"{SERIAL_NUMBER}_4097_error_code",
+        )
+        == "sensor.navien_error_code"
+    )
 
     assert await hass.config_entries.async_unload(entry.entry_id)
 

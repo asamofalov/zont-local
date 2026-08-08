@@ -2,18 +2,30 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
+
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
+    SensorEntityDescription,
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EntityCategory, UnitOfElectricPotential
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.const import (
+    PERCENTAGE,
+    EntityCategory,
+    UnitOfElectricPotential,
+    UnitOfPressure,
+    UnitOfTemperature,
+)
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .coordinator import ZontRuntimeData
-from .entity import ZontCoordinatorEntity
+from .entity import ZontCoordinatorEntity, ZontObjectCoordinatorEntity
+from .objects import ZontDigitalBusAdapterData, ZontDigitalBusState
 
 CONNECTION_CHANNEL_STATES = (
     "none",
@@ -26,11 +38,81 @@ CONNECTION_CHANNEL_STATES = (
     "gsm_wifi_ethernet",
 )
 
+DIGITAL_BUS_STATES = tuple(state.value for state in ZontDigitalBusState)
+
+
+@dataclass(frozen=True, kw_only=True)
+class ZontDigitalBusSensorEntityDescription(SensorEntityDescription):
+    """Describe one readable digital bus adapter field."""
+
+    value_fn: Callable[[ZontDigitalBusAdapterData], Any]
+
+
+DIGITAL_BUS_SENSOR_DESCRIPTIONS = (
+    ZontDigitalBusSensorEntityDescription(
+        key="flow_temperature",
+        translation_key="digital_bus_flow_temperature",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+        value_fn=lambda adapter: adapter.flow_temperature,
+    ),
+    ZontDigitalBusSensorEntityDescription(
+        key="dhw_temperature",
+        translation_key="digital_bus_dhw_temperature",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+        value_fn=lambda adapter: adapter.dhw_temperature,
+    ),
+    ZontDigitalBusSensorEntityDescription(
+        key="return_temperature",
+        translation_key="digital_bus_return_temperature",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+        value_fn=lambda adapter: adapter.return_temperature,
+    ),
+    ZontDigitalBusSensorEntityDescription(
+        key="modulation",
+        translation_key="digital_bus_modulation",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+        value_fn=lambda adapter: adapter.modulation,
+    ),
+    ZontDigitalBusSensorEntityDescription(
+        key="pressure",
+        translation_key="digital_bus_pressure",
+        device_class=SensorDeviceClass.PRESSURE,
+        native_unit_of_measurement=UnitOfPressure.BAR,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+        value_fn=lambda adapter: adapter.pressure,
+    ),
+    ZontDigitalBusSensorEntityDescription(
+        key="state",
+        translation_key="digital_bus_state",
+        device_class=SensorDeviceClass.ENUM,
+        options=list(DIGITAL_BUS_STATES),
+        value_fn=lambda adapter: adapter.state,
+    ),
+    ZontDigitalBusSensorEntityDescription(
+        key="error_code",
+        translation_key="digital_bus_error_code",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda adapter: adapter.error_code,
+    ),
+)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry[ZontRuntimeData],
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up ZONT sensors."""
     async_add_entities(
@@ -39,6 +121,31 @@ async def async_setup_entry(
             ZontSupplyVoltageSensor(entry),
         ]
     )
+
+    known_entities: set[tuple[int, str]] = set()
+
+    @callback
+    def async_add_adapter_entities() -> None:
+        """Add entities for newly discovered adapter fields."""
+        new_entities: list[ZontDigitalBusSensor] = []
+        for obj in entry.runtime_data.coordinator.data.objects.values():
+            if not isinstance(obj, ZontDigitalBusAdapterData) or not obj.available:
+                continue
+            for description in DIGITAL_BUS_SENSOR_DESCRIPTIONS:
+                identity = (obj.object_id, description.key)
+                if identity in known_entities or description.value_fn(obj) is None:
+                    continue
+                known_entities.add(identity)
+                new_entities.append(
+                    ZontDigitalBusSensor(entry, obj.object_id, description)
+                )
+        if new_entities:
+            async_add_entities(new_entities)
+
+    entry.async_on_unload(
+        entry.runtime_data.coordinator.async_add_listener(async_add_adapter_entities)
+    )
+    async_add_adapter_entities()
 
 
 class ZontConnectionChannelSensor(ZontCoordinatorEntity, SensorEntity):
@@ -88,3 +195,30 @@ class ZontSupplyVoltageSensor(ZontCoordinatorEntity, SensorEntity):
     def native_value(self) -> float | None:
         """Return the current supply voltage in volts."""
         return self.controller_data.supply_voltage
+
+
+class ZontDigitalBusSensor(ZontObjectCoordinatorEntity, SensorEntity):
+    """Represent one value reported by a digital bus adapter."""
+
+    entity_description: ZontDigitalBusSensorEntityDescription
+
+    def __init__(
+        self,
+        entry: ConfigEntry[ZontRuntimeData],
+        object_id: int,
+        description: ZontDigitalBusSensorEntityDescription,
+    ) -> None:
+        """Initialize a digital bus adapter sensor."""
+        self.entity_description = description
+        super().__init__(entry, object_id, description.key, description.key)
+
+    @property
+    def available(self) -> bool:
+        """Return whether this specific field is currently reported."""
+        return super().available and self.native_value is not None
+
+    @property
+    def native_value(self) -> Any:
+        """Return the current value of the described adapter field."""
+        obj = self.object_data
+        return self.entity_description.value_fn(obj) if obj is not None else None

@@ -12,6 +12,10 @@ from .coordinator import (
     ZontDataUpdateCoordinator,
     ZontRuntimeData,
 )
+from .objects import (
+    ZontDigitalBusAdapterData,
+    object_device_identifier,
+)
 
 
 class ZontEntityMixin:
@@ -56,3 +60,49 @@ class ZontCoordinatorEntity(
     def controller_data(self) -> ZontControllerData:
         """Return the current controller part of the shared snapshot."""
         return self.coordinator.data.controller
+
+
+class ZontObjectCoordinatorEntity(CoordinatorEntity[ZontDataUpdateCoordinator]):
+    """Base for coordinator entities linked to one child object device."""
+
+    _attr_has_entity_name = True
+
+    def __init__(
+        self,
+        entry: ConfigEntry[ZontRuntimeData],
+        object_id: int,
+        unique_id_suffix: str,
+        suggested_object_id: str,
+    ) -> None:
+        """Initialize an entity linked to a discovered controller object."""
+        super().__init__(entry.runtime_data.coordinator)
+        controller_identifier = entry.unique_id or entry.entry_id
+        self._object_id = object_id
+        self._attr_unique_id = f"{controller_identifier}_{object_id}_{unique_id_suffix}"
+        self._attr_device_info = DeviceInfo(
+            identifiers={
+                (
+                    DOMAIN,
+                    object_device_identifier(controller_identifier, object_id),
+                )
+            },
+            via_device=(DOMAIN, controller_identifier),
+        )
+        self._zont_object_id_suffix = suggested_object_id
+
+    @property
+    def suggested_object_id(self) -> str:
+        """Return the field suffix used in a new Home Assistant entity ID."""
+        return self._zont_object_id_suffix
+
+    @property
+    def object_data(self) -> ZontDigitalBusAdapterData | None:
+        """Return the current object snapshot when it is supported."""
+        obj = self.coordinator.data.objects.get(self._object_id)
+        return obj if isinstance(obj, ZontDigitalBusAdapterData) else None
+
+    @property
+    def available(self) -> bool:
+        """Return whether the coordinator and this object are available."""
+        obj = self.object_data
+        return super().available and obj is not None and obj.available

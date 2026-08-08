@@ -35,6 +35,7 @@ from .controller import (
     controller_websocket_url,
 )
 from .coordinator import ZontDataUpdateCoordinator, ZontRuntimeData
+from .objects import ZontDigitalBusAdapterData, object_device_identifier
 from .services import async_setup_services
 
 type ZontConfigEntry = ConfigEntry[ZontRuntimeData]
@@ -115,15 +116,54 @@ async def async_setup_entry(hass: HomeAssistant, entry: ZontConfigEntry) -> bool
         ),
     )
     entry.runtime_data = ZontRuntimeData(client=client, coordinator=coordinator)
+    entry.async_on_unload(
+        coordinator.async_add_listener(
+            lambda: _async_sync_object_devices(
+                hass,
+                entry,
+                device.id,
+            )
+        )
+    )
     try:
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     except BaseException:
-        await client.async_stop()
+        try:
+            await coordinator.async_shutdown()
+        finally:
+            await client.async_stop()
         raise
 
     coordinator.async_start()
 
     return True
+
+
+@callback
+def _async_sync_object_devices(
+    hass: HomeAssistant,
+    entry: ZontConfigEntry,
+    controller_device_id: str,
+) -> None:
+    """Create or update devices represented by discovered ZONT objects."""
+    controller_identifier = entry.unique_id or entry.entry_id
+    device_registry = dr.async_get(hass)
+    for obj in entry.runtime_data.coordinator.data.objects.values():
+        if not isinstance(obj, ZontDigitalBusAdapterData):
+            continue
+        device_registry.async_get_or_create(
+            config_entry_id=entry.entry_id,
+            identifiers={
+                (
+                    DOMAIN,
+                    object_device_identifier(controller_identifier, obj.object_id),
+                )
+            },
+            name=obj.name,
+            manufacturer="ZONT",
+            model="Адаптер цифровой шины",
+            via_device_id=controller_device_id,
+        )
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ZontConfigEntry) -> bool:
