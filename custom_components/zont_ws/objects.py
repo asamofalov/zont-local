@@ -9,7 +9,12 @@ from math import isfinite
 from types import MappingProxyType
 from typing import Any
 
+OBJECT_TYPE_DIGITAL_TEMPERATURE_SENSOR = 1
 OBJECT_TYPE_DIGITAL_BUS_ADAPTER = 6
+SUPPORTED_OBJECT_TYPES = (
+    OBJECT_TYPE_DIGITAL_TEMPERATURE_SENSOR,
+    OBJECT_TYPE_DIGITAL_BUS_ADAPTER,
+)
 
 
 class ZontObjectParseError(ValueError):
@@ -47,7 +52,14 @@ class ZontDigitalBusAdapterData(ZontObjectData):
     error_code: int | None = None
 
 
-type ZontObject = ZontDigitalBusAdapterData
+@dataclass(frozen=True, slots=True)
+class ZontDigitalTemperatureSensorData(ZontObjectData):
+    """Read-only state of a digital temperature sensor."""
+
+    temperature: float | None = None
+
+
+type ZontObject = ZontDigitalBusAdapterData | ZontDigitalTemperatureSensorData
 
 
 def object_device_identifier(controller_identifier: str, object_id: int) -> str:
@@ -102,6 +114,82 @@ def parse_digital_bus_adapter(
     )
 
 
+def parse_digital_temperature_sensor(
+    payload: Mapping[str, Any],
+    previous: ZontDigitalTemperatureSensorData | None = None,
+    *,
+    partial: bool = False,
+) -> ZontDigitalTemperatureSensorData:
+    """Parse a full or partial digital temperature sensor payload."""
+    object_id = _identity_int(payload, "id", previous.object_id if previous else None)
+    object_type = _identity_int(
+        payload,
+        "type",
+        previous.object_type if previous else None,
+    )
+    if object_type != OBJECT_TYPE_DIGITAL_TEMPERATURE_SENSOR:
+        raise ZontObjectParseError("Object is not a digital temperature sensor")
+
+    name = payload.get("name", previous.name if previous else None)
+    if not isinstance(name, str) or not name.strip():
+        raise ZontObjectParseError("Object name is missing")
+
+    temperature = _optional_number(
+        payload,
+        "t",
+        previous.temperature if previous is not None else None,
+        partial,
+    )
+    available = _temperature_sensor_available(
+        payload,
+        previous,
+        partial,
+        temperature,
+    )
+    if not available and temperature is None and previous is not None:
+        temperature = previous.temperature
+
+    return ZontDigitalTemperatureSensorData(
+        object_id=object_id,
+        object_type=object_type,
+        name=name.strip(),
+        available=available,
+        temperature=temperature,
+    )
+
+
+def parse_zont_object(
+    payload: Mapping[str, Any],
+    previous: ZontObject | None = None,
+    *,
+    partial: bool = False,
+) -> ZontObject:
+    """Dispatch one object payload to its supported typed parser."""
+    object_type = payload.get("type")
+    if object_type is None and previous is not None:
+        object_type = previous.object_type
+
+    if object_type == OBJECT_TYPE_DIGITAL_TEMPERATURE_SENSOR:
+        previous_sensor = (
+            previous if isinstance(previous, ZontDigitalTemperatureSensorData) else None
+        )
+        return parse_digital_temperature_sensor(
+            payload,
+            previous_sensor,
+            partial=partial,
+        )
+    if object_type == OBJECT_TYPE_DIGITAL_BUS_ADAPTER:
+        previous_adapter = (
+            previous if isinstance(previous, ZontDigitalBusAdapterData) else None
+        )
+        return parse_digital_bus_adapter(
+            payload,
+            previous_adapter,
+            partial=partial,
+        )
+    raise ZontObjectParseError("Object type is not supported")
+
+
 def _identity_int(payload: Mapping[str, Any], key: str, previous: int | None) -> int:
     """Read one required non-negative integer identity field."""
     value = payload.get(key, previous)
@@ -117,10 +205,19 @@ def _number_field(
     partial: bool,
 ) -> float | None:
     """Read an optional numeric field, preserving it for partial updates."""
+    previous_value = _previous_field(previous, key) if previous is not None else None
+    return _optional_number(payload, key, previous_value, partial)
+
+
+def _optional_number(
+    payload: Mapping[str, Any],
+    key: str,
+    previous: float | None,
+    partial: bool,
+) -> float | None:
+    """Read one finite optional number and preserve it for partial updates."""
     if key not in payload:
-        if partial and previous is not None:
-            return _previous_field(previous, key)
-        return None
+        return previous if partial else None
     value = payload[key]
     if (
         isinstance(value, int | float)
@@ -129,6 +226,21 @@ def _number_field(
     ):
         return float(value)
     return None
+
+
+def _temperature_sensor_available(
+    payload: Mapping[str, Any],
+    previous: ZontDigitalTemperatureSensorData | None,
+    partial: bool,
+    temperature: float | None,
+) -> bool:
+    """Resolve documented sensor availability with a tolerant fallback."""
+    if "a" not in payload:
+        if partial and previous is not None:
+            return previous.available
+        return temperature is not None
+    available = payload["a"]
+    return type(available) is int and available == 1
 
 
 def _integer_field(

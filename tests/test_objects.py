@@ -5,11 +5,15 @@ from __future__ import annotations
 import pytest
 from custom_components.zont_ws.objects import (
     OBJECT_TYPE_DIGITAL_BUS_ADAPTER,
+    OBJECT_TYPE_DIGITAL_TEMPERATURE_SENSOR,
     ZontDigitalBusAdapterData,
     ZontDigitalBusState,
+    ZontDigitalTemperatureSensorData,
     ZontObjectParseError,
     immutable_objects,
     parse_digital_bus_adapter,
+    parse_digital_temperature_sensor,
+    parse_zont_object,
     unavailable_object,
 )
 
@@ -108,3 +112,118 @@ def test_object_registry_and_unavailable_copy_are_immutable() -> None:
     assert not unavailable_object(adapter).available
     with pytest.raises(TypeError):
         objects[4098] = adapter  # type: ignore[index]
+
+
+def test_parse_complete_digital_temperature_sensor() -> None:
+    sensor = parse_digital_temperature_sensor(
+        {
+            "id": 8196,
+            "type": OBJECT_TYPE_DIGITAL_TEMPERATURE_SENSOR,
+            "name": "Погода из интернета",
+            "t": 19.7,
+            "a": 1,
+            "trig": 0,
+        }
+    )
+
+    assert sensor == ZontDigitalTemperatureSensorData(
+        object_id=8196,
+        object_type=1,
+        name="Погода из интернета",
+        available=True,
+        temperature=19.7,
+    )
+
+
+@pytest.mark.parametrize(
+    ("payload", "available", "temperature"),
+    [
+        ({"t": 19.7, "a": 1}, True, 19.7),
+        ({"t": 19.7, "a": 0}, False, 19.7),
+        ({"t": 19.7}, True, 19.7),
+        ({"a": 1}, True, None),
+        ({"t": True, "a": 1}, True, None),
+        ({"t": float("nan"), "a": 1}, True, None),
+        ({"t": 19.7, "a": "1"}, False, 19.7),
+    ],
+)
+def test_temperature_sensor_value_and_availability(
+    payload: dict[str, object],
+    available: bool,
+    temperature: float | None,
+) -> None:
+    sensor = parse_digital_temperature_sensor(
+        {
+            "id": 8196,
+            "type": 1,
+            "name": "Погода из интернета",
+            **payload,
+        }
+    )
+
+    assert sensor.available is available
+    assert sensor.temperature == temperature
+
+
+def test_partial_temperature_update_preserves_availability() -> None:
+    previous = ZontDigitalTemperatureSensorData(
+        object_id=8196,
+        object_type=1,
+        name="Погода из интернета",
+        available=False,
+        temperature=19.7,
+    )
+
+    sensor = parse_digital_temperature_sensor(
+        {"id": 8196, "t": 20.1},
+        previous,
+        partial=True,
+    )
+
+    assert not sensor.available
+    assert sensor.temperature == 20.1
+
+
+def test_unavailable_full_update_preserves_last_temperature() -> None:
+    previous = ZontDigitalTemperatureSensorData(
+        object_id=8196,
+        object_type=1,
+        name="Погода из интернета",
+        temperature=19.7,
+    )
+
+    sensor = parse_digital_temperature_sensor(
+        {
+            "id": 8196,
+            "type": 1,
+            "name": "Погода из интернета",
+            "a": 0,
+        },
+        previous,
+    )
+
+    assert not sensor.available
+    assert sensor.temperature == 19.7
+
+
+def test_generic_parser_dispatches_using_previous_object_type() -> None:
+    previous = ZontDigitalTemperatureSensorData(
+        object_id=8196,
+        object_type=1,
+        name="Погода из интернета",
+        temperature=19.7,
+    )
+
+    sensor = parse_zont_object(
+        {"id": 8196, "t": 20.1},
+        previous,
+        partial=True,
+    )
+
+    assert isinstance(sensor, ZontDigitalTemperatureSensorData)
+    assert sensor.temperature == 20.1
+
+
+def test_generic_parser_rejects_unknown_object_type() -> None:
+    with pytest.raises(ZontObjectParseError):
+        parse_zont_object({"id": 1, "type": 8, "name": "Радиодатчик"})

@@ -13,7 +13,7 @@ from .coordinator import (
     ZontRuntimeData,
 )
 from .objects import (
-    ZontDigitalBusAdapterData,
+    ZontObject,
     object_device_identifier,
 )
 
@@ -96,10 +96,9 @@ class ZontObjectCoordinatorEntity(CoordinatorEntity[ZontDataUpdateCoordinator]):
         return self._zont_object_id_suffix
 
     @property
-    def object_data(self) -> ZontDigitalBusAdapterData | None:
+    def object_data(self) -> ZontObject | None:
         """Return the current object snapshot when it is supported."""
-        obj = self.coordinator.data.objects.get(self._object_id)
-        return obj if isinstance(obj, ZontDigitalBusAdapterData) else None
+        return self.coordinator.data.objects.get(self._object_id)
 
     @property
     def available(self) -> bool:

@@ -19,6 +19,8 @@ from custom_components.zont_ws.coordinator import (
 from custom_components.zont_ws.objects import (
     ZontDigitalBusAdapterData,
     ZontDigitalBusState,
+    ZontDigitalTemperatureSensorData,
+    ZontObject,
     immutable_objects,
 )
 from custom_components.zont_ws.sensor import (
@@ -26,6 +28,7 @@ from custom_components.zont_ws.sensor import (
     DIGITAL_BUS_SENSOR_DESCRIPTIONS,
     ZontConnectionChannelSensor,
     ZontDigitalBusSensor,
+    ZontDigitalTemperatureSensor,
     ZontSupplyVoltageSensor,
     async_setup_entry,
 )
@@ -36,7 +39,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 def _entry(
     controller: ZontControllerData,
-    objects: dict[int, ZontDigitalBusAdapterData] | None = None,
+    objects: dict[int, ZontObject] | None = None,
 ) -> MockConfigEntry:
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -238,3 +241,80 @@ async def test_setup_adds_new_fields_without_duplicates(hass) -> None:
 
     listener()
     assert async_add_entities.call_count == 3
+
+
+def test_digital_temperature_sensor_uses_native_measurement() -> None:
+    sensor_data = ZontDigitalTemperatureSensorData(
+        object_id=8196,
+        object_type=1,
+        name="Погода из интернета",
+        temperature=19.7,
+    )
+    entry = _entry(ZontControllerData(info=None), {8196: sensor_data})
+
+    entity = ZontDigitalTemperatureSensor(entry, 8196)
+
+    assert entity.available
+    assert entity.native_value == 19.7
+    assert entity.device_class is SensorDeviceClass.TEMPERATURE
+    assert entity.native_unit_of_measurement == "°C"
+    assert entity.state_class is SensorStateClass.MEASUREMENT
+    assert entity.suggested_display_precision == 1
+    assert entity.unique_id == "ABCDEF123456_8196_temperature"
+    assert entity.suggested_object_id == "temperature"
+    assert entity.device_info["identifiers"] == {(DOMAIN, "ABCDEF123456:object:8196")}
+
+
+def test_digital_temperature_sensor_tracks_availability() -> None:
+    sensor_data = ZontDigitalTemperatureSensorData(
+        object_id=8196,
+        object_type=1,
+        name="Погода из интернета",
+        available=False,
+        temperature=19.7,
+    )
+    entry = _entry(ZontControllerData(info=None), {8196: sensor_data})
+    entity = ZontDigitalTemperatureSensor(entry, 8196)
+
+    assert not entity.available
+    assert entity.native_value == 19.7
+
+    entry.runtime_data.coordinator.data = ZontData(
+        controller=ZontControllerData(info=None),
+        objects=immutable_objects(
+            {
+                8196: ZontDigitalTemperatureSensorData(
+                    8196,
+                    1,
+                    "Погода из интернета",
+                    temperature=None,
+                )
+            }
+        ),
+    )
+    assert not entity.available
+
+
+async def test_setup_adds_unavailable_temperature_sensor_without_duplicates(
+    hass,
+) -> None:
+    sensor_data = ZontDigitalTemperatureSensorData(
+        object_id=8196,
+        object_type=1,
+        name="Погода из интернета",
+        available=False,
+    )
+    entry = _entry(ZontControllerData(info=None), {8196: sensor_data})
+    entry.add_to_hass(hass)
+    async_add_entities = MagicMock()
+
+    await async_setup_entry(hass, entry, async_add_entities)
+
+    entities = async_add_entities.call_args_list[1].args[0]
+    assert len(entities) == 1
+    assert isinstance(entities[0], ZontDigitalTemperatureSensor)
+    assert not entities[0].available
+
+    listener = entry.runtime_data.coordinator.async_add_listener.call_args.args[0]
+    listener()
+    assert async_add_entities.call_count == 2

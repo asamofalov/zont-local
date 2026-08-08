@@ -34,6 +34,7 @@ from custom_components.zont_ws.coordinator import (
 from custom_components.zont_ws.objects import (
     ZontDigitalBusAdapterData,
     ZontDigitalBusState,
+    ZontDigitalTemperatureSensorData,
     immutable_objects,
 )
 from homeassistant.config_entries import ConfigEntryAuthFailed, ConfigEntryNotReady
@@ -288,6 +289,105 @@ async def test_discovered_adapter_creates_prefixed_entities(
             f"{SERIAL_NUMBER}_4097_error_code",
         )
         == "sensor.navien_error_code"
+    )
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_temperature_sensor_is_registered_as_child_device(
+    hass: HomeAssistant,
+) -> None:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=SERIAL_NUMBER,
+        data=ENTRY_DATA,
+    )
+    entry.add_to_hass(hass)
+    registry = dr.async_get(hass)
+    controller = registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, SERIAL_NUMBER)},
+        name="ZONT H1V02 PRO",
+    )
+    coordinator = MagicMock(spec=ZontDataUpdateCoordinator)
+    coordinator.data = ZontData(
+        controller=ZontControllerData(info=CONTROLLER_INFO),
+        objects=immutable_objects(
+            {
+                4107: ZontDigitalTemperatureSensorData(
+                    4107,
+                    1,
+                    "Т Спальня",
+                    temperature=25.5,
+                )
+            }
+        ),
+    )
+    entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontWsClient), coordinator)
+
+    _async_sync_object_devices(hass, entry, controller.id)
+
+    sensor = registry.async_get_device(
+        identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:4107")}
+    )
+    assert sensor is not None
+    assert sensor.name == "Т Спальня"
+    assert sensor.manufacturer is None
+    assert sensor.model == "Цифровой датчик температуры"
+    assert sensor.via_device_id == controller.id
+
+
+async def test_discovered_temperature_sensor_creates_prefixed_entity(
+    hass: HomeAssistant,
+) -> None:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=CONFIG_ENTRY_VERSION,
+        unique_id=SERIAL_NUMBER,
+        data={
+            **ENTRY_DATA,
+            CONF_CONTROLLER: CONTROLLER_INFO.as_dict(),
+            CONF_AUTO_TITLE: "ZONT H1V02 PRO (192.0.2.10)",
+        },
+    )
+    entry.add_to_hass(hass)
+
+    def start_with_temperature_sensor(
+        coordinator: ZontDataUpdateCoordinator,
+    ) -> None:
+        coordinator.data = ZontData(
+            controller=ZontControllerData(info=CONTROLLER_INFO),
+            objects=immutable_objects(
+                {
+                    4107: ZontDigitalTemperatureSensorData(
+                        object_id=4107,
+                        object_type=1,
+                        name="Т Спальня",
+                        temperature=25.5,
+                    )
+                }
+            ),
+        )
+        coordinator.async_update_listeners()
+
+    with (
+        patch.object(ZontWsClient, "async_start", new=AsyncMock()),
+        patch.object(
+            ZontDataUpdateCoordinator,
+            "async_start",
+            new=start_with_temperature_sensor,
+        ),
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert (
+        er.async_get(hass).async_get_entity_id(
+            "sensor",
+            DOMAIN,
+            f"{SERIAL_NUMBER}_4107_temperature",
+        )
+        == "sensor.t_spalnia_temperature"
     )
 
     assert await hass.config_entries.async_unload(entry.entry_id)

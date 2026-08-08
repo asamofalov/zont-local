@@ -98,6 +98,9 @@
       },
       "digital_bus_error_code": {
         "name": "Код ошибки"
+      },
+      "digital_temperature": {
+        "name": "Температура"
       }
     }
   },

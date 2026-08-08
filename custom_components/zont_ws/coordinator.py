@@ -31,12 +31,11 @@ from .controller import (
     parse_supply_voltage_response,
 )
 from .objects import (
-    OBJECT_TYPE_DIGITAL_BUS_ADAPTER,
-    ZontDigitalBusAdapterData,
+    SUPPORTED_OBJECT_TYPES,
     ZontObject,
     ZontObjectParseError,
     immutable_objects,
-    parse_digital_bus_adapter,
+    parse_zont_object,
     unavailable_object,
 )
 
@@ -102,7 +101,7 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
         self._unsubscribe_connection: Callable[[], None] | None = None
         self._unsubscribe_messages: Callable[[], None] | None = None
         self._initial_refresh_task: asyncio.Task[None] | None = None
-        self._object_error_logged = False
+        self._object_error_types: set[int] = set()
         self._shutdown_complete = False
 
     @property
@@ -200,58 +199,58 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
         self,
         previous: Mapping[int, ZontObject],
     ) -> Mapping[int, ZontObject]:
-        """Discover and refresh digital bus adapters."""
-        unavailable = {
+        """Discover and refresh all supported object types."""
+        objects = {
             object_id: unavailable_object(obj) for object_id, obj in previous.items()
         }
-        try:
-            object_ids = await self._client.async_get_object_ids(
-                OBJECT_TYPE_DIGITAL_BUS_ADAPTER
-            )
-        except asyncio.CancelledError:
-            raise
-        except (ZontConnectionError, ZontRequestTimeoutError):
-            raise
-        except ZontProtocolError:
-            self._log_object_error()
-            return immutable_objects(unavailable)
-
-        objects = unavailable
-        had_protocol_error = False
-        for object_id in object_ids:
+        for object_type in SUPPORTED_OBJECT_TYPES:
+            had_protocol_error = False
             try:
-                response = await self._client.async_get_object_state(object_id)
+                object_ids = await self._client.async_get_object_ids(object_type)
             except asyncio.CancelledError:
                 raise
             except (ZontConnectionError, ZontRequestTimeoutError):
                 raise
             except ZontProtocolError:
-                had_protocol_error = True
+                self._log_object_error(object_type)
                 continue
 
-            if response.get("failed"):
-                continue
+            for object_id in object_ids:
+                try:
+                    response = await self._client.async_get_object_state(object_id)
+                except asyncio.CancelledError:
+                    raise
+                except (ZontConnectionError, ZontRequestTimeoutError):
+                    raise
+                except ZontProtocolError:
+                    had_protocol_error = True
+                    continue
 
-            previous_adapter = previous.get(object_id)
-            if not isinstance(previous_adapter, ZontDigitalBusAdapterData):
-                previous_adapter = None
-            try:
-                objects[object_id] = parse_digital_bus_adapter(
-                    response,
-                    previous_adapter,
-                )
-            except ZontObjectParseError:
-                had_protocol_error = True
+                if response.get("failed"):
+                    continue
 
-        if had_protocol_error:
-            self._log_object_error()
-        else:
-            self._object_error_logged = False
+                try:
+                    obj = parse_zont_object(
+                        response,
+                        previous.get(object_id),
+                    )
+                    if obj.object_type != object_type:
+                        raise ZontObjectParseError(
+                            "Object type does not match requested type"
+                        )
+                    objects[object_id] = obj
+                except ZontObjectParseError:
+                    had_protocol_error = True
+
+            if had_protocol_error:
+                self._log_object_error(object_type)
+            else:
+                self._object_error_types.discard(object_type)
         return immutable_objects(objects)
 
     @callback
     def _async_message_received(self, payload: object) -> None:
-        """Merge an unsolicited digital bus adapter state into the snapshot."""
+        """Merge an unsolicited supported object state into the snapshot."""
         if not isinstance(payload, Mapping):
             return
         object_id = payload.get("id")
@@ -259,9 +258,11 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
             return
 
         previous = self.data.objects.get(object_id)
-        if not isinstance(previous, ZontDigitalBusAdapterData):
-            previous = None
-        if payload.get("type") != OBJECT_TYPE_DIGITAL_BUS_ADAPTER and previous is None:
+        object_type = payload.get(
+            "type",
+            previous.object_type if previous is not None else None,
+        )
+        if object_type not in SUPPORTED_OBJECT_TYPES:
             return
 
         objects = dict(self.data.objects)
@@ -271,7 +272,7 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
             objects[object_id] = unavailable_object(previous)
         else:
             try:
-                objects[object_id] = parse_digital_bus_adapter(
+                objects[object_id] = parse_zont_object(
                     payload,
                     previous,
                     partial=previous is not None,
@@ -292,14 +293,15 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
         self.data = updated
         self.async_update_listeners()
 
-    def _log_object_error(self) -> None:
-        """Log one warning for a consecutive series of object protocol errors."""
-        if self._object_error_logged:
+    def _log_object_error(self, object_type: int) -> None:
+        """Log one warning per type for a consecutive protocol error series."""
+        if object_type in self._object_error_types:
             return
-        self._object_error_logged = True
+        self._object_error_types.add(object_type)
         _LOGGER.warning(
-            "Unable to read one or more ZONT digital bus adapters; "
-            "the integration will retry during the next update"
+            "Unable to read one or more ZONT objects of type %s; "
+            "the integration will retry during the next update",
+            object_type,
         )
 
     async def _async_refresh_info(
