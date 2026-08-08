@@ -9,6 +9,7 @@ from custom_components.zont_ws.binary_sensor import (
     ZontAnalogInputTriggeredBinarySensor,
     ZontCloudConnectedBinarySensor,
     ZontConnectedBinarySensor,
+    ZontRadioTriggeredBinarySensor,
     async_setup_entry,
 )
 from custom_components.zont_ws.client import ZontWsClient
@@ -23,16 +24,19 @@ from custom_components.zont_ws.coordinator import (
     ZontDataUpdateCoordinator,
     ZontRuntimeData,
 )
-from custom_components.zont_ws.objects import ZontAnalogInputData, immutable_objects
+from custom_components.zont_ws.objects import (
+    ZontAnalogInputData,
+    ZontObject,
+    ZontRadioSensorData,
+    immutable_objects,
+)
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 
-def _analog_entry(
-    analog_input: ZontAnalogInputData,
-) -> MockConfigEntry:
+def _object_entry(obj: ZontObject) -> MockConfigEntry:
     entry = MockConfigEntry(
         domain=DOMAIN,
         unique_id="ABCDEF123456",
@@ -43,7 +47,7 @@ def _analog_entry(
     coordinator.last_update_success = True
     coordinator.data = ZontData(
         controller=ZontControllerData(info=None),
-        objects=immutable_objects({analog_input.object_id: analog_input}),
+        objects=immutable_objects({obj.object_id: obj}),
     )
     coordinator.async_add_listener.return_value = lambda: None
     entry.runtime_data = ZontRuntimeData(client, coordinator)
@@ -150,7 +154,7 @@ def test_analog_trigger_maps_subtype_device_class(
         unit_code=8,
         triggered=True,
     )
-    entry = _analog_entry(analog_input)
+    entry = _object_entry(analog_input)
 
     entity = ZontAnalogInputTriggeredBinarySensor(entry, 20550, subtype)
 
@@ -171,7 +175,7 @@ def test_analog_trigger_tracks_field_and_object_availability() -> None:
         value=0,
         triggered=None,
     )
-    entry = _analog_entry(analog_input)
+    entry = _object_entry(analog_input)
     entity = ZontAnalogInputTriggeredBinarySensor(entry, 20550, 3)
 
     assert not entity.available
@@ -207,7 +211,7 @@ async def test_setup_adds_analog_trigger_without_duplicates(
         available=False,
         subtype=3,
     )
-    entry = _analog_entry(analog_input)
+    entry = _object_entry(analog_input)
     entry.add_to_hass(hass)
     async_add_entities = MagicMock()
 
@@ -222,3 +226,76 @@ async def test_setup_adds_analog_trigger_without_duplicates(
     listener = entry.runtime_data.coordinator.async_add_listener.call_args.args[0]
     listener()
     assert async_add_entities.call_count == 2
+
+
+@pytest.mark.parametrize(
+    ("subtype", "device_class"),
+    [
+        (10, BinarySensorDeviceClass.MOISTURE),
+        (11, BinarySensorDeviceClass.MOTION),
+    ],
+)
+def test_radio_trigger_maps_supported_subtype_device_class(
+    subtype: int,
+    device_class: BinarySensorDeviceClass,
+) -> None:
+    radio_sensor = ZontRadioSensorData(
+        object_id=12001,
+        object_type=8,
+        name="Радиодатчик",
+        subtype=subtype,
+        triggered=True,
+    )
+    entry = _object_entry(radio_sensor)
+
+    entity = ZontRadioTriggeredBinarySensor(entry, 12001, subtype)
+
+    assert entity.available
+    assert entity.is_on
+    assert entity.device_class is device_class
+    assert entity.unique_id == "ABCDEF123456_12001_triggered"
+    assert entity.suggested_object_id == "triggered"
+    assert entity.device_info["identifiers"] == {(DOMAIN, "ABCDEF123456:object:12001")}
+
+
+async def test_setup_adds_only_supported_radio_triggers(hass: HomeAssistant) -> None:
+    radio_sensor = ZontRadioSensorData(
+        object_id=12001,
+        object_type=8,
+        name="Протечка",
+        available=False,
+        subtype=10,
+    )
+    entry = _object_entry(radio_sensor)
+    entry.add_to_hass(hass)
+    async_add_entities = MagicMock()
+
+    await async_setup_entry(hass, entry, async_add_entities)
+
+    entities = async_add_entities.call_args_list[1].args[0]
+    assert len(entities) == 1
+    assert isinstance(entities[0], ZontRadioTriggeredBinarySensor)
+    assert not entities[0].available
+
+    listener = entry.runtime_data.coordinator.async_add_listener.call_args.args[0]
+    listener()
+    assert async_add_entities.call_count == 2
+
+
+async def test_setup_skips_radio_trigger_for_other_subtypes(
+    hass: HomeAssistant,
+) -> None:
+    radio_sensor = ZontRadioSensorData(
+        object_id=12001,
+        object_type=8,
+        name="Радиотермометр",
+        subtype=5,
+        triggered=True,
+    )
+    entry = _object_entry(radio_sensor)
+    entry.add_to_hass(hass)
+    async_add_entities = MagicMock()
+
+    await async_setup_entry(hass, entry, async_add_entities)
+
+    assert async_add_entities.call_count == 1

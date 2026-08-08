@@ -19,7 +19,7 @@ from .entity import (
     ZontEntityMixin,
     ZontObjectCoordinatorEntity,
 )
-from .objects import ZontAnalogInputData
+from .objects import ZontAnalogInputData, ZontRadioSensorData
 
 ANALOG_TRIGGER_DEVICE_CLASSES: dict[int, BinarySensorDeviceClass | None] = {
     3: BinarySensorDeviceClass.DOOR,
@@ -36,6 +36,11 @@ ANALOG_TRIGGER_DEVICE_CLASSES: dict[int, BinarySensorDeviceClass | None] = {
     20: None,
 }
 
+RADIO_TRIGGER_DEVICE_CLASSES = {
+    10: BinarySensorDeviceClass.MOISTURE,
+    11: BinarySensorDeviceClass.MOTION,
+}
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -50,20 +55,37 @@ async def async_setup_entry(
         ]
     )
 
-    known_entities: set[int] = set()
+    known_entities: set[tuple[int, str]] = set()
 
     @callback
     def async_add_object_entities() -> None:
-        """Add trigger entities for newly discovered analog inputs."""
+        """Add trigger entities for newly discovered objects."""
         new_entities: list[BinarySensorEntity] = []
         for obj in entry.runtime_data.coordinator.data.objects.values():
-            if not isinstance(obj, ZontAnalogInputData):
+            if isinstance(obj, ZontAnalogInputData):
+                identity = (obj.object_id, "analog_triggered")
+                if identity in known_entities:
+                    continue
+                known_entities.add(identity)
+                new_entities.append(
+                    ZontAnalogInputTriggeredBinarySensor(
+                        entry,
+                        obj.object_id,
+                        obj.subtype,
+                    )
+                )
                 continue
-            if obj.object_id in known_entities:
+            if (
+                not isinstance(obj, ZontRadioSensorData)
+                or obj.subtype not in RADIO_TRIGGER_DEVICE_CLASSES
+            ):
                 continue
-            known_entities.add(obj.object_id)
+            identity = (obj.object_id, "radio_triggered")
+            if identity in known_entities:
+                continue
+            known_entities.add(identity)
             new_entities.append(
-                ZontAnalogInputTriggeredBinarySensor(
+                ZontRadioTriggeredBinarySensor(
                     entry,
                     obj.object_id,
                     obj.subtype,
@@ -163,3 +185,33 @@ class ZontAnalogInputTriggeredBinarySensor(
         """Return the current analog input trigger flag."""
         obj = self.object_data
         return obj.triggered if isinstance(obj, ZontAnalogInputData) else None
+
+
+class ZontRadioTriggeredBinarySensor(
+    ZontObjectCoordinatorEntity,
+    BinarySensorEntity,
+):
+    """Represent the trigger flag of one radio sensor."""
+
+    _attr_translation_key = "radio_triggered"
+
+    def __init__(
+        self,
+        entry: ConfigEntry[ZontRuntimeData],
+        object_id: int,
+        subtype: int,
+    ) -> None:
+        """Initialize a radio sensor trigger entity."""
+        self._attr_device_class = RADIO_TRIGGER_DEVICE_CLASSES[subtype]
+        super().__init__(entry, object_id, "triggered", "triggered")
+
+    @property
+    def available(self) -> bool:
+        """Return whether the radio sensor reports a valid trigger flag."""
+        return super().available and self.is_on is not None
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return the current radio sensor trigger flag."""
+        obj = self.object_data
+        return obj.triggered if isinstance(obj, ZontRadioSensorData) else None

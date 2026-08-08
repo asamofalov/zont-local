@@ -1,7 +1,7 @@
 {
   "domain": "zont_ws",
   "name": "ZONT",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "codeowners": [],
   "config_flow": true,
   "dependencies": [],

@@ -22,6 +22,7 @@ from custom_components.zont_ws.objects import (
     ZontDigitalBusState,
     ZontDigitalTemperatureSensorData,
     ZontNtcTemperatureSensorData,
+    ZontRadioSensorData,
     immutable_objects,
 )
 from homeassistant.core import HomeAssistant
@@ -74,6 +75,7 @@ async def test_refresh_builds_one_controller_snapshot(hass: HomeAssistant) -> No
         call(0),
         call(1),
         call(6),
+        call(8),
         call(27),
     ]
 
@@ -141,7 +143,7 @@ async def test_refresh_discovers_digital_bus_adapter(hass: HomeAssistant) -> Non
         "#S224:1 0 1 0",
         "#S6:123 0",
     ]
-    client.async_get_object_ids.side_effect = [[], [], [4097], []]
+    client.async_get_object_ids.side_effect = [[], [], [4097], [], []]
     client.async_get_object_state.return_value = {
         "id": 4097,
         "type": 6,
@@ -183,7 +185,9 @@ async def test_failed_object_becomes_unavailable_without_losing_values(
         [],
         [],
         [],
+        [],
         [4097],
+        [],
         [],
     ]
     client.async_get_object_state.side_effect = [
@@ -230,7 +234,9 @@ async def test_object_protocol_error_is_isolated_and_retried(
         [],
         [],
         [],
+        [],
         [4097],
+        [],
         [],
     ]
     client.async_get_object_state.return_value = {
@@ -257,7 +263,7 @@ async def test_refresh_discovers_temperature_sensor_and_adapter(
         "#S224:1 0 1 0",
         "#S6:123 0",
     ]
-    client.async_get_object_ids.side_effect = [[], [8196], [4097], []]
+    client.async_get_object_ids.side_effect = [[], [8196], [4097], [], []]
     client.async_get_object_state.side_effect = [
         {
             "id": 8196,
@@ -286,6 +292,7 @@ async def test_refresh_discovers_temperature_sensor_and_adapter(
         call(0),
         call(1),
         call(6),
+        call(8),
         call(27),
     ]
     assert client.async_get_object_state.await_args_list == [
@@ -315,7 +322,13 @@ async def test_temperature_type_error_does_not_block_adapter_refresh(
         "#S224:1 0 1 0",
         "#S6:123 0",
     ]
-    client.async_get_object_ids.side_effect = [[], ZontProtocolError, [4097], []]
+    client.async_get_object_ids.side_effect = [
+        [],
+        ZontProtocolError,
+        [4097],
+        [],
+        [],
+    ]
     client.async_get_object_state.return_value = {
         "id": 4097,
         "type": 6,
@@ -338,7 +351,7 @@ async def test_refresh_discovers_analog_input_before_other_objects(
         "#S224:1 0 1 0",
         "#S6:123 0",
     ]
-    client.async_get_object_ids.side_effect = [[20550], [], [], []]
+    client.async_get_object_ids.side_effect = [[20550], [], [], [], []]
     client.async_get_object_state.return_value = {
         "id": 20550,
         "type": 0,
@@ -362,6 +375,7 @@ async def test_refresh_discovers_analog_input_before_other_objects(
         call(0),
         call(1),
         call(6),
+        call(8),
         call(27),
     ]
 
@@ -374,7 +388,7 @@ async def test_invalid_analog_input_does_not_block_other_object_types(
         "#S224:1 0 1 0",
         "#S6:123 0",
     ]
-    client.async_get_object_ids.side_effect = [[20550], [], [4097], []]
+    client.async_get_object_ids.side_effect = [[20550], [], [4097], [], []]
     client.async_get_object_state.side_effect = [
         {
             "id": 20550,
@@ -435,6 +449,109 @@ async def test_push_merges_partial_analog_state_and_availability(
     assert analog_input.triggered is True
 
 
+async def test_refresh_discovers_radio_sensor(hass: HomeAssistant) -> None:
+    coordinator, client = _coordinator(hass)
+    client.async_send_system_command.side_effect = [
+        "#S224:1 0 1 0",
+        "#S6:123 0",
+    ]
+    client.async_get_object_ids.side_effect = [[], [], [], [12001], []]
+    client.async_get_object_state.return_value = {
+        "id": 12001,
+        "type": 8,
+        "stype": 18,
+        "name": "Гостиная",
+        "t": 23.4,
+        "h": 48,
+        "b": 2.91,
+        "r": 86,
+        "a": 1,
+    }
+
+    await coordinator.async_refresh()
+
+    sensor = coordinator.data.objects[12001]
+    assert isinstance(sensor, ZontRadioSensorData)
+    assert sensor.temperature == 23.4
+    assert sensor.humidity == 48
+    assert sensor.battery_voltage == 2.91
+    assert sensor.signal_strength_raw == 86
+    assert sensor.available
+    assert client.async_get_object_ids.await_args_list == [
+        call(0),
+        call(1),
+        call(6),
+        call(8),
+        call(27),
+    ]
+
+
+async def test_radio_type_error_does_not_block_ntc_refresh(
+    hass: HomeAssistant,
+) -> None:
+    coordinator, client = _coordinator(hass)
+    client.async_send_system_command.side_effect = [
+        "#S224:1 0 1 0",
+        "#S6:123 0",
+    ]
+    client.async_get_object_ids.side_effect = [
+        [],
+        [],
+        [],
+        ZontProtocolError,
+        [20487],
+    ]
+    client.async_get_object_state.return_value = {
+        "id": 20487,
+        "type": 27,
+        "name": "Температура котла",
+        "t": 45.6,
+        "a": 1,
+    }
+
+    await coordinator.async_refresh()
+
+    assert coordinator.last_update_success
+    assert isinstance(coordinator.data.objects[20487], ZontNtcTemperatureSensorData)
+
+
+async def test_push_merges_partial_radio_sensor_state(
+    hass: HomeAssistant,
+) -> None:
+    coordinator, _ = _coordinator(hass)
+    coordinator.data = ZontData(
+        controller=ZontControllerData(info=None),
+        objects=immutable_objects(
+            {
+                12001: ZontRadioSensorData(
+                    object_id=12001,
+                    object_type=8,
+                    name="Гостиная",
+                    subtype=18,
+                    temperature=23.4,
+                    humidity=48,
+                    battery_voltage=2.91,
+                    signal_strength_raw=86,
+                )
+            }
+        ),
+    )
+
+    coordinator._async_message_received({"id": 12001, "h": 49})
+
+    sensor = coordinator.data.objects[12001]
+    assert isinstance(sensor, ZontRadioSensorData)
+    assert sensor.temperature == 23.4
+    assert sensor.humidity == 49
+    assert sensor.battery_voltage == 2.91
+
+    coordinator._async_message_received({"id": 12001, "a": 0})
+
+    sensor = coordinator.data.objects[12001]
+    assert not sensor.available
+    assert sensor.humidity == 49
+
+
 async def test_refresh_discovers_ntc_temperature_sensor(
     hass: HomeAssistant,
 ) -> None:
@@ -443,7 +560,7 @@ async def test_refresh_discovers_ntc_temperature_sensor(
         "#S224:1 0 1 0",
         "#S6:123 0",
     ]
-    client.async_get_object_ids.side_effect = [[], [], [], [20487]]
+    client.async_get_object_ids.side_effect = [[], [], [], [], [20487]]
     client.async_get_object_state.return_value = {
         "id": 20487,
         "type": 27,
@@ -462,6 +579,7 @@ async def test_refresh_discovers_ntc_temperature_sensor(
         call(0),
         call(1),
         call(6),
+        call(8),
         call(27),
     ]
     client.async_get_object_state.assert_awaited_once_with(20487)
@@ -492,6 +610,7 @@ async def test_ntc_type_error_does_not_block_other_object_data(
         [],
         [],
         [4097],
+        [],
         ZontProtocolError,
     ]
     client.async_get_object_state.return_value = {
@@ -529,7 +648,7 @@ async def test_failed_ntc_sensor_preserves_last_temperature(
         "#S224:1 0 1 0",
         "#S6:123 0",
     ]
-    client.async_get_object_ids.side_effect = [[], [], [], [20487]]
+    client.async_get_object_ids.side_effect = [[], [], [], [], [20487]]
     client.async_get_object_state.return_value = {
         "id": 20487,
         "req_state": 0,

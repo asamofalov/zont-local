@@ -16,6 +16,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     PERCENTAGE,
     REVOLUTIONS_PER_MINUTE,
+    SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
     EntityCategory,
     UnitOfElectricPotential,
     UnitOfPressure,
@@ -36,6 +37,7 @@ from .objects import (
     ZontDigitalBusState,
     ZontDigitalTemperatureSensorData,
     ZontNtcTemperatureSensorData,
+    ZontRadioSensorData,
     ZontTemperatureSensorData,
 )
 
@@ -141,6 +143,67 @@ DIGITAL_BUS_SENSOR_DESCRIPTIONS = (
 )
 
 
+@dataclass(frozen=True, kw_only=True)
+class ZontRadioSensorEntityDescription(SensorEntityDescription):
+    """Describe one readable radio sensor field."""
+
+    value_fn: Callable[[ZontRadioSensorData], float | None]
+
+
+RADIO_SENSOR_DESCRIPTIONS = {
+    "temperature": ZontRadioSensorEntityDescription(
+        key="temperature",
+        translation_key="radio_temperature",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+        value_fn=lambda sensor: sensor.temperature,
+    ),
+    "humidity": ZontRadioSensorEntityDescription(
+        key="humidity",
+        translation_key="radio_humidity",
+        device_class=SensorDeviceClass.HUMIDITY,
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+        value_fn=lambda sensor: sensor.humidity,
+    ),
+    "battery_voltage": ZontRadioSensorEntityDescription(
+        key="battery_voltage",
+        translation_key="radio_battery_voltage",
+        device_class=SensorDeviceClass.VOLTAGE,
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        suggested_display_precision=2,
+        value_fn=lambda sensor: sensor.battery_voltage,
+    ),
+    "signal_strength": ZontRadioSensorEntityDescription(
+        key="signal_strength",
+        translation_key="radio_signal_strength",
+        device_class=SensorDeviceClass.SIGNAL_STRENGTH,
+        native_unit_of_measurement=SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        suggested_display_precision=1,
+        value_fn=lambda sensor: (
+            sensor.signal_strength_raw / 2 - 73
+            if sensor.signal_strength_raw is not None
+            else None
+        ),
+    ),
+}
+
+RADIO_SENSOR_FIELDS_BY_SUBTYPE = {
+    5: ("temperature", "battery_voltage", "signal_strength"),
+    10: ("battery_voltage", "signal_strength"),
+    11: ("battery_voltage", "signal_strength"),
+    15: ("temperature", "battery_voltage", "signal_strength"),
+    18: ("temperature", "humidity", "battery_voltage", "signal_strength"),
+}
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry[ZontRuntimeData],
@@ -182,6 +245,20 @@ async def async_setup_entry(
                 if identity not in known_entities:
                     known_entities.add(identity)
                     new_entities.append(ZontNtcTemperatureSensor(entry, obj.object_id))
+                continue
+            if isinstance(obj, ZontRadioSensorData):
+                for field in RADIO_SENSOR_FIELDS_BY_SUBTYPE.get(obj.subtype, ()):
+                    identity = (obj.object_id, field)
+                    if identity in known_entities:
+                        continue
+                    known_entities.add(identity)
+                    new_entities.append(
+                        ZontRadioSensor(
+                            entry,
+                            obj.object_id,
+                            RADIO_SENSOR_DESCRIPTIONS[field],
+                        )
+                    )
                 continue
             if isinstance(obj, ZontDigitalBusAdapterData) and obj.available:
                 for description in DIGITAL_BUS_SENSOR_DESCRIPTIONS:
@@ -277,6 +354,37 @@ class ZontDigitalBusSensor(ZontObjectCoordinatorEntity, SensorEntity):
         return (
             self.entity_description.value_fn(obj)
             if isinstance(obj, ZontDigitalBusAdapterData)
+            else None
+        )
+
+
+class ZontRadioSensor(ZontObjectCoordinatorEntity, SensorEntity):
+    """Represent one numeric value reported by a radio sensor."""
+
+    entity_description: ZontRadioSensorEntityDescription
+
+    def __init__(
+        self,
+        entry: ConfigEntry[ZontRuntimeData],
+        object_id: int,
+        description: ZontRadioSensorEntityDescription,
+    ) -> None:
+        """Initialize a radio sensor entity."""
+        self.entity_description = description
+        super().__init__(entry, object_id, description.key, description.key)
+
+    @property
+    def available(self) -> bool:
+        """Return whether this specific radio field is currently reported."""
+        return super().available and self.native_value is not None
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the current value of the described radio sensor field."""
+        obj = self.object_data
+        return (
+            self.entity_description.value_fn(obj)
+            if isinstance(obj, ZontRadioSensorData)
             else None
         )
 

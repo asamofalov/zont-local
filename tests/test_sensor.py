@@ -24,23 +24,27 @@ from custom_components.zont_ws.objects import (
     ZontDigitalTemperatureSensorData,
     ZontNtcTemperatureSensorData,
     ZontObject,
+    ZontRadioSensorData,
     immutable_objects,
 )
 from custom_components.zont_ws.sensor import (
     ANALOG_INPUT_UNITS,
     CONNECTION_CHANNEL_STATES,
     DIGITAL_BUS_SENSOR_DESCRIPTIONS,
+    RADIO_SENSOR_DESCRIPTIONS,
     ZontAnalogInputValueSensor,
     ZontConnectionChannelSensor,
     ZontDigitalBusSensor,
     ZontDigitalTemperatureSensor,
     ZontNtcTemperatureSensor,
+    ZontRadioSensor,
     ZontSupplyVoltageSensor,
     async_setup_entry,
 )
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 from homeassistant.const import (
     PERCENTAGE,
+    SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
     EntityCategory,
     UnitOfElectricPotential,
     UnitOfPressure,
@@ -438,6 +442,117 @@ def test_digital_temperature_sensor_tracks_availability() -> None:
         ),
     )
     assert not entity.available
+
+
+def test_radio_sensor_entities_map_measurements_and_diagnostics() -> None:
+    sensor_data = ZontRadioSensorData(
+        object_id=12001,
+        object_type=8,
+        name="Гостиная",
+        subtype=18,
+        temperature=23.4,
+        humidity=48,
+        battery_voltage=2.91,
+        signal_strength_raw=86,
+    )
+    entry = _entry(ZontControllerData(info=None), {12001: sensor_data})
+    entities = {
+        key: ZontRadioSensor(entry, 12001, description)
+        for key, description in RADIO_SENSOR_DESCRIPTIONS.items()
+    }
+
+    assert entities["temperature"].native_value == 23.4
+    assert entities["temperature"].device_class is SensorDeviceClass.TEMPERATURE
+    assert entities["temperature"].native_unit_of_measurement == "°C"
+    assert entities["humidity"].native_value == 48
+    assert entities["humidity"].device_class is SensorDeviceClass.HUMIDITY
+    assert entities["humidity"].native_unit_of_measurement == PERCENTAGE
+    assert entities["battery_voltage"].native_value == 2.91
+    assert entities["battery_voltage"].device_class is SensorDeviceClass.VOLTAGE
+    assert entities["battery_voltage"].native_unit_of_measurement == (
+        UnitOfElectricPotential.VOLT
+    )
+    assert entities["battery_voltage"].entity_category is EntityCategory.DIAGNOSTIC
+    assert entities["signal_strength"].native_value == -30
+    assert entities["signal_strength"].device_class is (
+        SensorDeviceClass.SIGNAL_STRENGTH
+    )
+    assert entities["signal_strength"].native_unit_of_measurement == (
+        SIGNAL_STRENGTH_DECIBELS_MILLIWATT
+    )
+    assert entities["signal_strength"].entity_category is EntityCategory.DIAGNOSTIC
+    assert entities["signal_strength"].unique_id == (
+        "ABCDEF123456_12001_signal_strength"
+    )
+    assert entities["signal_strength"].suggested_object_id == "signal_strength"
+
+
+async def test_setup_adds_fixed_radio_sensor_matrix_without_duplicates(hass) -> None:
+    sensor_data = ZontRadioSensorData(
+        object_id=12001,
+        object_type=8,
+        name="Гостиная",
+        available=False,
+        subtype=18,
+        temperature=23.4,
+    )
+    entry = _entry(ZontControllerData(info=None), {12001: sensor_data})
+    entry.add_to_hass(hass)
+    async_add_entities = MagicMock()
+
+    await async_setup_entry(hass, entry, async_add_entities)
+
+    entities = async_add_entities.call_args_list[1].args[0]
+    assert {entity.entity_description.key for entity in entities} == {
+        "temperature",
+        "humidity",
+        "battery_voltage",
+        "signal_strength",
+    }
+    assert all(not entity.available for entity in entities)
+
+    listener = entry.runtime_data.coordinator.async_add_listener.call_args.args[0]
+    listener()
+    assert async_add_entities.call_count == 2
+
+
+@pytest.mark.parametrize(
+    ("subtype", "fields"),
+    [
+        (5, {"temperature", "battery_voltage", "signal_strength"}),
+        (10, {"battery_voltage", "signal_strength"}),
+        (11, {"battery_voltage", "signal_strength"}),
+        (15, {"temperature", "battery_voltage", "signal_strength"}),
+        (
+            18,
+            {"temperature", "humidity", "battery_voltage", "signal_strength"},
+        ),
+        (23, set()),
+        (99, set()),
+    ],
+)
+async def test_setup_uses_supported_radio_sensor_matrix(
+    hass,
+    subtype: int,
+    fields: set[str],
+) -> None:
+    sensor_data = ZontRadioSensorData(
+        object_id=12001,
+        object_type=8,
+        name="Радиодатчик",
+        subtype=subtype,
+    )
+    entry = _entry(ZontControllerData(info=None), {12001: sensor_data})
+    entry.add_to_hass(hass)
+    async_add_entities = MagicMock()
+
+    await async_setup_entry(hass, entry, async_add_entities)
+
+    if not fields:
+        assert async_add_entities.call_count == 1
+        return
+    entities = async_add_entities.call_args_list[1].args[0]
+    assert {entity.entity_description.key for entity in entities} == fields
 
 
 async def test_setup_adds_unavailable_temperature_sensor_without_duplicates(

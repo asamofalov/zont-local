@@ -9,19 +9,25 @@ from custom_components.zont_ws.objects import (
     OBJECT_TYPE_DIGITAL_BUS_ADAPTER,
     OBJECT_TYPE_DIGITAL_TEMPERATURE_SENSOR,
     OBJECT_TYPE_NTC_TEMPERATURE_SENSOR,
+    OBJECT_TYPE_RADIO_SENSOR,
+    RADIO_SENSOR_SUBTYPE_NAMES,
+    SUPPORTED_RADIO_SENSOR_SUBTYPES,
     ZontAnalogInputData,
     ZontDigitalBusAdapterData,
     ZontDigitalBusState,
     ZontDigitalTemperatureSensorData,
     ZontNtcTemperatureSensorData,
     ZontObjectParseError,
+    ZontRadioSensorData,
     analog_input_model,
     immutable_objects,
     parse_analog_input,
     parse_digital_bus_adapter,
     parse_digital_temperature_sensor,
     parse_ntc_temperature_sensor,
+    parse_radio_sensor,
     parse_zont_object,
+    radio_sensor_model,
     unavailable_object,
 )
 
@@ -457,6 +463,166 @@ def test_unavailable_full_update_preserves_last_temperature() -> None:
     assert sensor.temperature == 19.7
 
 
+def test_radio_sensor_subtypes_and_public_support_are_explicit() -> None:
+    assert set(RADIO_SENSOR_SUBTYPE_NAMES) == {
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        23,
+    }
+    assert {5, 10, 11, 15, 18} == SUPPORTED_RADIO_SENSOR_SUBTYPES
+    assert radio_sensor_model(18) == "Радиодатчик температуры и влажности"
+    assert radio_sensor_model(99) == "Радиодатчик (подтип 99)"
+
+
+def test_parse_complete_radio_temperature_and_humidity_sensor() -> None:
+    sensor = parse_radio_sensor(
+        {
+            "id": 12001,
+            "type": OBJECT_TYPE_RADIO_SENSOR,
+            "stype": 18,
+            "name": "Гостиная",
+            "t": 23.4,
+            "h": 48,
+            "b": 2.91,
+            "r": 86,
+            "trig": 0,
+            "a": 1,
+        }
+    )
+
+    assert sensor == ZontRadioSensorData(
+        object_id=12001,
+        object_type=8,
+        name="Гостиная",
+        available=True,
+        subtype=18,
+        temperature=23.4,
+        humidity=48.0,
+        battery_voltage=2.91,
+        signal_strength_raw=86.0,
+        triggered=False,
+    )
+
+
+def test_radio_sensor_rejects_invalid_state_values_without_failing() -> None:
+    sensor = parse_radio_sensor(
+        {
+            "id": 12001,
+            "type": 8,
+            "stype": 18,
+            "name": "Гостиная",
+            "t": True,
+            "h": float("nan"),
+            "b": float("inf"),
+            "r": "86",
+            "trig": 2,
+            "a": 1,
+        }
+    )
+
+    assert sensor.available
+    assert sensor.temperature is None
+    assert sensor.humidity is None
+    assert sensor.battery_voltage is None
+    assert sensor.signal_strength_raw is None
+    assert sensor.triggered is None
+
+
+def test_partial_radio_update_preserves_absent_fields() -> None:
+    previous = ZontRadioSensorData(
+        object_id=12001,
+        object_type=8,
+        name="Гостиная",
+        subtype=18,
+        temperature=23.4,
+        humidity=48,
+        battery_voltage=2.91,
+        signal_strength_raw=86,
+        triggered=False,
+    )
+
+    sensor = parse_radio_sensor(
+        {"id": 12001, "h": 49, "trig": 1},
+        previous,
+        partial=True,
+    )
+
+    assert sensor.temperature == 23.4
+    assert sensor.humidity == 49.0
+    assert sensor.battery_voltage == 2.91
+    assert sensor.signal_strength_raw == 86
+    assert sensor.triggered is True
+
+
+def test_unavailable_radio_update_preserves_all_last_values() -> None:
+    previous = ZontRadioSensorData(
+        object_id=12001,
+        object_type=8,
+        name="Гостиная",
+        subtype=18,
+        temperature=23.4,
+        humidity=48,
+        battery_voltage=2.91,
+        signal_strength_raw=86,
+        triggered=False,
+    )
+
+    sensor = parse_radio_sensor(
+        {
+            "id": 12001,
+            "type": 8,
+            "stype": 18,
+            "name": "Гостиная",
+            "t": 99,
+            "h": 99,
+            "b": 1,
+            "r": 1,
+            "trig": 1,
+            "a": 0,
+        },
+        previous,
+    )
+
+    assert not sensor.available
+    assert sensor.temperature == 23.4
+    assert sensor.humidity == 48
+    assert sensor.battery_voltage == 2.91
+    assert sensor.signal_strength_raw == 86
+    assert sensor.triggered is False
+
+
+def test_unknown_radio_subtype_is_parsed_for_future_support() -> None:
+    sensor = parse_zont_object(
+        {
+            "id": 12002,
+            "type": 8,
+            "stype": 99,
+            "name": "Будущий радиодатчик",
+            "b": 2.8,
+        }
+    )
+
+    assert isinstance(sensor, ZontRadioSensorData)
+    assert sensor.subtype == 99
+    assert sensor.available
+
+
 def test_generic_parser_dispatches_using_previous_object_type() -> None:
     previous = ZontDigitalTemperatureSensorData(
         object_id=8196,
@@ -493,6 +659,27 @@ def test_generic_parser_dispatches_ntc_using_previous_object_type() -> None:
     assert sensor.temperature == 46.1
 
 
+def test_generic_parser_dispatches_radio_using_previous_object_type() -> None:
+    previous = ZontRadioSensorData(
+        object_id=12001,
+        object_type=8,
+        name="Гостиная",
+        subtype=18,
+        temperature=23.4,
+        humidity=48,
+    )
+
+    sensor = parse_zont_object(
+        {"id": 12001, "h": 49},
+        previous,
+        partial=True,
+    )
+
+    assert isinstance(sensor, ZontRadioSensorData)
+    assert sensor.temperature == 23.4
+    assert sensor.humidity == 49
+
+
 def test_generic_parser_rejects_unknown_object_type() -> None:
     with pytest.raises(ZontObjectParseError):
-        parse_zont_object({"id": 1, "type": 8, "name": "Радиодатчик"})
+        parse_zont_object({"id": 1, "type": 99, "name": "Объект"})

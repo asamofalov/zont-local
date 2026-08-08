@@ -37,6 +37,7 @@ from custom_components.zont_ws.objects import (
     ZontDigitalBusState,
     ZontDigitalTemperatureSensorData,
     ZontNtcTemperatureSensorData,
+    ZontRadioSensorData,
     immutable_objects,
 )
 from homeassistant.config_entries import ConfigEntryAuthFailed, ConfigEntryNotReady
@@ -468,6 +469,92 @@ async def test_ntc_sensor_is_registered_as_child_device(
     assert sensor.via_device_id == controller.id
 
 
+async def test_supported_radio_sensor_is_registered_as_typed_child_device(
+    hass: HomeAssistant,
+) -> None:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=SERIAL_NUMBER,
+        data=ENTRY_DATA,
+    )
+    entry.add_to_hass(hass)
+    registry = dr.async_get(hass)
+    controller = registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, SERIAL_NUMBER)},
+        name="ZONT H1V02 PRO",
+    )
+    coordinator = MagicMock(spec=ZontDataUpdateCoordinator)
+    coordinator.data = ZontData(
+        controller=ZontControllerData(info=CONTROLLER_INFO),
+        objects=immutable_objects(
+            {
+                12001: ZontRadioSensorData(
+                    object_id=12001,
+                    object_type=8,
+                    name="Гостиная",
+                    subtype=18,
+                    temperature=23.4,
+                    humidity=48,
+                )
+            }
+        ),
+    )
+    entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontWsClient), coordinator)
+
+    _async_sync_object_devices(hass, entry, controller.id)
+
+    sensor = registry.async_get_device(
+        identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:12001")}
+    )
+    assert sensor is not None
+    assert sensor.name == "Гостиная"
+    assert sensor.manufacturer is None
+    assert sensor.model == "Радиодатчик температуры и влажности"
+    assert sensor.via_device_id == controller.id
+
+
+async def test_unsupported_radio_subtype_is_not_registered(
+    hass: HomeAssistant,
+) -> None:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=SERIAL_NUMBER,
+        data=ENTRY_DATA,
+    )
+    entry.add_to_hass(hass)
+    registry = dr.async_get(hass)
+    controller = registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, SERIAL_NUMBER)},
+        name="ZONT H1V02 PRO",
+    )
+    coordinator = MagicMock(spec=ZontDataUpdateCoordinator)
+    coordinator.data = ZontData(
+        controller=ZontControllerData(info=CONTROLLER_INFO),
+        objects=immutable_objects(
+            {
+                12002: ZontRadioSensorData(
+                    object_id=12002,
+                    object_type=8,
+                    name="Радиопанель",
+                    subtype=23,
+                )
+            }
+        ),
+    )
+    entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontWsClient), coordinator)
+
+    _async_sync_object_devices(hass, entry, controller.id)
+
+    assert (
+        registry.async_get_device(
+            identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:12002")}
+        )
+        is None
+    )
+
+
 async def test_discovered_temperature_sensor_creates_prefixed_entity(
     hass: HomeAssistant,
 ) -> None:
@@ -574,6 +661,71 @@ async def test_discovered_ntc_sensor_creates_prefixed_entity(
         )
         == "sensor.temperatura_kotla_temperature"
     )
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_discovered_radio_sensor_creates_prefixed_entities(
+    hass: HomeAssistant,
+) -> None:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=CONFIG_ENTRY_VERSION,
+        unique_id=SERIAL_NUMBER,
+        data={
+            **ENTRY_DATA,
+            CONF_CONTROLLER: CONTROLLER_INFO.as_dict(),
+            CONF_AUTO_TITLE: "ZONT H1V02 PRO (192.0.2.10)",
+        },
+    )
+    entry.add_to_hass(hass)
+
+    def start_with_radio_sensor(coordinator: ZontDataUpdateCoordinator) -> None:
+        coordinator.data = ZontData(
+            controller=ZontControllerData(info=CONTROLLER_INFO),
+            objects=immutable_objects(
+                {
+                    12001: ZontRadioSensorData(
+                        object_id=12001,
+                        object_type=8,
+                        name="Гостиная",
+                        subtype=18,
+                        temperature=23.4,
+                        humidity=48,
+                        battery_voltage=2.91,
+                        signal_strength_raw=86,
+                    )
+                }
+            ),
+        )
+        coordinator.async_update_listeners()
+
+    with (
+        patch.object(ZontWsClient, "async_start", new=AsyncMock()),
+        patch.object(
+            ZontDataUpdateCoordinator,
+            "async_start",
+            new=start_with_radio_sensor,
+        ),
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    registry = er.async_get(hass)
+    for suffix in (
+        "temperature",
+        "humidity",
+        "battery_voltage",
+        "signal_strength",
+    ):
+        assert (
+            registry.async_get_entity_id(
+                "sensor",
+                DOMAIN,
+                f"{SERIAL_NUMBER}_12001_{suffix}",
+            )
+            == f"sensor.gostinaia_{suffix}"
+        )
 
     assert await hass.config_entries.async_unload(entry.entry_id)
 

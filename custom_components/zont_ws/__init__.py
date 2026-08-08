@@ -36,12 +36,15 @@ from .controller import (
 )
 from .coordinator import ZontDataUpdateCoordinator, ZontRuntimeData
 from .objects import (
+    SUPPORTED_RADIO_SENSOR_SUBTYPES,
     ZontAnalogInputData,
     ZontDigitalBusAdapterData,
     ZontDigitalTemperatureSensorData,
     ZontNtcTemperatureSensorData,
+    ZontRadioSensorData,
     analog_input_model,
     object_device_identifier,
+    radio_sensor_model,
 )
 from .services import async_setup_services
 
@@ -168,6 +171,12 @@ def _async_sync_object_devices(
         elif isinstance(obj, ZontNtcTemperatureSensorData):
             manufacturer = None
             model = "NTC-термодатчик"
+        elif (
+            isinstance(obj, ZontRadioSensorData)
+            and obj.subtype in SUPPORTED_RADIO_SENSOR_SUBTYPES
+        ):
+            manufacturer = None
+            model = radio_sensor_model(obj.subtype)
         else:
             continue
         device_registry.async_get_or_create(

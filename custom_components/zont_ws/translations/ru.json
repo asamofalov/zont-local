@@ -52,6 +52,9 @@
       },
       "analog_triggered": {
         "name": "Сработка"
+      },
+      "radio_triggered": {
+        "name": "Сработка"
       }
     },
     "button": {
@@ -110,6 +113,18 @@
       },
       "analog_value": {
         "name": "Значение"
+      },
+      "radio_temperature": {
+        "name": "Температура"
+      },
+      "radio_humidity": {
+        "name": "Влажность"
+      },
+      "radio_battery_voltage": {
+        "name": "Напряжение батареи"
+      },
+      "radio_signal_strength": {
+        "name": "Уровень сигнала"
       }
     }
   },

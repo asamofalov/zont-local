@@ -12,11 +12,13 @@ from typing import Any
 OBJECT_TYPE_ANALOG_INPUT = 0
 OBJECT_TYPE_DIGITAL_TEMPERATURE_SENSOR = 1
 OBJECT_TYPE_DIGITAL_BUS_ADAPTER = 6
+OBJECT_TYPE_RADIO_SENSOR = 8
 OBJECT_TYPE_NTC_TEMPERATURE_SENSOR = 27
 SUPPORTED_OBJECT_TYPES = (
     OBJECT_TYPE_ANALOG_INPUT,
     OBJECT_TYPE_DIGITAL_TEMPERATURE_SENSOR,
     OBJECT_TYPE_DIGITAL_BUS_ADAPTER,
+    OBJECT_TYPE_RADIO_SENSOR,
     OBJECT_TYPE_NTC_TEMPERATURE_SENSOR,
 )
 
@@ -48,6 +50,32 @@ ANALOG_INPUT_SUBTYPE_NAMES = MappingProxyType(
 )
 
 ANALOG_BINARY_FIRST_SUBTYPES = frozenset({3, 4, 5, 6, 7, 9, 10, 11, 14, 15, 19, 20})
+
+RADIO_SENSOR_SUBTYPE_NAMES = MappingProxyType(
+    {
+        2: "Трёхкнопочный брелок",
+        3: "Четырёхкнопочный брелок",
+        4: "Радиореле блокировки",
+        5: "Радиотермометр",
+        6: "Радиодут",
+        7: "Модуль капота",
+        8: "Радиометка",
+        10: "Радиодатчик протечки",
+        11: "Радиодатчик движения",
+        12: "Радиодатчик удара",
+        13: "Радиотермометр из трёх датчиков и концевого контакта",
+        14: "Радиодатчик расхода электроэнергии",
+        15: "Внешний радиодатчик температуры",
+        16: "Радиодатчик расхода воды и газа",
+        17: "Радиорозетка 220 В",
+        18: "Радиодатчик температуры и влажности",
+        19: "Радиометка с акселерометром",
+        20: "Радиометка с аккумулятором",
+        23: "Радиопанель или радиотермостат",
+    }
+)
+
+SUPPORTED_RADIO_SENSOR_SUBTYPES = frozenset({5, 10, 11, 15, 18})
 
 
 class ZontObjectParseError(ValueError):
@@ -112,11 +140,24 @@ class ZontNtcTemperatureSensorData(ZontTemperatureSensorData):
     """Read-only state of an NTC temperature sensor."""
 
 
+@dataclass(frozen=True, slots=True)
+class ZontRadioSensorData(ZontObjectData):
+    """Read-only state of one radio sensor."""
+
+    subtype: int = 0
+    temperature: float | None = None
+    humidity: float | None = None
+    battery_voltage: float | None = None
+    signal_strength_raw: float | None = None
+    triggered: bool | None = None
+
+
 type ZontObject = (
     ZontAnalogInputData
     | ZontDigitalBusAdapterData
     | ZontDigitalTemperatureSensorData
     | ZontNtcTemperatureSensorData
+    | ZontRadioSensorData
 )
 
 
@@ -125,6 +166,14 @@ def analog_input_model(subtype: int) -> str:
     return ANALOG_INPUT_SUBTYPE_NAMES.get(
         subtype,
         f"Аналоговый вход (подтип {subtype})",
+    )
+
+
+def radio_sensor_model(subtype: int) -> str:
+    """Return the documented display name for a radio sensor subtype."""
+    return RADIO_SENSOR_SUBTYPE_NAMES.get(
+        subtype,
+        f"Радиодатчик (подтип {subtype})",
     )
 
 
@@ -281,6 +330,97 @@ def parse_ntc_temperature_sensor(
     )
 
 
+def parse_radio_sensor(
+    payload: Mapping[str, Any],
+    previous: ZontRadioSensorData | None = None,
+    *,
+    partial: bool = False,
+) -> ZontRadioSensorData:
+    """Parse a full or partial radio sensor payload."""
+    object_id = _identity_int(payload, "id", previous.object_id if previous else None)
+    object_type = _identity_int(
+        payload,
+        "type",
+        previous.object_type if previous else None,
+    )
+    if object_type != OBJECT_TYPE_RADIO_SENSOR:
+        raise ZontObjectParseError("Object is not a radio sensor")
+
+    name = payload.get("name", previous.name if previous else None)
+    if not isinstance(name, str) or not name.strip():
+        raise ZontObjectParseError("Object name is missing")
+
+    subtype = _identity_int(
+        payload,
+        "stype",
+        previous.subtype if previous else None,
+    )
+    temperature = _optional_number(
+        payload,
+        "t",
+        previous.temperature if previous is not None else None,
+        partial,
+    )
+    humidity = _optional_number(
+        payload,
+        "h",
+        previous.humidity if previous is not None else None,
+        partial,
+    )
+    battery_voltage = _optional_number(
+        payload,
+        "b",
+        previous.battery_voltage if previous is not None else None,
+        partial,
+    )
+    signal_strength_raw = _optional_number(
+        payload,
+        "r",
+        previous.signal_strength_raw if previous is not None else None,
+        partial,
+    )
+    triggered = _optional_binary_state(
+        payload,
+        "trig",
+        previous.triggered if previous is not None else None,
+        partial,
+    )
+    available = _object_available(
+        payload,
+        previous.available if previous is not None else None,
+        partial,
+        any(
+            value is not None
+            for value in (
+                temperature,
+                humidity,
+                battery_voltage,
+                signal_strength_raw,
+                triggered,
+            )
+        ),
+    )
+    if not available and previous is not None:
+        temperature = previous.temperature
+        humidity = previous.humidity
+        battery_voltage = previous.battery_voltage
+        signal_strength_raw = previous.signal_strength_raw
+        triggered = previous.triggered
+
+    return ZontRadioSensorData(
+        object_id=object_id,
+        object_type=object_type,
+        name=name.strip(),
+        available=available,
+        subtype=subtype,
+        temperature=temperature,
+        humidity=humidity,
+        battery_voltage=battery_voltage,
+        signal_strength_raw=signal_strength_raw,
+        triggered=triggered,
+    )
+
+
 def _parse_temperature_sensor[T: ZontTemperatureSensorData](
     payload: Mapping[str, Any],
     previous: T | None,
@@ -361,6 +501,15 @@ def parse_zont_object(
         return parse_analog_input(
             payload,
             previous_input,
+            partial=partial,
+        )
+    if object_type == OBJECT_TYPE_RADIO_SENSOR:
+        previous_sensor = (
+            previous if isinstance(previous, ZontRadioSensorData) else None
+        )
+        return parse_radio_sensor(
+            payload,
+            previous_sensor,
             partial=partial,
         )
     if object_type == OBJECT_TYPE_DIGITAL_BUS_ADAPTER:
