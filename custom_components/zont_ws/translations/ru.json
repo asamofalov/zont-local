@@ -1,21 +1,23 @@
 {
-  "title": "ZONT WebSocket",
+  "title": "ZONT",
   "config": {
     "step": {
       "user": {
         "title": "Подключение к ZONT",
-        "description": "Укажите локальный WebSocket-адрес и учётные данные контроллера.",
+        "description": "Укажите локальный IP-адрес и учётные данные контроллера.",
         "data": {
-          "url": "WebSocket URL",
+          "host": "IP-адрес",
           "username": "Имя пользователя",
           "password": "Пароль"
         }
       },
       "reconfigure": {
-        "title": "Изменение адреса контроллера",
-        "description": "Укажите новый локальный WebSocket-адрес.",
+        "title": "Перенастройка подключения ZONT",
+        "description": "Измените IP-адрес или имя пользователя. Чтобы сохранить текущий пароль, оставьте поле пароля пустым.",
         "data": {
-          "url": "WebSocket URL"
+          "host": "IP-адрес",
+          "username": "Имя пользователя",
+          "password": "Новый пароль"
         }
       },
       "reauth_confirm": {
@@ -29,13 +31,15 @@
     },
     "error": {
       "cannot_connect": "Не удалось подключиться к контроллеру",
+      "cannot_identify": "Контроллер не вернул серийный номер или сведения о модели",
+      "different_controller": "По указанному адресу найден другой контроллер ZONT",
       "invalid_auth": "Неверное имя пользователя или пароль",
-      "invalid_url": "Укажите корректный адрес ws:// или wss://",
+      "invalid_host": "Укажите корректный IPv4- или IPv6-адрес",
       "unknown": "Непредвиденная ошибка"
     },
     "abort": {
       "reauth_successful": "Повторная авторизация выполнена",
-      "reconfigure_successful": "Адрес контроллера обновлён"
+      "reconfigure_successful": "Настройки подключения обновлены"
     }
   },
   "entity": {
@@ -53,10 +57,10 @@
       "message": "Контроллер ZONT отклонил учётные данные"
     },
     "entry_not_configured": {
-      "message": "Интеграция ZONT WebSocket не настроена"
+      "message": "Интеграция ZONT не настроена"
     },
     "entry_not_loaded": {
-      "message": "Конфигурация ZONT WebSocket не загружена"
+      "message": "Конфигурация ZONT не загружена"
     },
     "controller_offline": {
       "message": "Контроллер ZONT не подключён"

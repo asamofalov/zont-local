@@ -17,9 +17,11 @@ from custom_components.zont_ws.client import (
     ZontProtocolError,
     ZontRequestTimeoutError,
     ZontWsClient,
+    async_request_system_commands,
     async_validate_connection,
 )
 from custom_components.zont_ws.const import EVENT_MESSAGE
+from custom_components.zont_ws.controller import async_refresh_controller_info
 
 
 class FakeMessage:
@@ -133,6 +135,36 @@ async def test_validate_connection_wraps_network_failure() -> None:
             "ws://controller/ws",
             ZontCredentials("user", "password"),
         )
+
+
+@pytest.mark.asyncio
+async def test_temporary_system_commands_are_serialized() -> None:
+    ws = FakeWebSocket(
+        [
+            FakeMessage(WSMsgType.TEXT, json.dumps({"auth": 200})),
+            FakeMessage(WSMsgType.TEXT, json.dumps({"id": 7, "type": 1})),
+            FakeMessage(WSMsgType.TEXT, json.dumps({"scmdres": "#S54:abcdef123456"})),
+            FakeMessage(
+                WSMsgType.TEXT,
+                json.dumps({"scmdres": "#S7:H1V02_PRO 700 625"}),
+            ),
+        ]
+    )
+
+    responses = await async_request_system_commands(
+        FakeSession([ws]),  # type: ignore[arg-type]
+        "ws://controller/ws",
+        ZontCredentials("user", "password"),
+        ("#S54?", "#S7?"),
+    )
+
+    assert responses == ["#S54:abcdef123456", "#S7:H1V02_PRO 700 625"]
+    assert ws.sent == [
+        {"user": "user", "pass": "password"},
+        {"scmd": "#S54?"},
+        {"scmd": "#S7?"},
+    ]
+    assert ws.closed
 
 
 @pytest.mark.asyncio
@@ -687,6 +719,34 @@ async def test_system_command_requests_are_serialized(
     assert ws.sent[-1] == {"scmd": "SDATE?"}
     client._handle_incoming('{"scmdres":"SDATE=8 8 26 10 14 19"}')
     assert await second == "SDATE=8 8 26 10 14 19"
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_controller_information_is_parsed(
+    fake_hass: Any, auth_error_callback: Any
+) -> None:
+    ws = auth_socket()
+    client = ZontWsClient(
+        fake_hass,
+        FakeSession([ws]),  # type: ignore[arg-type]
+        "ws://controller/ws",
+        ZontCredentials("user", "password"),
+        "entry",
+        "device",
+        auth_error_callback,
+    )
+    await client.async_start()
+
+    request = asyncio.create_task(async_refresh_controller_info(client, "ABCDEF123456"))
+    await asyncio.sleep(0)
+    assert ws.sent[-1] == {"scmd": "#S7?"}
+    client._handle_incoming('{"scmdres":"#S7:H1V02_PRO 700 625"}')
+
+    info = await request
+    assert info.model == "H1V02 PRO"
+    assert info.board_model == "700"
+    assert info.firmware_version == "625"
     await client.async_stop()
 
 

@@ -38,12 +38,10 @@ class ZontConnectedBinarySensor(BinarySensorEntity):
         """Initialize the sensor."""
         self._entry = entry
         self._attr_is_on = entry.runtime_data.is_connected
-        self._attr_unique_id = f"{entry.entry_id}_connected"
+        controller_identifier = entry.unique_id or entry.entry_id
+        self._attr_unique_id = f"{controller_identifier}_connected"
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name="ZONT Controller",
-            manufacturer="ZONT",
-            model="WebSocket Controller",
+            identifiers={(DOMAIN, controller_identifier)},
         )
 
     async def async_added_to_hass(self) -> None:

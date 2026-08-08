@@ -140,6 +140,69 @@ async def async_validate_connection(
     await _async_close_websocket(ws)
 
 
+async def async_request_system_commands(
+    session: ClientSession,
+    url: str,
+    credentials: ZontCredentials,
+    commands: tuple[str, ...],
+    response_timeout: float = COMMAND_TIMEOUT,
+) -> list[str]:
+    """Run serialized system commands on one temporary connection."""
+    ws = await _async_open_websocket(session, url, credentials)
+    try:
+        responses = []
+        for command in commands:
+            responses.append(
+                await _async_request_system_command(ws, command, response_timeout)
+            )
+        return responses
+    finally:
+        await _async_close_websocket(ws)
+
+
+async def _async_request_system_command(
+    ws: ClientWebSocketResponse,
+    command: str,
+    response_timeout: float,
+) -> str:
+    """Send one system command on a temporary config-flow connection."""
+    try:
+        await ws.send_str(
+            json.dumps({"scmd": command}, ensure_ascii=False, separators=(",", ":"))
+        )
+        async with asyncio.timeout(response_timeout):
+            while True:
+                message = await ws.receive()
+                if message.type is WSMsgType.TEXT:
+                    try:
+                        response = json.loads(message.data)
+                    except (TypeError, json.JSONDecodeError) as err:
+                        raise ZontProtocolError(
+                            "System command response is not JSON"
+                        ) from err
+                    if not isinstance(response, Mapping) or "scmdres" not in response:
+                        continue
+                    result = response["scmdres"]
+                    if not isinstance(result, str):
+                        raise ZontProtocolError("System command response is not text")
+                    return result
+                if message.type in (
+                    WSMsgType.CLOSE,
+                    WSMsgType.CLOSED,
+                    WSMsgType.CLOSING,
+                    WSMsgType.ERROR,
+                ):
+                    raise ZontConnectionError("The WebSocket was closed")
+                if message.type is WSMsgType.BINARY:
+                    raise ZontProtocolError(
+                        "Binary WebSocket messages are not supported"
+                    )
+    except TimeoutError as err:
+        raise ZontRequestTimeoutError("No response for system command") from err
+    except (ClientError, OSError, RuntimeError) as err:
+        raise ZontConnectionError("Unable to request controller data") from err
+
+
 class ZontWsClient:
     """Maintain a single authenticated WebSocket connection to ZONT."""
 

@@ -13,7 +13,11 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 
 async def test_connection_state_updates(hass: HomeAssistant) -> None:
-    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="ABCDEF123456",
+        data={},
+    )
     client = MagicMock(spec=ZontWsClient)
     client.is_connected = True
     entry.runtime_data = client
@@ -23,8 +27,10 @@ async def test_connection_state_updates(hass: HomeAssistant) -> None:
     entity.async_write_ha_state = MagicMock()
 
     assert entity.is_on
-    assert entity.unique_id == f"{entry.entry_id}_connected"
-    assert entity.device_info["identifiers"] == {(DOMAIN, entry.entry_id)}
+    assert entity.unique_id == "ABCDEF123456_connected"
+    assert entity.device_info["identifiers"] == {(DOMAIN, "ABCDEF123456")}
+    assert "name" not in entity.device_info
+    assert "model" not in entity.device_info
     await entity.async_added_to_hass()
     async_dispatcher_send(hass, connection_signal(entry.entry_id), False)
 

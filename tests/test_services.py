@@ -13,13 +13,13 @@ from custom_components.zont_ws.const import (
 )
 from custom_components.zont_ws.services import async_setup_services
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import CONF_PASSWORD, CONF_URL, CONF_USERNAME
+from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 ENTRY_DATA = {
-    CONF_URL: "ws://controller.local/ws",
+    CONF_HOST: "192.0.2.10",
     CONF_USERNAME: "user",
     CONF_PASSWORD: "password",
 }

@@ -1,7 +1,7 @@
 {
   "domain": "zont_ws",
-  "name": "ZONT WebSocket",
-  "version": "0.2.2",
+  "name": "ZONT",
+  "version": "0.3.0",
   "codeowners": [],
   "config_flow": true,
   "dependencies": [],
