@@ -32,6 +32,7 @@ from custom_components.zont_ws.coordinator import (
     ZontRuntimeData,
 )
 from custom_components.zont_ws.objects import (
+    ZontAnalogInputData,
     ZontDigitalBusAdapterData,
     ZontDigitalBusState,
     ZontDigitalTemperatureSensorData,
@@ -221,6 +222,92 @@ async def test_digital_bus_adapter_is_registered_as_child_device(
     assert adapter.name_by_user == "Мой котёл"
 
 
+async def test_analog_input_is_registered_as_typed_child_device(
+    hass: HomeAssistant,
+) -> None:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=SERIAL_NUMBER,
+        data=ENTRY_DATA,
+    )
+    entry.add_to_hass(hass)
+    registry = dr.async_get(hass)
+    controller = registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, SERIAL_NUMBER)},
+        name="ZONT H1V02 PRO",
+    )
+    coordinator = MagicMock(spec=ZontDataUpdateCoordinator)
+    coordinator.data = ZontData(
+        controller=ZontControllerData(info=CONTROLLER_INFO),
+        objects=immutable_objects(
+            {
+                20550: ZontAnalogInputData(
+                    object_id=20550,
+                    object_type=0,
+                    name="Влажность",
+                    subtype=17,
+                    value=45,
+                    unit_code=7,
+                    triggered=False,
+                )
+            }
+        ),
+    )
+    entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontWsClient), coordinator)
+
+    _async_sync_object_devices(hass, entry, controller.id)
+
+    analog_input = registry.async_get_device(
+        identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:20550")}
+    )
+    assert analog_input is not None
+    assert analog_input.name == "Влажность"
+    assert analog_input.manufacturer is None
+    assert analog_input.model == "Датчик влажности"
+    assert analog_input.via_device_id == controller.id
+
+
+async def test_unknown_analog_subtype_has_fallback_device_model(
+    hass: HomeAssistant,
+) -> None:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=SERIAL_NUMBER,
+        data=ENTRY_DATA,
+    )
+    entry.add_to_hass(hass)
+    registry = dr.async_get(hass)
+    controller = registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, SERIAL_NUMBER)},
+        name="ZONT H1V02 PRO",
+    )
+    coordinator = MagicMock(spec=ZontDataUpdateCoordinator)
+    coordinator.data = ZontData(
+        controller=ZontControllerData(info=CONTROLLER_INFO),
+        objects=immutable_objects(
+            {
+                20550: ZontAnalogInputData(
+                    object_id=20550,
+                    object_type=0,
+                    name="Будущий вход",
+                    subtype=22,
+                )
+            }
+        ),
+    )
+    entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontWsClient), coordinator)
+
+    _async_sync_object_devices(hass, entry, controller.id)
+
+    analog_input = registry.async_get_device(
+        identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:20550")}
+    )
+    assert analog_input is not None
+    assert analog_input.model == "Аналоговый вход (подтип 22)"
+
+
 async def test_discovered_adapter_creates_prefixed_entities(
     hass: HomeAssistant,
 ) -> None:
@@ -388,6 +475,72 @@ async def test_discovered_temperature_sensor_creates_prefixed_entity(
             f"{SERIAL_NUMBER}_4107_temperature",
         )
         == "sensor.t_spalnia_temperature"
+    )
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_discovered_analog_input_creates_prefixed_entities(
+    hass: HomeAssistant,
+) -> None:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=CONFIG_ENTRY_VERSION,
+        unique_id=SERIAL_NUMBER,
+        data={
+            **ENTRY_DATA,
+            CONF_CONTROLLER: CONTROLLER_INFO.as_dict(),
+            CONF_AUTO_TITLE: "ZONT H1V02 PRO (192.0.2.10)",
+        },
+    )
+    entry.add_to_hass(hass)
+
+    def start_with_analog_input(coordinator: ZontDataUpdateCoordinator) -> None:
+        coordinator.data = ZontData(
+            controller=ZontControllerData(info=CONTROLLER_INFO),
+            objects=immutable_objects(
+                {
+                    20550: ZontAnalogInputData(
+                        object_id=20550,
+                        object_type=0,
+                        name="Контроль напряжения питания",
+                        subtype=0,
+                        value=12.2,
+                        unit_code=0,
+                        triggered=False,
+                    )
+                }
+            ),
+        )
+        coordinator.async_update_listeners()
+
+    with (
+        patch.object(ZontWsClient, "async_start", new=AsyncMock()),
+        patch.object(
+            ZontDataUpdateCoordinator,
+            "async_start",
+            new=start_with_analog_input,
+        ),
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    registry = er.async_get(hass)
+    assert (
+        registry.async_get_entity_id(
+            "sensor",
+            DOMAIN,
+            f"{SERIAL_NUMBER}_20550_value",
+        )
+        == "sensor.kontrol_napriazheniia_pitaniia_value"
+    )
+    assert (
+        registry.async_get_entity_id(
+            "binary_sensor",
+            DOMAIN,
+            f"{SERIAL_NUMBER}_20550_triggered",
+        )
+        == "binary_sensor.kontrol_napriazheniia_pitaniia_triggered"
     )
 
     assert await hass.config_entries.async_unload(entry.entry_id)

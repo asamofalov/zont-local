@@ -36,8 +36,10 @@ from .controller import (
 )
 from .coordinator import ZontDataUpdateCoordinator, ZontRuntimeData
 from .objects import (
+    ZontAnalogInputData,
     ZontDigitalBusAdapterData,
     ZontDigitalTemperatureSensorData,
+    analog_input_model,
     object_device_identifier,
 )
 from .services import async_setup_services
@@ -153,7 +155,10 @@ def _async_sync_object_devices(
     controller_identifier = entry.unique_id or entry.entry_id
     device_registry = dr.async_get(hass)
     for obj in entry.runtime_data.coordinator.data.objects.values():
-        if isinstance(obj, ZontDigitalBusAdapterData):
+        if isinstance(obj, ZontAnalogInputData):
+            manufacturer = None
+            model = analog_input_model(obj.subtype)
+        elif isinstance(obj, ZontDigitalBusAdapterData):
             manufacturer = "ZONT"
             model = "Адаптер цифровой шины"
         elif isinstance(obj, ZontDigitalTemperatureSensorData):

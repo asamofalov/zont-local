@@ -49,6 +49,9 @@
       },
       "cloud_connected": {
         "name": "Связь с облаком"
+      },
+      "analog_triggered": {
+        "name": "Сработка"
       }
     },
     "button": {
@@ -101,6 +104,9 @@
       },
       "digital_temperature": {
         "name": "Температура"
+      },
+      "analog_value": {
+        "name": "Значение"
       }
     }
   },

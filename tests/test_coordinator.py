@@ -17,6 +17,7 @@ from custom_components.zont_ws.coordinator import (
     ZontDataUpdateCoordinator,
 )
 from custom_components.zont_ws.objects import (
+    ZontAnalogInputData,
     ZontDigitalBusAdapterData,
     ZontDigitalBusState,
     ZontDigitalTemperatureSensorData,
@@ -68,7 +69,7 @@ async def test_refresh_builds_one_controller_snapshot(hass: HomeAssistant) -> No
         call(COMMAND_SERVER_INFO, response_timeout=3.0),
         call(COMMAND_SUPPLY_VOLTAGE, response_timeout=3.0),
     ]
-    assert client.async_get_object_ids.await_args_list == [call(1), call(6)]
+    assert client.async_get_object_ids.await_args_list == [call(0), call(1), call(6)]
 
 
 async def test_invalid_source_is_disabled_without_breaking_others(
@@ -134,7 +135,7 @@ async def test_refresh_discovers_digital_bus_adapter(hass: HomeAssistant) -> Non
         "#S224:1 0 1 0",
         "#S6:123 0",
     ]
-    client.async_get_object_ids.side_effect = [[], [4097]]
+    client.async_get_object_ids.side_effect = [[], [], [4097]]
     client.async_get_object_state.return_value = {
         "id": 4097,
         "type": 6,
@@ -169,7 +170,14 @@ async def test_failed_object_becomes_unavailable_without_losing_values(
         "#S224:1 0 1 0",
         "#S6:123 0",
     ]
-    client.async_get_object_ids.side_effect = [[], [4097], [], [4097]]
+    client.async_get_object_ids.side_effect = [
+        [],
+        [],
+        [4097],
+        [],
+        [],
+        [4097],
+    ]
     client.async_get_object_state.side_effect = [
         {
             "id": 4097,
@@ -209,7 +217,9 @@ async def test_object_protocol_error_is_isolated_and_retried(
     ]
     client.async_get_object_ids.side_effect = [
         [],
+        [],
         ZontProtocolError,
+        [],
         [],
         [4097],
     ]
@@ -237,7 +247,7 @@ async def test_refresh_discovers_temperature_sensor_and_adapter(
         "#S224:1 0 1 0",
         "#S6:123 0",
     ]
-    client.async_get_object_ids.side_effect = [[8196], [4097]]
+    client.async_get_object_ids.side_effect = [[], [8196], [4097]]
     client.async_get_object_state.side_effect = [
         {
             "id": 8196,
@@ -262,7 +272,7 @@ async def test_refresh_discovers_temperature_sensor_and_adapter(
     assert sensor.temperature == 19.7
     assert sensor.available
     assert isinstance(coordinator.data.objects[4097], ZontDigitalBusAdapterData)
-    assert client.async_get_object_ids.await_args_list == [call(1), call(6)]
+    assert client.async_get_object_ids.await_args_list == [call(0), call(1), call(6)]
     assert client.async_get_object_state.await_args_list == [
         call(8196),
         call(4097),
@@ -290,7 +300,7 @@ async def test_temperature_type_error_does_not_block_adapter_refresh(
         "#S224:1 0 1 0",
         "#S6:123 0",
     ]
-    client.async_get_object_ids.side_effect = [ZontProtocolError, [4097]]
+    client.async_get_object_ids.side_effect = [[], ZontProtocolError, [4097]]
     client.async_get_object_state.return_value = {
         "id": 4097,
         "type": 6,
@@ -303,6 +313,106 @@ async def test_temperature_type_error_does_not_block_adapter_refresh(
     assert coordinator.last_update_success
     assert not coordinator.data.objects[8196].available
     assert coordinator.data.objects[4097].available
+
+
+async def test_refresh_discovers_analog_input_before_other_objects(
+    hass: HomeAssistant,
+) -> None:
+    coordinator, client = _coordinator(hass)
+    client.async_send_system_command.side_effect = [
+        "#S224:1 0 1 0",
+        "#S6:123 0",
+    ]
+    client.async_get_object_ids.side_effect = [[20550], [], []]
+    client.async_get_object_state.return_value = {
+        "id": 20550,
+        "type": 0,
+        "stype": 0,
+        "name": "Контроль напряжения питания",
+        "v": 12.2,
+        "u": 0,
+        "trig": 0,
+        "a": 1,
+    }
+
+    await coordinator.async_refresh()
+
+    analog_input = coordinator.data.objects[20550]
+    assert isinstance(analog_input, ZontAnalogInputData)
+    assert analog_input.value == 12.2
+    assert analog_input.unit_code == 0
+    assert analog_input.triggered is False
+    assert analog_input.available
+    assert client.async_get_object_ids.await_args_list == [call(0), call(1), call(6)]
+
+
+async def test_invalid_analog_input_does_not_block_other_object_types(
+    hass: HomeAssistant,
+) -> None:
+    coordinator, client = _coordinator(hass)
+    client.async_send_system_command.side_effect = [
+        "#S224:1 0 1 0",
+        "#S6:123 0",
+    ]
+    client.async_get_object_ids.side_effect = [[20550], [], [4097]]
+    client.async_get_object_state.side_effect = [
+        {
+            "id": 20550,
+            "type": 0,
+            "stype": -1,
+            "name": "Некорректный вход",
+        },
+        {
+            "id": 4097,
+            "type": 6,
+            "name": "Navien",
+            "water": 35,
+        },
+    ]
+
+    await coordinator.async_refresh()
+
+    assert coordinator.last_update_success
+    assert 20550 not in coordinator.data.objects
+    assert coordinator.data.objects[4097].available
+
+
+async def test_push_merges_partial_analog_state_and_availability(
+    hass: HomeAssistant,
+) -> None:
+    coordinator, _ = _coordinator(hass)
+    coordinator.data = ZontData(
+        controller=ZontControllerData(info=None),
+        objects=immutable_objects(
+            {
+                20550: ZontAnalogInputData(
+                    object_id=20550,
+                    object_type=0,
+                    name="Контроль напряжения питания",
+                    subtype=0,
+                    value=12.2,
+                    unit_code=0,
+                    triggered=False,
+                )
+            }
+        ),
+    )
+
+    coordinator._async_message_received({"id": 20550, "trig": 1})
+
+    analog_input = coordinator.data.objects[20550]
+    assert isinstance(analog_input, ZontAnalogInputData)
+    assert analog_input.available
+    assert analog_input.value == 12.2
+    assert analog_input.unit_code == 0
+    assert analog_input.triggered is True
+
+    coordinator._async_message_received({"id": 20550, "a": 0})
+
+    analog_input = coordinator.data.objects[20550]
+    assert not analog_input.available
+    assert analog_input.value == 12.2
+    assert analog_input.triggered is True
 
 
 async def test_push_merges_partial_adapter_state_without_resetting_schedule(

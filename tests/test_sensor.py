@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
 from custom_components.zont_ws.client import ZontWsClient
 from custom_components.zont_ws.const import DOMAIN
 from custom_components.zont_ws.controller import (
@@ -17,6 +18,7 @@ from custom_components.zont_ws.coordinator import (
     ZontRuntimeData,
 )
 from custom_components.zont_ws.objects import (
+    ZontAnalogInputData,
     ZontDigitalBusAdapterData,
     ZontDigitalBusState,
     ZontDigitalTemperatureSensorData,
@@ -24,8 +26,10 @@ from custom_components.zont_ws.objects import (
     immutable_objects,
 )
 from custom_components.zont_ws.sensor import (
+    ANALOG_INPUT_UNITS,
     CONNECTION_CHANNEL_STATES,
     DIGITAL_BUS_SENSOR_DESCRIPTIONS,
+    ZontAnalogInputValueSensor,
     ZontConnectionChannelSensor,
     ZontDigitalBusSensor,
     ZontDigitalTemperatureSensor,
@@ -33,7 +37,15 @@ from custom_components.zont_ws.sensor import (
     async_setup_entry,
 )
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
-from homeassistant.const import EntityCategory, UnitOfElectricPotential
+from homeassistant.const import (
+    PERCENTAGE,
+    EntityCategory,
+    UnitOfElectricPotential,
+    UnitOfPressure,
+    UnitOfSpeed,
+    UnitOfVolume,
+    UnitOfVolumeFlowRate,
+)
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 
@@ -106,6 +118,115 @@ def test_controller_sensors_are_unavailable_without_source_data() -> None:
 
     assert not ZontConnectionChannelSensor(entry).available
     assert not ZontSupplyVoltageSensor(entry).available
+
+
+@pytest.mark.parametrize(
+    ("unit_code", "subtype", "unit", "device_class"),
+    [
+        (0, 0, UnitOfElectricPotential.VOLT, SensorDeviceClass.VOLTAGE),
+        (1, 0, "kΩ", None),
+        (2, 1, UnitOfPressure.BAR, SensorDeviceClass.PRESSURE),
+        (3, 12, UnitOfSpeed.KILOMETERS_PER_HOUR, SensorDeviceClass.SPEED),
+        (4, 13, "rpm", None),
+        (5, 16, UnitOfVolume.LITERS, SensorDeviceClass.VOLUME),
+        (
+            6,
+            16,
+            UnitOfVolumeFlowRate.LITERS_PER_HOUR,
+            SensorDeviceClass.VOLUME_FLOW_RATE,
+        ),
+        (7, 17, PERCENTAGE, SensorDeviceClass.HUMIDITY),
+        (7, 0, PERCENTAGE, None),
+        (8, 0, None, None),
+        (99, 22, None, None),
+    ],
+)
+def test_analog_input_sensor_maps_documented_units(
+    unit_code: int,
+    subtype: int,
+    unit: str | None,
+    device_class: SensorDeviceClass | None,
+) -> None:
+    analog_input = ZontAnalogInputData(
+        object_id=20550,
+        object_type=0,
+        name="Аналоговый вход",
+        subtype=subtype,
+        value=12.2,
+        unit_code=unit_code,
+        triggered=False,
+    )
+    entry = _entry(ZontControllerData(info=None), {20550: analog_input})
+
+    entity = ZontAnalogInputValueSensor(entry, 20550, subtype)
+
+    assert entity.available
+    assert entity.native_value == 12.2
+    assert entity.native_unit_of_measurement == unit
+    assert entity.device_class is device_class
+    assert entity.state_class is SensorStateClass.MEASUREMENT
+    assert entity.unique_id == "ABCDEF123456_20550_value"
+    assert entity.suggested_object_id == "value"
+    assert entity.device_info["identifiers"] == {(DOMAIN, "ABCDEF123456:object:20550")}
+
+
+def test_analog_binary_first_raw_value_is_disabled_diagnostic() -> None:
+    analog_input = ZontAnalogInputData(
+        object_id=20550,
+        object_type=0,
+        name="Вход двери",
+        subtype=3,
+        value=0,
+        unit_code=8,
+        triggered=False,
+    )
+    entry = _entry(ZontControllerData(info=None), {20550: analog_input})
+
+    entity = ZontAnalogInputValueSensor(entry, 20550, 3)
+
+    assert entity.entity_category is EntityCategory.DIAGNOSTIC
+    assert not entity.entity_registry_enabled_default
+
+
+def test_analog_input_sensor_tracks_value_and_object_availability() -> None:
+    analog_input = ZontAnalogInputData(
+        object_id=20550,
+        object_type=0,
+        name="Вход",
+        subtype=0,
+        value=None,
+        unit_code=0,
+        triggered=False,
+    )
+    entry = _entry(ZontControllerData(info=None), {20550: analog_input})
+    entity = ZontAnalogInputValueSensor(entry, 20550, 0)
+
+    assert not entity.available
+
+    entry.runtime_data.coordinator.data = ZontData(
+        controller=ZontControllerData(info=None),
+        objects=immutable_objects(
+            {
+                20550: ZontAnalogInputData(
+                    object_id=20550,
+                    object_type=0,
+                    name="Вход",
+                    available=False,
+                    subtype=0,
+                    value=12.2,
+                    unit_code=0,
+                    triggered=False,
+                )
+            }
+        ),
+    )
+
+    assert not entity.available
+    assert entity.native_value == 12.2
+
+
+def test_all_documented_analog_input_units_are_mapped() -> None:
+    assert set(ANALOG_INPUT_UNITS) == set(range(9))
 
 
 def test_digital_bus_sensors_expose_all_documented_fields() -> None:
@@ -313,6 +434,33 @@ async def test_setup_adds_unavailable_temperature_sensor_without_duplicates(
     entities = async_add_entities.call_args_list[1].args[0]
     assert len(entities) == 1
     assert isinstance(entities[0], ZontDigitalTemperatureSensor)
+    assert not entities[0].available
+
+    listener = entry.runtime_data.coordinator.async_add_listener.call_args.args[0]
+    listener()
+    assert async_add_entities.call_count == 2
+
+
+async def test_setup_adds_analog_value_without_waiting_for_current_value(
+    hass,
+) -> None:
+    analog_input = ZontAnalogInputData(
+        object_id=20550,
+        object_type=0,
+        name="Контроль напряжения питания",
+        available=False,
+        subtype=0,
+        unit_code=0,
+    )
+    entry = _entry(ZontControllerData(info=None), {20550: analog_input})
+    entry.add_to_hass(hass)
+    async_add_entities = MagicMock()
+
+    await async_setup_entry(hass, entry, async_add_entities)
+
+    entities = async_add_entities.call_args_list[1].args[0]
+    assert len(entities) == 1
+    assert isinstance(entities[0], ZontAnalogInputValueSensor)
     assert not entities[0].available
 
     listener = entry.runtime_data.coordinator.async_add_listener.call_args.args[0]

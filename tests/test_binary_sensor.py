@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
 from custom_components.zont_ws.binary_sensor import (
+    ZontAnalogInputTriggeredBinarySensor,
     ZontCloudConnectedBinarySensor,
     ZontConnectedBinarySensor,
+    async_setup_entry,
 )
 from custom_components.zont_ws.client import ZontWsClient
 from custom_components.zont_ws.const import DOMAIN, connection_signal
@@ -20,9 +23,31 @@ from custom_components.zont_ws.coordinator import (
     ZontDataUpdateCoordinator,
     ZontRuntimeData,
 )
+from custom_components.zont_ws.objects import ZontAnalogInputData, immutable_objects
+from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+
+def _analog_entry(
+    analog_input: ZontAnalogInputData,
+) -> MockConfigEntry:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="ABCDEF123456",
+        data={},
+    )
+    client = MagicMock(spec=ZontWsClient)
+    coordinator = MagicMock(spec=ZontDataUpdateCoordinator)
+    coordinator.last_update_success = True
+    coordinator.data = ZontData(
+        controller=ZontControllerData(info=None),
+        objects=immutable_objects({analog_input.object_id: analog_input}),
+    )
+    coordinator.async_add_listener.return_value = lambda: None
+    entry.runtime_data = ZontRuntimeData(client, coordinator)
+    return entry
 
 
 async def test_connection_state_updates(hass: HomeAssistant) -> None:
@@ -82,3 +107,118 @@ async def test_cloud_connection_uses_shared_snapshot(hass: HomeAssistant) -> Non
     assert entity.unique_id == "ABCDEF123456_cloud_connected"
     assert entity.suggested_object_id == "cloud_connected"
     assert entity.device_info["identifiers"] == {(DOMAIN, "ABCDEF123456")}
+
+
+@pytest.mark.parametrize(
+    ("subtype", "device_class"),
+    [
+        (0, BinarySensorDeviceClass.PROBLEM),
+        (1, BinarySensorDeviceClass.PROBLEM),
+        (2, BinarySensorDeviceClass.PROBLEM),
+        (3, BinarySensorDeviceClass.DOOR),
+        (4, BinarySensorDeviceClass.MOTION),
+        (5, BinarySensorDeviceClass.SMOKE),
+        (6, BinarySensorDeviceClass.MOISTURE),
+        (7, BinarySensorDeviceClass.MOTION),
+        (8, BinarySensorDeviceClass.PROBLEM),
+        (9, BinarySensorDeviceClass.PROBLEM),
+        (10, BinarySensorDeviceClass.PROBLEM),
+        (11, BinarySensorDeviceClass.POWER),
+        (12, BinarySensorDeviceClass.PROBLEM),
+        (13, BinarySensorDeviceClass.PROBLEM),
+        (14, None),
+        (15, BinarySensorDeviceClass.SAFETY),
+        (16, BinarySensorDeviceClass.PROBLEM),
+        (17, BinarySensorDeviceClass.PROBLEM),
+        (18, BinarySensorDeviceClass.PROBLEM),
+        (19, None),
+        (20, None),
+        (21, BinarySensorDeviceClass.PROBLEM),
+        (22, BinarySensorDeviceClass.PROBLEM),
+    ],
+)
+def test_analog_trigger_maps_subtype_device_class(
+    subtype: int,
+    device_class: BinarySensorDeviceClass | None,
+) -> None:
+    analog_input = ZontAnalogInputData(
+        object_id=20550,
+        object_type=0,
+        name="Вход",
+        subtype=subtype,
+        value=1,
+        unit_code=8,
+        triggered=True,
+    )
+    entry = _analog_entry(analog_input)
+
+    entity = ZontAnalogInputTriggeredBinarySensor(entry, 20550, subtype)
+
+    assert entity.available
+    assert entity.is_on
+    assert entity.device_class is device_class
+    assert entity.unique_id == "ABCDEF123456_20550_triggered"
+    assert entity.suggested_object_id == "triggered"
+    assert entity.device_info["identifiers"] == {(DOMAIN, "ABCDEF123456:object:20550")}
+
+
+def test_analog_trigger_tracks_field_and_object_availability() -> None:
+    analog_input = ZontAnalogInputData(
+        object_id=20550,
+        object_type=0,
+        name="Вход",
+        subtype=3,
+        value=0,
+        triggered=None,
+    )
+    entry = _analog_entry(analog_input)
+    entity = ZontAnalogInputTriggeredBinarySensor(entry, 20550, 3)
+
+    assert not entity.available
+
+    entry.runtime_data.coordinator.data = ZontData(
+        controller=ZontControllerData(info=None),
+        objects=immutable_objects(
+            {
+                20550: ZontAnalogInputData(
+                    object_id=20550,
+                    object_type=0,
+                    name="Вход",
+                    available=False,
+                    subtype=3,
+                    value=0,
+                    triggered=True,
+                )
+            }
+        ),
+    )
+
+    assert not entity.available
+    assert entity.is_on
+
+
+async def test_setup_adds_analog_trigger_without_duplicates(
+    hass: HomeAssistant,
+) -> None:
+    analog_input = ZontAnalogInputData(
+        object_id=20550,
+        object_type=0,
+        name="Вход",
+        available=False,
+        subtype=3,
+    )
+    entry = _analog_entry(analog_input)
+    entry.add_to_hass(hass)
+    async_add_entities = MagicMock()
+
+    await async_setup_entry(hass, entry, async_add_entities)
+
+    assert len(async_add_entities.call_args_list[0].args[0]) == 2
+    entities = async_add_entities.call_args_list[1].args[0]
+    assert len(entities) == 1
+    assert isinstance(entities[0], ZontAnalogInputTriggeredBinarySensor)
+    assert not entities[0].available
+
+    listener = entry.runtime_data.coordinator.async_add_listener.call_args.args[0]
+    listener()
+    assert async_add_entities.call_count == 2

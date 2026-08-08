@@ -9,12 +9,43 @@ from math import isfinite
 from types import MappingProxyType
 from typing import Any
 
+OBJECT_TYPE_ANALOG_INPUT = 0
 OBJECT_TYPE_DIGITAL_TEMPERATURE_SENSOR = 1
 OBJECT_TYPE_DIGITAL_BUS_ADAPTER = 6
 SUPPORTED_OBJECT_TYPES = (
+    OBJECT_TYPE_ANALOG_INPUT,
     OBJECT_TYPE_DIGITAL_TEMPERATURE_SENSOR,
     OBJECT_TYPE_DIGITAL_BUS_ADAPTER,
 )
+
+ANALOG_INPUT_SUBTYPE_NAMES = MappingProxyType(
+    {
+        0: "Аналоговый вход без пресета",
+        1: "Датчик давления 5 бар",
+        2: "Датчик давления 12 бар",
+        3: "Датчик открытия двери",
+        4: "ИК-датчик движения с контролем шлейфа",
+        5: "Датчик дыма",
+        6: "Датчик протечки",
+        7: "ИК-датчик движения без контроля шлейфа",
+        8: "Комнатный термостат",
+        9: "Авария котла +",
+        10: "Авария котла -",
+        11: "Вход «Зажигание»",
+        12: "Датчик скорости",
+        13: "Датчик оборотов двигателя",
+        14: "Дискретный вход",
+        15: "Тревожная кнопка",
+        16: "Датчик расхода топлива",
+        17: "Датчик влажности",
+        18: "Датчик давления 6 бар",
+        19: "Дискретный вход НР",
+        20: "Дискретный вход НЗ",
+        21: "Датчик давления 10 бар",
+    }
+)
+
+ANALOG_BINARY_FIRST_SUBTYPES = frozenset({3, 4, 5, 6, 7, 9, 10, 11, 14, 15, 19, 20})
 
 
 class ZontObjectParseError(ValueError):
@@ -40,6 +71,16 @@ class ZontObjectData:
 
 
 @dataclass(frozen=True, slots=True)
+class ZontAnalogInputData(ZontObjectData):
+    """Read-only state and configuration of one analog input."""
+
+    subtype: int = 0
+    value: float | None = None
+    unit_code: int | None = None
+    triggered: bool | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ZontDigitalBusAdapterData(ZontObjectData):
     """Read-only state of a boiler digital bus adapter."""
 
@@ -59,7 +100,17 @@ class ZontDigitalTemperatureSensorData(ZontObjectData):
     temperature: float | None = None
 
 
-type ZontObject = ZontDigitalBusAdapterData | ZontDigitalTemperatureSensorData
+type ZontObject = (
+    ZontAnalogInputData | ZontDigitalBusAdapterData | ZontDigitalTemperatureSensorData
+)
+
+
+def analog_input_model(subtype: int) -> str:
+    """Return the documented display name for an analog input subtype."""
+    return ANALOG_INPUT_SUBTYPE_NAMES.get(
+        subtype,
+        f"Аналоговый вход (подтип {subtype})",
+    )
 
 
 def object_device_identifier(controller_identifier: str, object_id: int) -> str:
@@ -77,6 +128,75 @@ def immutable_objects(
 def unavailable_object(obj: ZontObject) -> ZontObject:
     """Return an object snapshot marked unavailable without losing its data."""
     return replace(obj, available=False)
+
+
+def parse_analog_input(
+    payload: Mapping[str, Any],
+    previous: ZontAnalogInputData | None = None,
+    *,
+    partial: bool = False,
+) -> ZontAnalogInputData:
+    """Parse a full or partial analog input payload."""
+    object_id = _identity_int(payload, "id", previous.object_id if previous else None)
+    object_type = _identity_int(
+        payload,
+        "type",
+        previous.object_type if previous else None,
+    )
+    if object_type != OBJECT_TYPE_ANALOG_INPUT:
+        raise ZontObjectParseError("Object is not an analog input")
+
+    name = payload.get("name", previous.name if previous else None)
+    if not isinstance(name, str) or not name.strip():
+        raise ZontObjectParseError("Object name is missing")
+
+    subtype = _identity_int(
+        payload,
+        "stype",
+        previous.subtype if previous else None,
+    )
+    value = _optional_number(
+        payload,
+        "v",
+        previous.value if previous is not None else None,
+        partial,
+    )
+    triggered = _optional_binary_state(
+        payload,
+        "trig",
+        previous.triggered if previous is not None else None,
+        partial,
+    )
+    unit_code = _optional_non_negative_int(
+        payload,
+        "u",
+        previous.unit_code if previous is not None else None,
+        partial,
+    )
+    available = _object_available(
+        payload,
+        previous.available if previous is not None else None,
+        partial,
+        value is not None or triggered is not None,
+    )
+    if not available and previous is not None:
+        if value is None:
+            value = previous.value
+        if triggered is None:
+            triggered = previous.triggered
+        if unit_code is None:
+            unit_code = previous.unit_code
+
+    return ZontAnalogInputData(
+        object_id=object_id,
+        object_type=object_type,
+        name=name.strip(),
+        available=available,
+        subtype=subtype,
+        value=value,
+        unit_code=unit_code,
+        triggered=triggered,
+    )
 
 
 def parse_digital_bus_adapter(
@@ -140,11 +260,11 @@ def parse_digital_temperature_sensor(
         previous.temperature if previous is not None else None,
         partial,
     )
-    available = _temperature_sensor_available(
+    available = _object_available(
         payload,
-        previous,
+        previous.available if previous is not None else None,
         partial,
-        temperature,
+        temperature is not None,
     )
     if not available and temperature is None and previous is not None:
         temperature = previous.temperature
@@ -176,6 +296,13 @@ def parse_zont_object(
         return parse_digital_temperature_sensor(
             payload,
             previous_sensor,
+            partial=partial,
+        )
+    if object_type == OBJECT_TYPE_ANALOG_INPUT:
+        previous_input = previous if isinstance(previous, ZontAnalogInputData) else None
+        return parse_analog_input(
+            payload,
+            previous_input,
             partial=partial,
         )
     if object_type == OBJECT_TYPE_DIGITAL_BUS_ADAPTER:
@@ -228,19 +355,47 @@ def _optional_number(
     return None
 
 
-def _temperature_sensor_available(
+def _object_available(
     payload: Mapping[str, Any],
-    previous: ZontDigitalTemperatureSensorData | None,
+    previous: bool | None,
     partial: bool,
-    temperature: float | None,
+    has_state: bool,
 ) -> bool:
-    """Resolve documented sensor availability with a tolerant fallback."""
+    """Resolve documented object availability with a tolerant fallback."""
     if "a" not in payload:
         if partial and previous is not None:
-            return previous.available
-        return temperature is not None
+            return previous
+        return has_state
     available = payload["a"]
     return type(available) is int and available == 1
+
+
+def _optional_binary_state(
+    payload: Mapping[str, Any],
+    key: str,
+    previous: bool | None,
+    partial: bool,
+) -> bool | None:
+    """Read an optional protocol flag encoded as exactly zero or one."""
+    if key not in payload:
+        return previous if partial else None
+    value = payload[key]
+    if type(value) is int and value in (0, 1):
+        return value == 1
+    return None
+
+
+def _optional_non_negative_int(
+    payload: Mapping[str, Any],
+    key: str,
+    previous: int | None,
+    partial: bool,
+) -> int | None:
+    """Read optional non-negative configuration metadata."""
+    if key not in payload:
+        return previous if partial else None
+    value = payload[key]
+    return value if type(value) is int and value >= 0 else None
 
 
 def _integer_field(
