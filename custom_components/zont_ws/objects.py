@@ -12,10 +12,12 @@ from typing import Any
 OBJECT_TYPE_ANALOG_INPUT = 0
 OBJECT_TYPE_DIGITAL_TEMPERATURE_SENSOR = 1
 OBJECT_TYPE_DIGITAL_BUS_ADAPTER = 6
+OBJECT_TYPE_NTC_TEMPERATURE_SENSOR = 27
 SUPPORTED_OBJECT_TYPES = (
     OBJECT_TYPE_ANALOG_INPUT,
     OBJECT_TYPE_DIGITAL_TEMPERATURE_SENSOR,
     OBJECT_TYPE_DIGITAL_BUS_ADAPTER,
+    OBJECT_TYPE_NTC_TEMPERATURE_SENSOR,
 )
 
 ANALOG_INPUT_SUBTYPE_NAMES = MappingProxyType(
@@ -94,14 +96,27 @@ class ZontDigitalBusAdapterData(ZontObjectData):
 
 
 @dataclass(frozen=True, slots=True)
-class ZontDigitalTemperatureSensorData(ZontObjectData):
-    """Read-only state of a digital temperature sensor."""
+class ZontTemperatureSensorData(ZontObjectData):
+    """Common read-only state of a temperature sensor."""
 
     temperature: float | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class ZontDigitalTemperatureSensorData(ZontTemperatureSensorData):
+    """Read-only state of a digital temperature sensor."""
+
+
+@dataclass(frozen=True, slots=True)
+class ZontNtcTemperatureSensorData(ZontTemperatureSensorData):
+    """Read-only state of an NTC temperature sensor."""
+
+
 type ZontObject = (
-    ZontAnalogInputData | ZontDigitalBusAdapterData | ZontDigitalTemperatureSensorData
+    ZontAnalogInputData
+    | ZontDigitalBusAdapterData
+    | ZontDigitalTemperatureSensorData
+    | ZontNtcTemperatureSensorData
 )
 
 
@@ -241,14 +256,48 @@ def parse_digital_temperature_sensor(
     partial: bool = False,
 ) -> ZontDigitalTemperatureSensorData:
     """Parse a full or partial digital temperature sensor payload."""
+    return _parse_temperature_sensor(
+        payload,
+        previous,
+        partial=partial,
+        expected_object_type=OBJECT_TYPE_DIGITAL_TEMPERATURE_SENSOR,
+        data_class=ZontDigitalTemperatureSensorData,
+    )
+
+
+def parse_ntc_temperature_sensor(
+    payload: Mapping[str, Any],
+    previous: ZontNtcTemperatureSensorData | None = None,
+    *,
+    partial: bool = False,
+) -> ZontNtcTemperatureSensorData:
+    """Parse a full or partial NTC temperature sensor payload."""
+    return _parse_temperature_sensor(
+        payload,
+        previous,
+        partial=partial,
+        expected_object_type=OBJECT_TYPE_NTC_TEMPERATURE_SENSOR,
+        data_class=ZontNtcTemperatureSensorData,
+    )
+
+
+def _parse_temperature_sensor[T: ZontTemperatureSensorData](
+    payload: Mapping[str, Any],
+    previous: T | None,
+    *,
+    partial: bool,
+    expected_object_type: int,
+    data_class: type[T],
+) -> T:
+    """Parse fields common to documented temperature sensor types."""
     object_id = _identity_int(payload, "id", previous.object_id if previous else None)
     object_type = _identity_int(
         payload,
         "type",
         previous.object_type if previous else None,
     )
-    if object_type != OBJECT_TYPE_DIGITAL_TEMPERATURE_SENSOR:
-        raise ZontObjectParseError("Object is not a digital temperature sensor")
+    if object_type != expected_object_type:
+        raise ZontObjectParseError("Object is not the expected temperature sensor")
 
     name = payload.get("name", previous.name if previous else None)
     if not isinstance(name, str) or not name.strip():
@@ -269,7 +318,7 @@ def parse_digital_temperature_sensor(
     if not available and temperature is None and previous is not None:
         temperature = previous.temperature
 
-    return ZontDigitalTemperatureSensorData(
+    return data_class(
         object_id=object_id,
         object_type=object_type,
         name=name.strip(),
@@ -294,6 +343,15 @@ def parse_zont_object(
             previous if isinstance(previous, ZontDigitalTemperatureSensorData) else None
         )
         return parse_digital_temperature_sensor(
+            payload,
+            previous_sensor,
+            partial=partial,
+        )
+    if object_type == OBJECT_TYPE_NTC_TEMPERATURE_SENSOR:
+        previous_sensor = (
+            previous if isinstance(previous, ZontNtcTemperatureSensorData) else None
+        )
+        return parse_ntc_temperature_sensor(
             payload,
             previous_sensor,
             partial=partial,

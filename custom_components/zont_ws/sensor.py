@@ -35,6 +35,8 @@ from .objects import (
     ZontDigitalBusAdapterData,
     ZontDigitalBusState,
     ZontDigitalTemperatureSensorData,
+    ZontNtcTemperatureSensorData,
+    ZontTemperatureSensorData,
 )
 
 CONNECTION_CHANNEL_STATES = (
@@ -175,6 +177,12 @@ async def async_setup_entry(
                         ZontDigitalTemperatureSensor(entry, obj.object_id)
                     )
                 continue
+            if isinstance(obj, ZontNtcTemperatureSensorData):
+                identity = (obj.object_id, "temperature")
+                if identity not in known_entities:
+                    known_entities.add(identity)
+                    new_entities.append(ZontNtcTemperatureSensor(entry, obj.object_id))
+                continue
             if isinstance(obj, ZontDigitalBusAdapterData) and obj.available:
                 for description in DIGITAL_BUS_SENSOR_DESCRIPTIONS:
                     identity = (obj.object_id, description.key)
@@ -273,10 +281,9 @@ class ZontDigitalBusSensor(ZontObjectCoordinatorEntity, SensorEntity):
         )
 
 
-class ZontDigitalTemperatureSensor(ZontObjectCoordinatorEntity, SensorEntity):
-    """Represent one ZONT digital temperature sensor."""
+class _ZontTemperatureSensorEntity(ZontObjectCoordinatorEntity, SensorEntity):
+    """Represent one ZONT temperature sensor."""
 
-    _attr_translation_key = "digital_temperature"
     _attr_device_class = SensorDeviceClass.TEMPERATURE
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -287,7 +294,7 @@ class ZontDigitalTemperatureSensor(ZontObjectCoordinatorEntity, SensorEntity):
         entry: ConfigEntry[ZontRuntimeData],
         object_id: int,
     ) -> None:
-        """Initialize a digital temperature sensor."""
+        """Initialize a temperature sensor."""
         super().__init__(entry, object_id, "temperature", "temperature")
 
     @property
@@ -299,11 +306,19 @@ class ZontDigitalTemperatureSensor(ZontObjectCoordinatorEntity, SensorEntity):
     def native_value(self) -> float | None:
         """Return the current temperature in degrees Celsius."""
         obj = self.object_data
-        return (
-            obj.temperature
-            if isinstance(obj, ZontDigitalTemperatureSensorData)
-            else None
-        )
+        return obj.temperature if isinstance(obj, ZontTemperatureSensorData) else None
+
+
+class ZontDigitalTemperatureSensor(_ZontTemperatureSensorEntity):
+    """Represent one ZONT digital temperature sensor."""
+
+    _attr_translation_key = "digital_temperature"
+
+
+class ZontNtcTemperatureSensor(_ZontTemperatureSensorEntity):
+    """Represent one ZONT NTC temperature sensor."""
+
+    _attr_translation_key = "ntc_temperature"
 
 
 class ZontAnalogInputValueSensor(ZontObjectCoordinatorEntity, SensorEntity):

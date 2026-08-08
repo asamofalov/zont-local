@@ -105,6 +105,9 @@
       "digital_temperature": {
         "name": "Температура"
       },
+      "ntc_temperature": {
+        "name": "Температура"
+      },
       "analog_value": {
         "name": "Значение"
       }

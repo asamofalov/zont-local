@@ -39,6 +39,7 @@ from .objects import (
     ZontAnalogInputData,
     ZontDigitalBusAdapterData,
     ZontDigitalTemperatureSensorData,
+    ZontNtcTemperatureSensorData,
     analog_input_model,
     object_device_identifier,
 )
@@ -164,6 +165,9 @@ def _async_sync_object_devices(
         elif isinstance(obj, ZontDigitalTemperatureSensorData):
             manufacturer = None
             model = "Цифровой датчик температуры"
+        elif isinstance(obj, ZontNtcTemperatureSensorData):
+            manufacturer = None
+            model = "NTC-термодатчик"
         else:
             continue
         device_registry.async_get_or_create(

@@ -8,16 +8,19 @@ from custom_components.zont_ws.objects import (
     OBJECT_TYPE_ANALOG_INPUT,
     OBJECT_TYPE_DIGITAL_BUS_ADAPTER,
     OBJECT_TYPE_DIGITAL_TEMPERATURE_SENSOR,
+    OBJECT_TYPE_NTC_TEMPERATURE_SENSOR,
     ZontAnalogInputData,
     ZontDigitalBusAdapterData,
     ZontDigitalBusState,
     ZontDigitalTemperatureSensorData,
+    ZontNtcTemperatureSensorData,
     ZontObjectParseError,
     analog_input_model,
     immutable_objects,
     parse_analog_input,
     parse_digital_bus_adapter,
     parse_digital_temperature_sensor,
+    parse_ntc_temperature_sensor,
     parse_zont_object,
     unavailable_object,
 )
@@ -283,6 +286,106 @@ def test_parse_complete_digital_temperature_sensor() -> None:
     )
 
 
+def test_parse_complete_ntc_temperature_sensor() -> None:
+    sensor = parse_ntc_temperature_sensor(
+        {
+            "id": 20487,
+            "type": OBJECT_TYPE_NTC_TEMPERATURE_SENSOR,
+            "name": "Температура котла",
+            "t": 45.6,
+            "a": 1,
+        }
+    )
+
+    assert sensor == ZontNtcTemperatureSensorData(
+        object_id=20487,
+        object_type=27,
+        name="Температура котла",
+        available=True,
+        temperature=45.6,
+    )
+
+
+@pytest.mark.parametrize(
+    ("payload", "available", "temperature"),
+    [
+        ({"t": 45.6, "a": 1}, True, 45.6),
+        ({"t": 45.6, "a": 0}, False, 45.6),
+        ({"t": 45.6}, True, 45.6),
+        ({"a": 1}, True, None),
+        ({}, False, None),
+        ({"t": True, "a": 1}, True, None),
+        ({"t": float("inf"), "a": 1}, True, None),
+        ({"t": 45.6, "a": "1"}, False, 45.6),
+    ],
+)
+def test_ntc_temperature_value_and_availability(
+    payload: dict[str, object],
+    available: bool,
+    temperature: float | None,
+) -> None:
+    sensor = parse_ntc_temperature_sensor(
+        {
+            "id": 20487,
+            "type": 27,
+            "name": "Температура котла",
+            **payload,
+        }
+    )
+
+    assert sensor.available is available
+    assert sensor.temperature == temperature
+
+
+def test_partial_ntc_update_preserves_absent_fields_and_availability() -> None:
+    previous = ZontNtcTemperatureSensorData(
+        object_id=20487,
+        object_type=27,
+        name="Температура котла",
+        available=False,
+        temperature=45.6,
+    )
+
+    sensor = parse_ntc_temperature_sensor(
+        {"id": 20487, "t": 46.1},
+        previous,
+        partial=True,
+    )
+
+    assert not sensor.available
+    assert sensor.name == "Температура котла"
+    assert sensor.temperature == 46.1
+
+
+def test_unavailable_ntc_update_preserves_last_temperature() -> None:
+    previous = ZontNtcTemperatureSensorData(
+        object_id=20487,
+        object_type=27,
+        name="Температура котла",
+        temperature=45.6,
+    )
+
+    sensor = parse_ntc_temperature_sensor(
+        {
+            "id": 20487,
+            "type": 27,
+            "name": "Температура котла",
+            "a": 0,
+        },
+        previous,
+    )
+
+    assert not sensor.available
+    assert sensor.temperature == 45.6
+
+
+def test_ntc_parser_rejects_wrong_object_type() -> None:
+    with pytest.raises(ZontObjectParseError):
+        parse_ntc_temperature_sensor(
+            {"id": 20487, "type": 1, "name": "Температура котла"}
+        )
+
+
 @pytest.mark.parametrize(
     ("payload", "available", "temperature"),
     [
@@ -370,6 +473,24 @@ def test_generic_parser_dispatches_using_previous_object_type() -> None:
 
     assert isinstance(sensor, ZontDigitalTemperatureSensorData)
     assert sensor.temperature == 20.1
+
+
+def test_generic_parser_dispatches_ntc_using_previous_object_type() -> None:
+    previous = ZontNtcTemperatureSensorData(
+        object_id=20487,
+        object_type=27,
+        name="Температура котла",
+        temperature=45.6,
+    )
+
+    sensor = parse_zont_object(
+        {"id": 20487, "t": 46.1},
+        previous,
+        partial=True,
+    )
+
+    assert isinstance(sensor, ZontNtcTemperatureSensorData)
+    assert sensor.temperature == 46.1
 
 
 def test_generic_parser_rejects_unknown_object_type() -> None:

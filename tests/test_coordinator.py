@@ -21,6 +21,7 @@ from custom_components.zont_ws.objects import (
     ZontDigitalBusAdapterData,
     ZontDigitalBusState,
     ZontDigitalTemperatureSensorData,
+    ZontNtcTemperatureSensorData,
     immutable_objects,
 )
 from homeassistant.core import HomeAssistant
@@ -69,7 +70,12 @@ async def test_refresh_builds_one_controller_snapshot(hass: HomeAssistant) -> No
         call(COMMAND_SERVER_INFO, response_timeout=3.0),
         call(COMMAND_SUPPLY_VOLTAGE, response_timeout=3.0),
     ]
-    assert client.async_get_object_ids.await_args_list == [call(0), call(1), call(6)]
+    assert client.async_get_object_ids.await_args_list == [
+        call(0),
+        call(1),
+        call(6),
+        call(27),
+    ]
 
 
 async def test_invalid_source_is_disabled_without_breaking_others(
@@ -135,7 +141,7 @@ async def test_refresh_discovers_digital_bus_adapter(hass: HomeAssistant) -> Non
         "#S224:1 0 1 0",
         "#S6:123 0",
     ]
-    client.async_get_object_ids.side_effect = [[], [], [4097]]
+    client.async_get_object_ids.side_effect = [[], [], [4097], []]
     client.async_get_object_state.return_value = {
         "id": 4097,
         "type": 6,
@@ -176,7 +182,9 @@ async def test_failed_object_becomes_unavailable_without_losing_values(
         [4097],
         [],
         [],
+        [],
         [4097],
+        [],
     ]
     client.async_get_object_state.side_effect = [
         {
@@ -221,7 +229,9 @@ async def test_object_protocol_error_is_isolated_and_retried(
         ZontProtocolError,
         [],
         [],
+        [],
         [4097],
+        [],
     ]
     client.async_get_object_state.return_value = {
         "id": 4097,
@@ -247,7 +257,7 @@ async def test_refresh_discovers_temperature_sensor_and_adapter(
         "#S224:1 0 1 0",
         "#S6:123 0",
     ]
-    client.async_get_object_ids.side_effect = [[], [8196], [4097]]
+    client.async_get_object_ids.side_effect = [[], [8196], [4097], []]
     client.async_get_object_state.side_effect = [
         {
             "id": 8196,
@@ -272,7 +282,12 @@ async def test_refresh_discovers_temperature_sensor_and_adapter(
     assert sensor.temperature == 19.7
     assert sensor.available
     assert isinstance(coordinator.data.objects[4097], ZontDigitalBusAdapterData)
-    assert client.async_get_object_ids.await_args_list == [call(0), call(1), call(6)]
+    assert client.async_get_object_ids.await_args_list == [
+        call(0),
+        call(1),
+        call(6),
+        call(27),
+    ]
     assert client.async_get_object_state.await_args_list == [
         call(8196),
         call(4097),
@@ -300,7 +315,7 @@ async def test_temperature_type_error_does_not_block_adapter_refresh(
         "#S224:1 0 1 0",
         "#S6:123 0",
     ]
-    client.async_get_object_ids.side_effect = [[], ZontProtocolError, [4097]]
+    client.async_get_object_ids.side_effect = [[], ZontProtocolError, [4097], []]
     client.async_get_object_state.return_value = {
         "id": 4097,
         "type": 6,
@@ -323,7 +338,7 @@ async def test_refresh_discovers_analog_input_before_other_objects(
         "#S224:1 0 1 0",
         "#S6:123 0",
     ]
-    client.async_get_object_ids.side_effect = [[20550], [], []]
+    client.async_get_object_ids.side_effect = [[20550], [], [], []]
     client.async_get_object_state.return_value = {
         "id": 20550,
         "type": 0,
@@ -343,7 +358,12 @@ async def test_refresh_discovers_analog_input_before_other_objects(
     assert analog_input.unit_code == 0
     assert analog_input.triggered is False
     assert analog_input.available
-    assert client.async_get_object_ids.await_args_list == [call(0), call(1), call(6)]
+    assert client.async_get_object_ids.await_args_list == [
+        call(0),
+        call(1),
+        call(6),
+        call(27),
+    ]
 
 
 async def test_invalid_analog_input_does_not_block_other_object_types(
@@ -354,7 +374,7 @@ async def test_invalid_analog_input_does_not_block_other_object_types(
         "#S224:1 0 1 0",
         "#S6:123 0",
     ]
-    client.async_get_object_ids.side_effect = [[20550], [], [4097]]
+    client.async_get_object_ids.side_effect = [[20550], [], [4097], []]
     client.async_get_object_state.side_effect = [
         {
             "id": 20550,
@@ -413,6 +433,167 @@ async def test_push_merges_partial_analog_state_and_availability(
     assert not analog_input.available
     assert analog_input.value == 12.2
     assert analog_input.triggered is True
+
+
+async def test_refresh_discovers_ntc_temperature_sensor(
+    hass: HomeAssistant,
+) -> None:
+    coordinator, client = _coordinator(hass)
+    client.async_send_system_command.side_effect = [
+        "#S224:1 0 1 0",
+        "#S6:123 0",
+    ]
+    client.async_get_object_ids.side_effect = [[], [], [], [20487]]
+    client.async_get_object_state.return_value = {
+        "id": 20487,
+        "type": 27,
+        "name": "Температура котла",
+        "t": 45.6,
+        "a": 1,
+    }
+
+    await coordinator.async_refresh()
+
+    sensor = coordinator.data.objects[20487]
+    assert isinstance(sensor, ZontNtcTemperatureSensorData)
+    assert sensor.temperature == 45.6
+    assert sensor.available
+    assert client.async_get_object_ids.await_args_list == [
+        call(0),
+        call(1),
+        call(6),
+        call(27),
+    ]
+    client.async_get_object_state.assert_awaited_once_with(20487)
+
+
+async def test_ntc_type_error_does_not_block_other_object_data(
+    hass: HomeAssistant,
+) -> None:
+    coordinator, client = _coordinator(hass)
+    coordinator.data = ZontData(
+        controller=ZontControllerData(info=None),
+        objects=immutable_objects(
+            {
+                20487: ZontNtcTemperatureSensorData(
+                    object_id=20487,
+                    object_type=27,
+                    name="Температура котла",
+                    temperature=45.6,
+                )
+            }
+        ),
+    )
+    client.async_send_system_command.side_effect = [
+        "#S224:1 0 1 0",
+        "#S6:123 0",
+    ]
+    client.async_get_object_ids.side_effect = [
+        [],
+        [],
+        [4097],
+        ZontProtocolError,
+    ]
+    client.async_get_object_state.return_value = {
+        "id": 4097,
+        "type": 6,
+        "name": "Navien",
+        "water": 35,
+    }
+
+    await coordinator.async_refresh()
+
+    assert coordinator.last_update_success
+    assert coordinator.data.objects[4097].available
+    assert not coordinator.data.objects[20487].available
+
+
+async def test_failed_ntc_sensor_preserves_last_temperature(
+    hass: HomeAssistant,
+) -> None:
+    coordinator, client = _coordinator(hass)
+    coordinator.data = ZontData(
+        controller=ZontControllerData(info=None),
+        objects=immutable_objects(
+            {
+                20487: ZontNtcTemperatureSensorData(
+                    object_id=20487,
+                    object_type=27,
+                    name="Температура котла",
+                    temperature=45.6,
+                )
+            }
+        ),
+    )
+    client.async_send_system_command.side_effect = [
+        "#S224:1 0 1 0",
+        "#S6:123 0",
+    ]
+    client.async_get_object_ids.side_effect = [[], [], [], [20487]]
+    client.async_get_object_state.return_value = {
+        "id": 20487,
+        "req_state": 0,
+        "failed": 1,
+    }
+
+    await coordinator.async_refresh()
+
+    sensor = coordinator.data.objects[20487]
+    assert not sensor.available
+    assert sensor.temperature == 45.6
+    assert coordinator.last_update_success
+
+
+async def test_push_updates_ntc_temperature_and_availability(
+    hass: HomeAssistant,
+) -> None:
+    coordinator, _ = _coordinator(hass)
+    coordinator.data = ZontData(
+        controller=ZontControllerData(info=None),
+        objects=immutable_objects(
+            {
+                20487: ZontNtcTemperatureSensorData(
+                    object_id=20487,
+                    object_type=27,
+                    name="Температура котла",
+                    temperature=45.6,
+                )
+            }
+        ),
+    )
+
+    coordinator._async_message_received({"id": 20487, "t": 46.1})
+
+    sensor = coordinator.data.objects[20487]
+    assert isinstance(sensor, ZontNtcTemperatureSensorData)
+    assert sensor.temperature == 46.1
+    assert sensor.available
+
+    coordinator._async_message_received({"id": 20487, "a": 0})
+
+    sensor = coordinator.data.objects[20487]
+    assert not sensor.available
+    assert sensor.temperature == 46.1
+
+
+async def test_push_can_discover_complete_ntc_temperature_sensor(
+    hass: HomeAssistant,
+) -> None:
+    coordinator, _ = _coordinator(hass)
+
+    coordinator._async_message_received(
+        {
+            "id": 20487,
+            "type": 27,
+            "name": "Температура котла",
+            "t": 45.6,
+            "a": 1,
+        }
+    )
+
+    sensor = coordinator.data.objects[20487]
+    assert isinstance(sensor, ZontNtcTemperatureSensorData)
+    assert sensor.temperature == 45.6
 
 
 async def test_push_merges_partial_adapter_state_without_resetting_schedule(
