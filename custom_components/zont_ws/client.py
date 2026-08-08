@@ -15,8 +15,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from .const import (
-    AUTH_TIMEOUT,
     COMMAND_TIMEOUT,
+    CONNECTION_TIMEOUT,
     DOMAIN,
     EVENT_MESSAGE,
     RECONNECT_DELAYS,
@@ -87,30 +87,31 @@ async def _async_open_websocket(
     """Open and authenticate a WebSocket connection."""
     ws: ClientWebSocketResponse | None = None
     try:
-        ws = await session.ws_connect(url, heartbeat=WS_HEARTBEAT)
-        auth_payload = {
-            "user": credentials.username,
-            "pass": credentials.password,
-        }
-        await ws.send_str(
-            json.dumps(auth_payload, ensure_ascii=False, separators=(",", ":"))
-        )
+        async with asyncio.timeout(CONNECTION_TIMEOUT):
+            ws = await session.ws_connect(url, heartbeat=WS_HEARTBEAT)
+            auth_payload = {
+                "user": credentials.username,
+                "pass": credentials.password,
+            }
+            await ws.send_str(
+                json.dumps(auth_payload, ensure_ascii=False, separators=(",", ":"))
+            )
 
-        message = await ws.receive(timeout=AUTH_TIMEOUT)
-        if message.type is not WSMsgType.TEXT:
-            raise ZontProtocolError("Authentication response is not text")
+            message = await ws.receive()
+            if message.type is not WSMsgType.TEXT:
+                raise ZontProtocolError("Authentication response is not text")
 
-        try:
-            response = json.loads(message.data)
-        except (TypeError, json.JSONDecodeError) as err:
-            raise ZontProtocolError("Authentication response is not JSON") from err
+            try:
+                response = json.loads(message.data)
+            except (TypeError, json.JSONDecodeError) as err:
+                raise ZontProtocolError("Authentication response is not JSON") from err
 
-        if not isinstance(response, Mapping):
-            raise ZontProtocolError("Authentication response is not an object")
-        if response.get("auth") != 200:
-            raise ZontAuthenticationError("Authentication was rejected")
+            if not isinstance(response, Mapping):
+                raise ZontProtocolError("Authentication response is not an object")
+            if response.get("auth") != 200:
+                raise ZontAuthenticationError("Authentication was rejected")
 
-        return ws
+            return ws
     except asyncio.CancelledError:
         await _async_close_websocket(ws)
         raise

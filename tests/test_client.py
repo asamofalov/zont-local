@@ -68,6 +68,21 @@ class FakeSession:
         return result
 
 
+class HangingSession:
+    """Block while opening a WebSocket until the caller cancels the attempt."""
+
+    def __init__(self) -> None:
+        self.cancelled = False
+
+    async def ws_connect(self, url: str, heartbeat: float) -> FakeWebSocket:
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+        raise AssertionError("The WebSocket open should have been cancelled")
+
+
 def auth_socket(status: int = 200) -> FakeWebSocket:
     """Return a socket with a queued auth response."""
     return FakeWebSocket([FakeMessage(WSMsgType.TEXT, json.dumps({"auth": status}))])
@@ -120,6 +135,42 @@ async def test_validate_connection_wraps_network_failure() -> None:
 
 
 @pytest.mark.asyncio
+async def test_connection_timeout_covers_websocket_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = HangingSession()
+    monkeypatch.setattr("custom_components.zont_ws.client.CONNECTION_TIMEOUT", 0.01)
+
+    with pytest.raises(ZontConnectionError) as raised:
+        await async_validate_connection(
+            session,  # type: ignore[arg-type]
+            "ws://controller/ws",
+            ZontCredentials("user", "password"),
+        )
+
+    assert isinstance(raised.value.__cause__, TimeoutError)
+    assert session.cancelled
+
+
+@pytest.mark.asyncio
+async def test_connection_timeout_covers_authentication_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ws = FakeWebSocket()
+    monkeypatch.setattr("custom_components.zont_ws.client.CONNECTION_TIMEOUT", 0.01)
+
+    with pytest.raises(ZontConnectionError) as raised:
+        await async_validate_connection(
+            FakeSession([ws]),  # type: ignore[arg-type]
+            "ws://controller/ws",
+            ZontCredentials("user", "password"),
+        )
+
+    assert isinstance(raised.value.__cause__, TimeoutError)
+    assert ws.closed
+
+
+@pytest.mark.asyncio
 async def test_unsolicited_payloads_are_wrapped(
     fake_hass: Any, auth_error_callback: Any
 ) -> None:
@@ -140,6 +191,40 @@ async def test_unsolicited_payloads_are_wrapped(
         (EVENT_MESSAGE, {"device_id": "device", "payload": [1, 2]}),
         (EVENT_MESSAGE, {"device_id": "device", "payload": "not-json"}),
     ]
+
+
+@pytest.mark.asyncio
+async def test_client_reconnects_after_initial_setup(
+    fake_hass: Any,
+    auth_error_callback: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_ws = auth_socket()
+    second_ws = auth_socket()
+    monkeypatch.setattr("custom_components.zont_ws.client.RECONNECT_DELAYS", (0,))
+    client = ZontWsClient(
+        fake_hass,
+        FakeSession([first_ws, second_ws]),  # type: ignore[arg-type]
+        "ws://controller/ws",
+        ZontCredentials("user", "password"),
+        "entry",
+        "device",
+        auth_error_callback,
+    )
+
+    await client.async_start()
+    assert client.is_connected
+    assert client.reconnect_count == 0
+
+    await first_ws.close()
+    for _ in range(20):
+        if client.reconnect_count == 1:
+            break
+        await asyncio.sleep(0)
+
+    assert client.is_connected
+    assert client.reconnect_count == 1
+    await client.async_stop()
 
 
 @pytest.mark.asyncio

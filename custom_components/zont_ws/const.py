@@ -15,7 +15,7 @@ EVENT_MESSAGE = f"{DOMAIN}_event"
 
 PLATFORMS: tuple[Platform, ...] = (Platform.BINARY_SENSOR,)
 
-AUTH_TIMEOUT = 10.0
+CONNECTION_TIMEOUT = 5.0
 COMMAND_TIMEOUT = 10.0
 WS_HEARTBEAT = 30.0
 RECONNECT_DELAYS: tuple[float, ...] = (1, 2, 4, 8, 16, 30)

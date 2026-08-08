@@ -29,5 +29,6 @@ async def test_connection_state_updates(hass: HomeAssistant) -> None:
     async_dispatcher_send(hass, connection_signal(entry.entry_id), False)
 
     assert not entity.is_on
+    assert entity.available
     entity.async_write_ha_state.assert_called_once()
     await entity.async_remove()
