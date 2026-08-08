@@ -23,6 +23,7 @@ from .client import (
     ZontWsClient,
 )
 from .const import DOMAIN, SERVICE_SEND_BULK, SERVICE_SEND_COMMAND
+from .coordinator import ZontRuntimeData
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -113,8 +114,8 @@ def _get_loaded_client(hass: HomeAssistant) -> ZontWsClient:
             translation_key="entry_not_loaded",
         )
 
-    typed_entry = cast(ConfigEntry[ZontWsClient], entry)
-    return typed_entry.runtime_data
+    typed_entry = cast(ConfigEntry[ZontRuntimeData], entry)
+    return typed_entry.runtime_data.client
 
 
 async def _async_send(

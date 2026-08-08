@@ -13,7 +13,11 @@ SERVICE_SEND_BULK = "send_bulk"
 
 EVENT_MESSAGE = f"{DOMAIN}_event"
 
-PLATFORMS: tuple[Platform, ...] = (Platform.BINARY_SENSOR,)
+PLATFORMS: tuple[Platform, ...] = (
+    Platform.BINARY_SENSOR,
+    Platform.BUTTON,
+    Platform.SENSOR,
+)
 
 CONNECTION_TIMEOUT = 5.0
 COMMAND_TIMEOUT = 10.0

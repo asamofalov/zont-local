@@ -11,6 +11,7 @@ from custom_components.zont_ws.const import (
     SERVICE_SEND_BULK,
     SERVICE_SEND_COMMAND,
 )
+from custom_components.zont_ws.coordinator import ZontRuntimeData
 from custom_components.zont_ws.services import async_setup_services
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
@@ -29,7 +30,9 @@ def _loaded_entry(hass: HomeAssistant) -> tuple[MockConfigEntry, MagicMock]:
     entry = MockConfigEntry(domain=DOMAIN, data=ENTRY_DATA)
     client = MagicMock(spec=ZontWsClient)
     client.async_send_command = AsyncMock(return_value={"id": 7, "cmdres": 0})
-    entry.runtime_data = client
+    coordinator = MagicMock()
+    coordinator.async_shutdown = AsyncMock()
+    entry.runtime_data = ZontRuntimeData(client, coordinator)
     entry.add_to_hass(hass)
     entry.mock_state(hass, ConfigEntryState.LOADED)
     return entry, client

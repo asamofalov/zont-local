@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from enum import StrEnum
 from typing import Any, Self
 
 from aiohttp import ClientSession
@@ -22,9 +23,41 @@ from .const import CONTROLLER_INFO_TIMEOUT
 _SERIAL_PATTERN = re.compile(r"[A-Za-z0-9]{12}")
 _INFO_VALUE_PATTERN = re.compile(r"[A-Za-z0-9._+-]+")
 
+COMMAND_CONTROLLER_INFO = "#S7?"
+COMMAND_SERVER_INFO = "#S224?"
+COMMAND_SUPPLY_VOLTAGE = "#S6?"
+COMMAND_RESTART = "SRESTART?"
+
 
 class ZontIdentificationError(ZontProtocolError):
     """Raised when required controller identity cannot be obtained."""
+
+
+class ZontCommunicationChannel(StrEnum):
+    """Communication channels reported by a ZONT controller."""
+
+    GSM = "gsm"
+    WIFI = "wifi"
+    ETHERNET = "ethernet"
+
+
+@dataclass(frozen=True, slots=True)
+class ZontServerStatus:
+    """Cloud and communication-channel state reported by a controller."""
+
+    cloud_connected: bool
+    channels: frozenset[ZontCommunicationChannel]
+
+    @property
+    def channel_state(self) -> str:
+        """Return a stable Home Assistant enum state for active channels."""
+        if not self.channels:
+            return "none"
+        return "_".join(
+            channel.value
+            for channel in ZontCommunicationChannel
+            if channel in self.channels
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +135,43 @@ def parse_identity_response(response: str) -> tuple[str, str, str]:
     return model.replace("_", " "), board_model, firmware_version
 
 
+def parse_server_status_response(response: str) -> ZontServerStatus:
+    """Return cloud and communication status from a strict #S224 response."""
+    prefix = "#S224:"
+    if not response.startswith(prefix):
+        raise ValueError("Unexpected server status response")
+
+    values = response.removeprefix(prefix).split()
+    if len(values) != 4 or any(value not in {"0", "1"} for value in values):
+        raise ValueError("Invalid server status response")
+
+    channels = frozenset(
+        channel
+        for channel, enabled in zip(
+            ZontCommunicationChannel,
+            values[1:],
+            strict=True,
+        )
+        if enabled == "1"
+    )
+    return ZontServerStatus(
+        cloud_connected=values[0] == "1",
+        channels=channels,
+    )
+
+
+def parse_supply_voltage_response(response: str) -> float:
+    """Return controller supply voltage from a strict #S6 response."""
+    prefix = "#S6:"
+    if not response.startswith(prefix):
+        raise ValueError("Unexpected supply voltage response")
+
+    values = response.removeprefix(prefix).split()
+    if len(values) != 2 or not values[0].isdigit():
+        raise ValueError("Invalid supply voltage response")
+    return int(values[0]) / 10
+
+
 async def async_identify_controller(
     session: ClientSession,
     url: str,
@@ -132,12 +202,17 @@ async def async_refresh_controller_info(
 ) -> ZontControllerInfo:
     """Refresh descriptive data through an active protocol client."""
     response = await client.async_send_system_command(
-        "#S7?", response_timeout=CONTROLLER_INFO_TIMEOUT
+        COMMAND_CONTROLLER_INFO, response_timeout=CONTROLLER_INFO_TIMEOUT
     )
     try:
         return ZontControllerInfo(serial_number).with_identity_response(response)
     except ValueError as err:
         raise ZontProtocolError("Invalid controller identity response") from err
+
+
+async def async_restart_controller(client: ZontWsClient) -> None:
+    """Restart a controller without waiting for an optional response."""
+    await client.async_send_system_command_without_response(COMMAND_RESTART)
 
 
 def controller_entry_title(info: ZontControllerInfo | None, host: str) -> str:

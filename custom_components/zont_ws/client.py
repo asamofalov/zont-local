@@ -11,7 +11,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from aiohttp import ClientError, ClientSession, ClientWebSocketResponse, WSMsgType
-from homeassistant.core import HomeAssistant
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from .const import (
@@ -237,6 +238,7 @@ class ZontWsClient:
         self._pending_states: dict[int, asyncio.Future[dict[str, Any]]] = {}
         self._pending_ids: asyncio.Future[list[int]] | None = None
         self._pending_scmd: asyncio.Future[str] | None = None
+        self._message_listeners: set[Callable[[Any], None]] = set()
 
         self._is_connected = False
         self._last_error: str | None = None
@@ -264,7 +266,7 @@ class ZontWsClient:
         """Return the number of commands waiting for a response."""
         return len(self._pending_commands)
 
-    async def async_start(self) -> None:
+    async def async_start(self, entry: ConfigEntry[Any]) -> None:
         """Connect once and start the connection supervisor."""
         if self._supervisor_task is not None:
             return
@@ -274,8 +276,10 @@ class ZontWsClient:
             self._session, self._url, self._credentials
         )
         self._set_connected(True)
-        self._supervisor_task = self._hass.async_create_task(
-            self._async_supervisor(), f"{DOMAIN} WebSocket supervisor"
+        self._supervisor_task = entry.async_create_background_task(
+            self._hass,
+            self._async_supervisor(),
+            f"{DOMAIN} WebSocket supervisor",
         )
 
     async def async_stop(self) -> None:
@@ -297,6 +301,20 @@ class ZontWsClient:
 
         self._command_slots.clear()
         self._state_slots.clear()
+        self._message_listeners.clear()
+
+    @callback
+    def async_add_message_listener(
+        self, listener: Callable[[Any], None]
+    ) -> Callable[[], None]:
+        """Subscribe to decoded unsolicited controller messages."""
+        self._message_listeners.add(listener)
+
+        @callback
+        def async_remove_listener() -> None:
+            self._message_listeners.discard(listener)
+
+        return async_remove_listener
 
     async def _async_supervisor(self) -> None:
         """Read messages and own every reconnect attempt."""
@@ -488,6 +506,11 @@ class ZontWsClient:
 
     def _fire_event(self, payload: Any) -> None:
         """Publish an unsolicited controller message on the HA event bus."""
+        for listener in tuple(self._message_listeners):
+            try:
+                listener(payload)
+            except Exception:  # pragma: no cover - defensive listener isolation
+                _LOGGER.exception("Error in ZONT message listener")
         self._hass.bus.async_fire(
             EVENT_MESSAGE,
             {"device_id": self._device_id, "payload": payload},
@@ -629,6 +652,19 @@ class ZontWsClient:
                     self._pending_scmd = None
                 if not future.done():
                     future.cancel()
+
+    async def async_send_system_command_without_response(self, command: str) -> None:
+        """Send a system command without waiting for its uncorrelated response."""
+        if not isinstance(command, str) or not command.strip():
+            raise ValueError("System command must be non-empty text")
+
+        async with self._scmd_lock:
+            ws = self._connected_websocket()
+            try:
+                await self._async_send_payload(ws, {"scmd": command})
+            except asyncio.CancelledError:
+                await self._async_invalidate_connection(ws)
+                raise
 
     def _connected_websocket(self) -> ClientWebSocketResponse:
         """Return the active WebSocket or raise a connection error."""

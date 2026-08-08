@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-import logging
-
 from homeassistant.config_entries import (
     ConfigEntry,
     ConfigEntryAuthFailed,
@@ -14,7 +11,6 @@ from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.typing import ConfigType
 
 from .client import (
@@ -22,7 +18,6 @@ from .client import (
     ZontConnectionError,
     ZontCredentials,
     ZontProtocolError,
-    ZontRequestTimeoutError,
     ZontWsClient,
 )
 from .const import (
@@ -31,21 +26,18 @@ from .const import (
     CONFIG_ENTRY_VERSION,
     DOMAIN,
     PLATFORMS,
-    connection_signal,
 )
 from .controller import (
     ZontControllerInfo,
-    async_refresh_controller_info,
     controller_configuration_url,
     controller_device_name,
     controller_entry_title,
     controller_websocket_url,
 )
+from .coordinator import ZontDataUpdateCoordinator, ZontRuntimeData
 from .services import async_setup_services
 
-type ZontConfigEntry = ConfigEntry[ZontWsClient]
-
-_LOGGER = logging.getLogger(__name__)
+type ZontConfigEntry = ConfigEntry[ZontRuntimeData]
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -62,6 +54,10 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ZontConfigEntry) -> bo
 async def async_setup_entry(hass: HomeAssistant, entry: ZontConfigEntry) -> bool:
     """Set up ZONT from a config entry."""
     controller_info = ZontControllerInfo.from_mapping(entry.data.get(CONF_CONTROLLER))
+    if controller_info is None and entry.unique_id is not None:
+        controller_info = ZontControllerInfo.from_mapping(
+            {"serial_number": entry.unique_id}
+        )
     controller_identifier = entry.unique_id or entry.entry_id
     device_registry = dr.async_get(hass)
     device = device_registry.async_get_or_create(
@@ -94,7 +90,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ZontConfigEntry) -> bool
     )
 
     try:
-        await client.async_start()
+        await client.async_start(entry)
     except ZontAuthenticationError as err:
         raise ConfigEntryAuthFailed(
             translation_domain=DOMAIN,
@@ -106,20 +102,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ZontConfigEntry) -> bool
             translation_key="cannot_connect",
         ) from err
 
-    entry.runtime_data = client
+    coordinator = ZontDataUpdateCoordinator(
+        hass,
+        entry,
+        client,
+        controller_info,
+        lambda info: _async_apply_controller_info(
+            hass,
+            entry,
+            device.id,
+            info,
+        ),
+    )
+    entry.runtime_data = ZontRuntimeData(client=client, coordinator=coordinator)
     try:
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     except BaseException:
         await client.async_stop()
         raise
 
-    _async_setup_controller_info_refresh(
-        hass,
-        entry,
-        client,
-        device.id,
-        controller_info,
-    )
+    coordinator.async_start()
 
     return True
 
@@ -129,67 +131,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: ZontConfigEntry) -> boo
     if not await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         return False
 
-    await entry.runtime_data.async_stop()
+    runtime_data = entry.runtime_data
+    try:
+        await runtime_data.coordinator.async_shutdown()
+    finally:
+        await runtime_data.client.async_stop()
     return True
-
-
-def _async_setup_controller_info_refresh(
-    hass: HomeAssistant,
-    entry: ZontConfigEntry,
-    client: ZontWsClient,
-    device_id: str,
-    initial_info: ZontControllerInfo | None,
-) -> None:
-    """Refresh controller descriptions without delaying config entry setup."""
-    serial_number = (
-        initial_info.serial_number if initial_info is not None else entry.unique_id
-    )
-    if serial_number is None:
-        return
-
-    refresh_task: asyncio.Task[None] | None = None
-    refresh_enabled = True
-
-    async def async_refresh() -> None:
-        nonlocal refresh_enabled, refresh_task
-        try:
-            info = await async_refresh_controller_info(client, serial_number)
-        except asyncio.CancelledError:
-            raise
-        except (ZontRequestTimeoutError, ZontProtocolError):
-            refresh_enabled = False
-            _LOGGER.warning(
-                "Unable to refresh ZONT controller information; "
-                "further attempts are disabled until the next Home Assistant start"
-            )
-        except ZontConnectionError:
-            pass
-        else:
-            _async_apply_controller_info(hass, entry, device_id, info)
-        finally:
-            refresh_task = None
-
-    @callback
-    def async_schedule_refresh(connected: bool) -> None:
-        nonlocal refresh_task
-        if not connected or not refresh_enabled:
-            return
-        if refresh_task is not None and not refresh_task.done():
-            return
-        refresh_task = entry.async_create_background_task(
-            hass,
-            async_refresh(),
-            f"{DOMAIN} controller information refresh",
-        )
-
-    entry.async_on_unload(
-        async_dispatcher_connect(
-            hass,
-            connection_signal(entry.entry_id),
-            async_schedule_refresh,
-        )
-    )
-    async_schedule_refresh(client.is_connected)
 
 
 @callback

@@ -9,9 +9,13 @@ from custom_components.zont_ws.client import (
     ZontCredentials,
 )
 from custom_components.zont_ws.controller import (
+    COMMAND_RESTART,
+    ZontCommunicationChannel,
     ZontControllerInfo,
     ZontIdentificationError,
+    ZontServerStatus,
     async_identify_controller,
+    async_restart_controller,
     controller_configuration_url,
     controller_device_name,
     controller_endpoint,
@@ -19,6 +23,8 @@ from custom_components.zont_ws.controller import (
     controller_websocket_url,
     parse_identity_response,
     parse_serial_response,
+    parse_server_status_response,
+    parse_supply_voltage_response,
 )
 
 
@@ -61,6 +67,110 @@ def test_reject_invalid_controller_responses() -> None:
             pass
         else:
             raise AssertionError(f"Accepted invalid identity response: {response}")
+
+
+@pytest.mark.parametrize(
+    ("response", "cloud_connected", "channels", "channel_state"),
+    [
+        ("#S224:0 0 0 0", False, frozenset(), "none"),
+        (
+            "#S224:1 1 0 0",
+            True,
+            frozenset({ZontCommunicationChannel.GSM}),
+            "gsm",
+        ),
+        (
+            "#S224:1 0 1 0",
+            True,
+            frozenset({ZontCommunicationChannel.WIFI}),
+            "wifi",
+        ),
+        (
+            "#S224:1 0 0 1",
+            True,
+            frozenset({ZontCommunicationChannel.ETHERNET}),
+            "ethernet",
+        ),
+        (
+            "#S224:1 1 1 0",
+            True,
+            frozenset({ZontCommunicationChannel.GSM, ZontCommunicationChannel.WIFI}),
+            "gsm_wifi",
+        ),
+        (
+            "#S224:1 1 0 1",
+            True,
+            frozenset(
+                {ZontCommunicationChannel.GSM, ZontCommunicationChannel.ETHERNET}
+            ),
+            "gsm_ethernet",
+        ),
+        (
+            "#S224:1 0 1 1",
+            True,
+            frozenset(
+                {ZontCommunicationChannel.WIFI, ZontCommunicationChannel.ETHERNET}
+            ),
+            "wifi_ethernet",
+        ),
+        (
+            "#S224:1 1 1 1",
+            True,
+            frozenset(ZontCommunicationChannel),
+            "gsm_wifi_ethernet",
+        ),
+    ],
+)
+def test_parse_server_status_response(
+    response: str,
+    cloud_connected: bool,
+    channels: frozenset[ZontCommunicationChannel],
+    channel_state: str,
+) -> None:
+    """Parse every supported communication-channel combination."""
+    assert parse_server_status_response(response) == ZontServerStatus(
+        cloud_connected=cloud_connected,
+        channels=channels,
+    )
+    assert parse_server_status_response(response).channel_state == channel_state
+
+
+@pytest.mark.parametrize(
+    "response",
+    ["#S224:!", "#S224:1 0 1", "#S224:1 0 1 2", "#S6:1 0 1 0"],
+)
+def test_reject_invalid_server_status(response: str) -> None:
+    """Reject incomplete and ambiguous server-status responses."""
+    with pytest.raises(ValueError):
+        parse_server_status_response(response)
+
+
+def test_parse_supply_voltage_response() -> None:
+    """Convert controller decivolts to volts without interpreting field two."""
+    assert parse_supply_voltage_response("#S6:123 0") == 12.3
+    assert parse_supply_voltage_response("#S6:240 reserved") == 24.0
+
+
+@pytest.mark.parametrize(
+    "response",
+    ["#S6:!", "#S6:123", "#S6:12.3 0", "#S6:-10 0", "#S7:123 0"],
+)
+def test_reject_invalid_supply_voltage(response: str) -> None:
+    """Reject supply-voltage responses outside the observed shape."""
+    with pytest.raises(ValueError):
+        parse_supply_voltage_response(response)
+
+
+@pytest.mark.asyncio
+async def test_restart_controller_does_not_wait_for_response() -> None:
+    """Send the empirically confirmed restart command through the client."""
+    client = AsyncMock()
+
+    await async_restart_controller(client)
+
+    client.async_send_system_command_without_response.assert_awaited_once_with(
+        COMMAND_RESTART
+    )
 
 
 def test_controller_names_and_urls() -> None:

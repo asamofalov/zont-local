@@ -8,41 +8,41 @@ from homeassistant.components.binary_sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .client import ZontWsClient
-from .const import DOMAIN, connection_signal
+from .const import connection_signal
+from .coordinator import ZontRuntimeData
+from .entity import ZontCoordinatorEntity, ZontEntityMixin
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry[ZontWsClient],
+    entry: ConfigEntry[ZontRuntimeData],
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up ZONT binary sensors."""
-    async_add_entities([ZontConnectedBinarySensor(entry)])
+    async_add_entities(
+        [
+            ZontConnectedBinarySensor(entry),
+            ZontCloudConnectedBinarySensor(entry),
+        ]
+    )
 
 
-class ZontConnectedBinarySensor(BinarySensorEntity):
+class ZontConnectedBinarySensor(ZontEntityMixin, BinarySensorEntity):
     """Represent the ZONT WebSocket connection state."""
 
-    _attr_has_entity_name = True
     _attr_translation_key = "connected"
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
-    def __init__(self, entry: ConfigEntry[ZontWsClient]) -> None:
+    def __init__(self, entry: ConfigEntry[ZontRuntimeData]) -> None:
         """Initialize the sensor."""
         self._entry = entry
-        self._attr_is_on = entry.runtime_data.is_connected
-        controller_identifier = entry.unique_id or entry.entry_id
-        self._attr_unique_id = f"{controller_identifier}_connected"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, controller_identifier)},
-        )
+        self._attr_is_on = entry.runtime_data.client.is_connected
+        self._set_zont_identity(entry, "connected")
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to connection changes."""
@@ -60,3 +60,26 @@ class ZontConnectedBinarySensor(BinarySensorEntity):
         """Handle a WebSocket connection state change."""
         self._attr_is_on = connected
         self.async_write_ha_state()
+
+
+class ZontCloudConnectedBinarySensor(ZontCoordinatorEntity, BinarySensorEntity):
+    """Represent the controller connection to the ZONT cloud."""
+
+    _attr_translation_key = "cloud_connected"
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, entry: ConfigEntry[ZontRuntimeData]) -> None:
+        """Initialize the cloud connection sensor."""
+        super().__init__(entry, "cloud_connected")
+
+    @property
+    def available(self) -> bool:
+        """Return whether server status has been obtained."""
+        return super().available and self.controller_data.server_status is not None
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return whether the controller is connected to the ZONT cloud."""
+        status = self.controller_data.server_status
+        return status.cloud_connected if status is not None else None

@@ -46,6 +46,32 @@
     "binary_sensor": {
       "connected": {
         "name": "Подключение"
+      },
+      "cloud_connected": {
+        "name": "Связь с облаком"
+      }
+    },
+    "button": {
+      "restart": {
+        "name": "Перезагрузить"
+      }
+    },
+    "sensor": {
+      "connection_channel": {
+        "name": "Канал связи",
+        "state": {
+          "none": "Нет активного канала",
+          "gsm": "GSM",
+          "wifi": "Wi‑Fi",
+          "ethernet": "Ethernet",
+          "gsm_wifi": "GSM + Wi‑Fi",
+          "gsm_ethernet": "GSM + Ethernet",
+          "wifi_ethernet": "Wi‑Fi + Ethernet",
+          "gsm_wifi_ethernet": "GSM + Wi‑Fi + Ethernet"
+        }
+      },
+      "supply_voltage": {
+        "name": "Напряжение питания"
       }
     }
   },

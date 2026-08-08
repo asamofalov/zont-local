@@ -19,14 +19,20 @@ from custom_components.zont_ws.client import (
 from custom_components.zont_ws.const import (
     CONF_AUTO_TITLE,
     CONF_CONTROLLER,
+    CONFIG_ENTRY_VERSION,
     DOMAIN,
     connection_signal,
 )
 from custom_components.zont_ws.controller import ZontControllerInfo
+from custom_components.zont_ws.coordinator import (
+    ZontDataUpdateCoordinator,
+    ZontRuntimeData,
+)
 from homeassistant.config_entries import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_URL, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -70,6 +76,7 @@ async def test_legacy_entry_requires_adding_controller_again(
 async def test_setup_stores_runtime_data(hass: HomeAssistant) -> None:
     entry = MockConfigEntry(
         domain=DOMAIN,
+        version=CONFIG_ENTRY_VERSION,
         unique_id=SERIAL_NUMBER,
         data={
             **ENTRY_DATA,
@@ -81,6 +88,7 @@ async def test_setup_stores_runtime_data(hass: HomeAssistant) -> None:
 
     with (
         patch.object(ZontWsClient, "async_start", new=AsyncMock()),
+        patch.object(ZontDataUpdateCoordinator, "async_start") as start_coordinator,
         patch.object(
             hass.config_entries,
             "async_forward_entry_setups",
@@ -89,8 +97,11 @@ async def test_setup_stores_runtime_data(hass: HomeAssistant) -> None:
     ):
         assert await async_setup_entry(hass, entry)
 
-    assert isinstance(entry.runtime_data, ZontWsClient)
-    assert entry.runtime_data._url == "ws://192.0.2.10/ws"
+    assert isinstance(entry.runtime_data, ZontRuntimeData)
+    assert isinstance(entry.runtime_data.client, ZontWsClient)
+    assert isinstance(entry.runtime_data.coordinator, ZontDataUpdateCoordinator)
+    assert entry.runtime_data.client._url == "ws://192.0.2.10/ws"
+    start_coordinator.assert_called_once_with()
 
     device = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, SERIAL_NUMBER)})
     assert device is not None
@@ -101,6 +112,97 @@ async def test_setup_stores_runtime_data(hass: HomeAssistant) -> None:
     assert device.sw_version == "625"
     assert device.serial_number == SERIAL_NUMBER
     assert device.configuration_url == "http://192.0.2.10"
+
+
+async def test_new_entities_use_device_prefix_and_stable_suffixes(
+    hass: HomeAssistant,
+) -> None:
+    """Generate descriptive entity IDs without renaming registered entities."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=CONFIG_ENTRY_VERSION,
+        unique_id=SERIAL_NUMBER,
+        data={
+            **ENTRY_DATA,
+            CONF_CONTROLLER: CONTROLLER_INFO.as_dict(),
+            CONF_AUTO_TITLE: "ZONT H1V02 PRO (192.0.2.10)",
+        },
+    )
+    entry.add_to_hass(hass)
+
+    with (
+        patch.object(ZontWsClient, "async_start", new=AsyncMock()),
+        patch.object(ZontDataUpdateCoordinator, "async_start"),
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    registry = er.async_get(hass)
+    expected_ids = {
+        (
+            "binary_sensor",
+            f"{SERIAL_NUMBER}_connected",
+        ): "binary_sensor.zont_h1v02_pro_connected",
+        (
+            "binary_sensor",
+            f"{SERIAL_NUMBER}_cloud_connected",
+        ): "binary_sensor.zont_h1v02_pro_cloud_connected",
+        ("button", f"{SERIAL_NUMBER}_restart"): "button.zont_h1v02_pro_restart",
+        (
+            "sensor",
+            f"{SERIAL_NUMBER}_connection_channel",
+        ): "sensor.zont_h1v02_pro_connection_channel",
+        (
+            "sensor",
+            f"{SERIAL_NUMBER}_supply_voltage",
+        ): "sensor.zont_h1v02_pro_supply_voltage",
+    }
+    for (platform, unique_id), entity_id in expected_ids.items():
+        assert registry.async_get_entity_id(platform, DOMAIN, unique_id) == entity_id
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_registered_entity_id_is_preserved(hass: HomeAssistant) -> None:
+    """Do not rename an entity already stored in the entity registry."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=CONFIG_ENTRY_VERSION,
+        unique_id=SERIAL_NUMBER,
+        data={
+            **ENTRY_DATA,
+            CONF_CONTROLLER: CONTROLLER_INFO.as_dict(),
+            CONF_AUTO_TITLE: "ZONT H1V02 PRO (192.0.2.10)",
+        },
+    )
+    entry.add_to_hass(hass)
+    registry = er.async_get(hass)
+    registered = registry.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        f"{SERIAL_NUMBER}_supply_voltage",
+        config_entry=entry,
+        suggested_object_id="legacy_voltage",
+    )
+
+    with (
+        patch.object(ZontWsClient, "async_start", new=AsyncMock()),
+        patch.object(ZontDataUpdateCoordinator, "async_start"),
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert (
+        registry.async_get_entity_id(
+            "sensor",
+            DOMAIN,
+            f"{SERIAL_NUMBER}_supply_voltage",
+        )
+        == registered.entity_id
+        == "sensor.legacy_voltage"
+    )
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
 
 
 async def test_setup_refreshes_controller_information(hass: HomeAssistant) -> None:
@@ -123,15 +225,20 @@ async def test_setup_refreshes_controller_information(hass: HomeAssistant) -> No
     )
     entry.add_to_hass(hass)
 
-    async def async_start(client: ZontWsClient) -> None:
+    async def async_start(client: ZontWsClient, entry: MockConfigEntry) -> None:
         client._is_connected = True
 
     with (
         patch.object(ZontWsClient, "async_start", new=async_start),
         patch(
-            "custom_components.zont_ws.async_refresh_controller_info",
+            "custom_components.zont_ws.coordinator.async_refresh_controller_info",
             new=AsyncMock(return_value=CONTROLLER_INFO),
         ) as refresh,
+        patch.object(
+            ZontWsClient,
+            "async_send_system_command",
+            new=AsyncMock(side_effect=["#S224:1 0 1 0", "#S6:123 0"]),
+        ),
         patch.object(
             hass.config_entries,
             "async_forward_entry_setups",
@@ -141,11 +248,12 @@ async def test_setup_refreshes_controller_information(hass: HomeAssistant) -> No
         assert await async_setup_entry(hass, entry)
         await hass.async_block_till_done()
 
-    refresh.assert_awaited_once_with(entry.runtime_data, SERIAL_NUMBER)
+    refresh.assert_awaited_once_with(entry.runtime_data.client, SERIAL_NUMBER)
     assert entry.data[CONF_CONTROLLER] == CONTROLLER_INFO.as_dict()
     device = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, SERIAL_NUMBER)})
     assert device is not None
     assert device.sw_version == "625"
+    await entry.runtime_data.coordinator.async_shutdown()
 
 
 async def test_failed_information_refresh_is_disabled_until_restart(
@@ -164,15 +272,27 @@ async def test_failed_information_refresh_is_disabled_until_restart(
     )
     entry.add_to_hass(hass)
 
-    async def async_start(client: ZontWsClient) -> None:
+    async def async_start(client: ZontWsClient, entry: MockConfigEntry) -> None:
         client._is_connected = True
 
     with (
         patch.object(ZontWsClient, "async_start", new=async_start),
         patch(
-            "custom_components.zont_ws.async_refresh_controller_info",
+            "custom_components.zont_ws.coordinator.async_refresh_controller_info",
             new=AsyncMock(side_effect=ZontProtocolError),
         ) as refresh,
+        patch.object(
+            ZontWsClient,
+            "async_send_system_command",
+            new=AsyncMock(
+                side_effect=[
+                    "#S224:1 0 1 0",
+                    "#S6:123 0",
+                    "#S224:1 0 1 0",
+                    "#S6:123 0",
+                ]
+            ),
+        ),
         patch.object(
             hass.config_entries,
             "async_forward_entry_setups",
@@ -184,7 +304,8 @@ async def test_failed_information_refresh_is_disabled_until_restart(
         async_dispatcher_send(hass, connection_signal(entry.entry_id), True)
         await hass.async_block_till_done()
 
-    refresh.assert_awaited_once_with(entry.runtime_data, SERIAL_NUMBER)
+    refresh.assert_awaited_once_with(entry.runtime_data.client, SERIAL_NUMBER)
+    await entry.runtime_data.coordinator.async_shutdown()
 
 
 @pytest.mark.parametrize(
@@ -217,7 +338,9 @@ async def test_unload_stops_client(hass: HomeAssistant) -> None:
     entry = MockConfigEntry(domain=DOMAIN, data=ENTRY_DATA)
     client = MagicMock(spec=ZontWsClient)
     client.async_stop = AsyncMock()
-    entry.runtime_data = client
+    coordinator = MagicMock(spec=ZontDataUpdateCoordinator)
+    coordinator.async_shutdown = AsyncMock()
+    entry.runtime_data = ZontRuntimeData(client, coordinator)
 
     with patch.object(
         hass.config_entries,
@@ -227,3 +350,4 @@ async def test_unload_stops_client(hass: HomeAssistant) -> None:
         assert await async_unload_entry(hass, entry)
 
     client.async_stop.assert_awaited_once()
+    coordinator.async_shutdown.assert_awaited_once()

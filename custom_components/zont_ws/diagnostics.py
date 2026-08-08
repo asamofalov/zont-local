@@ -8,17 +8,20 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST
 from homeassistant.core import HomeAssistant
 
-from .client import ZontWsClient
 from .const import CONF_CONTROLLER
 from .controller import ZontControllerInfo
+from .coordinator import ZontRuntimeData
 
 
 async def async_get_config_entry_diagnostics(
     hass: HomeAssistant,
-    entry: ConfigEntry[ZontWsClient],
+    entry: ConfigEntry[ZontRuntimeData],
 ) -> dict[str, Any]:
     """Return non-sensitive diagnostics for a config entry."""
-    client = entry.runtime_data
+    runtime_data = entry.runtime_data
+    client = runtime_data.client
+    coordinator = runtime_data.coordinator
+    status = coordinator.data.controller
     info = ZontControllerInfo.from_mapping(entry.data.get(CONF_CONTROLLER))
     return {
         "config": {"host": entry.data[CONF_HOST]},
@@ -36,5 +39,20 @@ async def async_get_config_entry_diagnostics(
             "last_error": client.last_error,
             "reconnect_count": client.reconnect_count,
             "pending_commands": client.pending_count,
+        },
+        "data": {
+            "last_update_success": coordinator.last_update_success,
+            "disabled_sources": coordinator.disabled_sources,
+            "cloud_connected": (
+                status.server_status.cloud_connected
+                if status.server_status is not None
+                else None
+            ),
+            "connection_channels": (
+                sorted(channel.value for channel in status.server_status.channels)
+                if status.server_status is not None
+                else None
+            ),
+            "supply_voltage": status.supply_voltage,
         },
     }

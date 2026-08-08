@@ -20,8 +20,10 @@ from custom_components.zont_ws.client import (
     async_request_system_commands,
     async_validate_connection,
 )
-from custom_components.zont_ws.const import EVENT_MESSAGE
+from custom_components.zont_ws.const import DOMAIN, EVENT_MESSAGE
 from custom_components.zont_ws.controller import async_refresh_controller_info
+from homeassistant.core import HomeAssistant
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 
 class FakeMessage:
@@ -84,6 +86,33 @@ class HangingSession:
             self.cancelled = True
             raise
         raise AssertionError("The WebSocket open should have been cancelled")
+
+
+class FakeConfigEntry:
+    """Create background tasks without involving Home Assistant startup tracking."""
+
+    def __init__(self) -> None:
+        self.background_tasks: set[asyncio.Task[Any]] = set()
+
+    def async_create_background_task(
+        self,
+        hass: Any,
+        target: Any,
+        name: str,
+        eager_start: bool = True,
+    ) -> asyncio.Task[Any]:
+        """Create and track a task like ConfigEntry."""
+        task = asyncio.create_task(target, name=name)
+        self.background_tasks.add(task)
+        task.add_done_callback(self.background_tasks.discard)
+        return task
+
+
+async def async_start_client(client: ZontWsClient) -> FakeConfigEntry:
+    """Start a client with a config-entry-owned background task."""
+    entry = FakeConfigEntry()
+    await client.async_start(entry)  # type: ignore[arg-type]
+    return entry
 
 
 def auth_socket(status: int = 200) -> FakeWebSocket:
@@ -203,6 +232,36 @@ async def test_connection_timeout_covers_authentication_response(
     assert ws.closed
 
 
+async def test_supervisor_does_not_block_home_assistant_startup(
+    hass: HomeAssistant,
+    auth_error_callback: Any,
+) -> None:
+    """Keep the long-lived supervisor outside startup task tracking."""
+    ws = auth_socket()
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    client = ZontWsClient(
+        hass,
+        FakeSession([ws]),  # type: ignore[arg-type]
+        "ws://controller/ws",
+        ZontCredentials("user", "password"),
+        entry.entry_id,
+        "device",
+        auth_error_callback,
+    )
+
+    await client.async_start(entry)
+    supervisor = client._supervisor_task
+
+    assert supervisor is not None
+    async with asyncio.timeout(0.5):
+        await hass.async_block_till_done()
+    assert not supervisor.done()
+
+    await client.async_stop()
+    assert supervisor.done()
+
+
 @pytest.mark.asyncio
 async def test_unsolicited_payloads_are_wrapped(
     fake_hass: Any, auth_error_callback: Any
@@ -227,6 +286,31 @@ async def test_unsolicited_payloads_are_wrapped(
 
 
 @pytest.mark.asyncio
+async def test_unsolicited_payloads_notify_internal_listeners(
+    fake_hass: Any, auth_error_callback: Any
+) -> None:
+    """Expose push messages internally while preserving the public event."""
+    client = ZontWsClient(
+        fake_hass,
+        FakeSession([]),  # type: ignore[arg-type]
+        "ws://controller/ws",
+        ZontCredentials("user", "password"),
+        "entry",
+        "device",
+        auth_error_callback,
+    )
+    received: list[Any] = []
+    unsubscribe = client.async_add_message_listener(received.append)
+
+    client._handle_incoming('{"id":7,"type":14,"s":1}')
+    unsubscribe()
+    client._handle_incoming('{"id":7,"type":14,"s":0}')
+
+    assert received == [{"id": 7, "type": 14, "s": 1}]
+    assert len(fake_hass.bus.events) == 2
+
+
+@pytest.mark.asyncio
 async def test_client_reconnects_after_initial_setup(
     fake_hass: Any,
     auth_error_callback: Any,
@@ -245,7 +329,7 @@ async def test_client_reconnects_after_initial_setup(
         auth_error_callback,
     )
 
-    await client.async_start()
+    await async_start_client(client)
     assert client.is_connected
     assert client.reconnect_count == 0
 
@@ -274,7 +358,7 @@ async def test_send_failure_cleans_pending(
         "device",
         auth_error_callback,
     )
-    await client.async_start()
+    await async_start_client(client)
     ws.send_error = ClientError("send failed")
 
     with pytest.raises(ZontConnectionError):
@@ -298,7 +382,7 @@ async def test_command_timeout_cleans_pending(
         "device",
         auth_error_callback,
     )
-    await client.async_start()
+    await async_start_client(client)
 
     with pytest.raises(ZontCommandTimeoutError):
         await client.async_send_command(42, "value", response_timeout=0.01)
@@ -322,7 +406,7 @@ async def test_command_response_is_correlated(
         "device",
         auth_error_callback,
     )
-    await client.async_start()
+    await async_start_client(client)
 
     command_task = asyncio.create_task(client.async_send_command(7, "value"))
     await asyncio.sleep(0)
@@ -347,7 +431,7 @@ async def test_push_state_does_not_complete_command(
         "device",
         auth_error_callback,
     )
-    await client.async_start()
+    await async_start_client(client)
 
     command_task = asyncio.create_task(client.async_send_command(7, "value"))
     await asyncio.sleep(0)
@@ -380,7 +464,7 @@ async def test_uppercase_command_id_is_supported(
         "device",
         auth_error_callback,
     )
-    await client.async_start()
+    await async_start_client(client)
 
     command_task = asyncio.create_task(client.async_send_command(7, "value"))
     await asyncio.sleep(0)
@@ -404,7 +488,7 @@ async def test_conflicting_command_ids_do_not_complete_command(
         "device",
         auth_error_callback,
     )
-    await client.async_start()
+    await async_start_client(client)
 
     command_task = asyncio.create_task(client.async_send_command(7, "value"))
     await asyncio.sleep(0)
@@ -430,7 +514,7 @@ async def test_cancelled_command_cleans_pending(
         "device",
         auth_error_callback,
     )
-    await client.async_start()
+    await async_start_client(client)
     command_task = asyncio.create_task(client.async_send_command(7, "value"))
     await asyncio.sleep(0)
 
@@ -457,7 +541,7 @@ async def test_same_ids_are_serialized(
         "device",
         auth_error_callback,
     )
-    await client.async_start()
+    await async_start_client(client)
     first = asyncio.create_task(client.async_send_command(7, "first"))
     second = asyncio.create_task(client.async_send_command(7, "second"))
     await asyncio.sleep(0)
@@ -485,7 +569,7 @@ async def test_different_ids_can_be_in_flight(
         "device",
         auth_error_callback,
     )
-    await client.async_start()
+    await async_start_client(client)
     first = asyncio.create_task(client.async_send_command(7, "first"))
     second = asyncio.create_task(client.async_send_command(8, "second"))
     await asyncio.sleep(0)
@@ -512,7 +596,7 @@ async def test_command_and_state_for_same_id_are_routed_independently(
         "device",
         auth_error_callback,
     )
-    await client.async_start()
+    await async_start_client(client)
 
     command_task = asyncio.create_task(client.async_send_command(7, "1"))
     state_task = asyncio.create_task(client.async_get_object_state(7))
@@ -542,7 +626,7 @@ async def test_object_id_requests_are_serialized(
         "device",
         auth_error_callback,
     )
-    await client.async_start()
+    await async_start_client(client)
 
     first = asyncio.create_task(client.async_get_object_ids(6))
     second = asyncio.create_task(client.async_get_object_ids(255))
@@ -578,7 +662,7 @@ async def test_invalid_object_id_response_raises_protocol_error(
         "device",
         auth_error_callback,
     )
-    await client.async_start()
+    await async_start_client(client)
 
     request = asyncio.create_task(client.async_get_object_ids(16))
     await asyncio.sleep(0)
@@ -604,7 +688,7 @@ async def test_object_id_timeout_invalidates_connection(
         "device",
         auth_error_callback,
     )
-    await client.async_start()
+    await async_start_client(client)
 
     with pytest.raises(ZontRequestTimeoutError):
         await client.async_get_object_ids(16, response_timeout=0.01)
@@ -627,7 +711,7 @@ async def test_state_failed_response_is_returned(
         "device",
         auth_error_callback,
     )
-    await client.async_start()
+    await async_start_client(client)
 
     request = asyncio.create_task(client.async_get_object_state(20494))
     await asyncio.sleep(0)
@@ -651,7 +735,7 @@ async def test_state_timeout_invalidates_connection(
         "device",
         auth_error_callback,
     )
-    await client.async_start()
+    await async_start_client(client)
 
     with pytest.raises(ZontRequestTimeoutError):
         await client.async_get_object_state(20494, response_timeout=0.01)
@@ -674,7 +758,7 @@ async def test_same_state_ids_are_serialized(
         "device",
         auth_error_callback,
     )
-    await client.async_start()
+    await async_start_client(client)
 
     first = asyncio.create_task(client.async_get_object_state(7))
     second = asyncio.create_task(client.async_get_object_state(7))
@@ -705,7 +789,7 @@ async def test_system_command_requests_are_serialized(
         "device",
         auth_error_callback,
     )
-    await client.async_start()
+    await async_start_client(client)
 
     first = asyncio.create_task(client.async_send_system_command("#S7?"))
     second = asyncio.create_task(client.async_send_system_command("SDATE?"))
@@ -723,6 +807,49 @@ async def test_system_command_requests_are_serialized(
 
 
 @pytest.mark.asyncio
+async def test_system_command_can_keep_connection_without_waiting_for_response(
+    fake_hass: Any,
+    auth_error_callback: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Leave the connection to the controller after a fire-and-forget command."""
+    first_ws = auth_socket()
+    second_ws = auth_socket()
+    monkeypatch.setattr("custom_components.zont_ws.client.RECONNECT_DELAYS", (0,))
+    client = ZontWsClient(
+        fake_hass,
+        FakeSession([first_ws, second_ws]),  # type: ignore[arg-type]
+        "ws://controller/ws",
+        ZontCredentials("user", "password"),
+        "entry",
+        "device",
+        auth_error_callback,
+    )
+    await async_start_client(client)
+
+    await client.async_send_system_command_without_response("SRESTART?")
+
+    assert first_ws.sent[-1] == {"scmd": "SRESTART?"}
+    assert not first_ws.closed
+    assert client.is_connected
+
+    client._handle_incoming('{"scmdres":"SRESTART:OK"}')
+
+    assert fake_hass.bus.events == []
+    assert client.is_connected
+
+    await first_ws.close()
+    for _ in range(20):
+        if client.reconnect_count == 1:
+            break
+        await asyncio.sleep(0)
+
+    assert client.is_connected
+    assert client.reconnect_count == 1
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
 async def test_controller_information_is_parsed(
     fake_hass: Any, auth_error_callback: Any
 ) -> None:
@@ -736,7 +863,7 @@ async def test_controller_information_is_parsed(
         "device",
         auth_error_callback,
     )
-    await client.async_start()
+    await async_start_client(client)
 
     request = asyncio.create_task(async_refresh_controller_info(client, "ABCDEF123456"))
     await asyncio.sleep(0)
@@ -764,7 +891,7 @@ async def test_invalid_system_response_raises_protocol_error(
         "device",
         auth_error_callback,
     )
-    await client.async_start()
+    await async_start_client(client)
 
     request = asyncio.create_task(client.async_send_system_command("#S7?"))
     await asyncio.sleep(0)
@@ -789,7 +916,7 @@ async def test_system_command_timeout_invalidates_connection(
         "device",
         auth_error_callback,
     )
-    await client.async_start()
+    await async_start_client(client)
 
     with pytest.raises(ZontRequestTimeoutError):
         await client.async_send_system_command("#S7?", response_timeout=0.01)
@@ -811,10 +938,13 @@ async def test_unsolicited_system_response_is_not_exposed(
         "device",
         auth_error_callback,
     )
+    received: list[Any] = []
+    client.async_add_message_listener(received.append)
 
     client._handle_incoming('{"scmdres":"#S208:sensitive"}')
 
     assert fake_hass.bus.events == []
+    assert received == []
 
 
 @pytest.mark.asyncio
@@ -860,7 +990,7 @@ async def test_stop_cleans_pending_and_task(
         "device",
         auth_error_callback,
     )
-    await client.async_start()
+    await async_start_client(client)
     command_task = asyncio.create_task(client.async_send_command(7, "value"))
     state_task = asyncio.create_task(client.async_get_object_state(8))
     ids_task = asyncio.create_task(client.async_get_object_ids(255))

@@ -6,7 +6,17 @@ from unittest.mock import MagicMock
 
 from custom_components.zont_ws.client import ZontWsClient
 from custom_components.zont_ws.const import CONF_CONTROLLER, DOMAIN
-from custom_components.zont_ws.controller import ZontControllerInfo
+from custom_components.zont_ws.controller import (
+    ZontCommunicationChannel,
+    ZontControllerInfo,
+    ZontServerStatus,
+)
+from custom_components.zont_ws.coordinator import (
+    ZontControllerData,
+    ZontData,
+    ZontDataUpdateCoordinator,
+    ZontRuntimeData,
+)
 from custom_components.zont_ws.diagnostics import async_get_config_entry_diagnostics
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
@@ -33,7 +43,20 @@ async def test_diagnostics_exclude_credentials(hass: HomeAssistant) -> None:
     client.last_error = None
     client.reconnect_count = 2
     client.pending_count = 1
-    entry.runtime_data = client
+    coordinator = MagicMock(spec=ZontDataUpdateCoordinator)
+    coordinator.last_update_success = True
+    coordinator.disabled_sources = ()
+    coordinator.data = ZontData(
+        controller=ZontControllerData(
+            info=None,
+            server_status=ZontServerStatus(
+                cloud_connected=True,
+                channels=frozenset({ZontCommunicationChannel.WIFI}),
+            ),
+            supply_voltage=12.3,
+        )
+    )
+    entry.runtime_data = ZontRuntimeData(client, coordinator)
 
     result = await async_get_config_entry_diagnostics(hass, entry)
 
@@ -49,6 +72,13 @@ async def test_diagnostics_exclude_credentials(hass: HomeAssistant) -> None:
             "last_error": None,
             "reconnect_count": 2,
             "pending_commands": 1,
+        },
+        "data": {
+            "last_update_success": True,
+            "disabled_sources": (),
+            "cloud_connected": True,
+            "connection_channels": ["wifi"],
+            "supply_voltage": 12.3,
         },
     }
     assert "secret-user" not in str(result)
