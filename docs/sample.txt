@@ -1,0 +1,96 @@
+// пример запросов основан на локальной веб-странице контроллера
+// чувствительные значения заменены плейсхолдерами
+send: {"req_ids":16}
+recv: {"auth":401}
+send: {"user":"<username>", "pass":"<password>"}
+recv: {"auth":200}
+send: {"req_ids":16}
+send: {"req_ids":20}
+send: {"req_ids":1}
+send: {"req_ids":27}
+send: {"req_ids":0}
+send: {"req_ids":8}
+send: {"req_ids":10}
+send: {"req_ids":6}
+recv: {"ids":[20494,20496,8362,9171,9716,9825,9838]}
+recv: {"ids":[20501,20502,20503,20504]}
+recv: {"ids":[8196,4105,4106,4104,4101,4103,4102,4107,4109,4110]}
+recv: {"ids":[]}
+recv: {"ids":[20550]}
+recv: {"ids":[]}
+recv: {"ids":[]}
+recv: {"ids":[4097]}
+
+// полный список содержит ID всех типов, но не границы между типами
+send: {"req_ids":255}
+recv: {"ids":[20550,8196,4105,4106,4104,4101,4103,4102,4107,4109,4110,20534,20535,20536,20537,20538,20533,4097,20488,9078,20494,20496,8362,9171,9716,9825,9838,9044,9055,20501,20502,20503,20504,20551,8708,9641,10139,16384,16385,16386,16387]}
+
+// начиная с этого места цикл каждые 30-60 секунды примерно
+send: {"id":20494,"req_state":0}
+send: {"id":20496,"req_state":0}
+send: {"id":8362,"req_state":0}
+send: {"id":9171,"req_state":0}
+send: {"id":9716,"req_state":0}
+send: {"id":9825,"req_state":0}
+send: {"id":9838,"req_state":0}
+send: {"id":20501,"req_state":0}
+send: {"id":20502,"req_state":0}
+send: {"id":20503,"req_state":0}
+send: {"id":20504,"req_state":0}
+send: {"id":8196,"req_state":0}
+send: {"id":4105,"req_state":0}
+send: {"id":4106,"req_state":0}
+send: {"id":4104,"req_state":0}
+send: {"id":4101,"req_state":0}
+send: {"id":4103,"req_state":0}
+send: {"id":4102,"req_state":0}
+send: {"id":4107,"req_state":0}
+send: {"id":4109,"req_state":0}
+send: {"id":4110,"req_state":0}
+send: {"id":20550,"req_state":0}
+send: {"id":4097,"req_state":0}
+send: {"scmd":"#S4?"}
+send: {"scmd":"#S7?"}
+send: {"scmd":"#S54?"}
+send: {"scmd":"#S198?"}
+send: {"scmd":"#S205?"}
+send: {"scmd":"#S208?"}
+send: {"scmd":"#S213?"}
+send: {"scmd":"#S224?"}
+send: {"scmd":"SDATE?"}
+recv: {"id":20494,"req_state":0, "failed":1}
+recv: {"c":38.5, "f":0, "m_id":20504, "m":"off","id":20496,"type":16,"stype":3,"name":"Радиаторы"}
+recv: {"c":29.0, "f":0, "m_id":20501, "s":60.0, "m":"heat","id":8362,"type":16,"stype":1,"name":"ГВС"}
+recv: {"c":36.3, "f":0, "m_id":20501, "s":25.0, "m":"heat","id":9171,"type":16,"stype":3,"name":"ТП"}
+recv: {"c":25.5, "f":0, "m_id":20504, "m":"off","id":9716,"type":16,"stype":3,"name":"Спальня"}
+recv: {"c":25.2, "f":0, "m_id":20504, "m":"off","id":9825,"type":16,"stype":3,"name":"Кабинет"}
+recv: {"c":25.1, "f":0, "m_id":20504, "m":"off","id":9838,"type":16,"stype":3,"name":"Зал"}
+recv: {"id":20501,"type":20,"name":"Комфорт"}
+recv: {"id":20502,"type":20,"name":"Эконом"}
+recv: {"id":20503,"type":20,"name":"Лето"}
+recv: {"id":20504,"type":20,"name":"Выключен"}
+recv: {"t":19.7, "a":1, "trig":0,"id":8196,"type":1,"name":"Погода из интернета"}
+recv: {"t":36.7, "a":1, "trig":0,"id":4105,"type":1,"name":"ПК Подача"}
+recv: {"t":36.3, "a":1, "trig":0,"id":4106,"type":1,"name":"ПК Обратка"}
+recv: {"t":38.5, "a":1, "trig":0,"id":4104,"type":1,"name":"Радиаторы Подача"}
+recv: {"t":27.5, "a":1, "trig":0,"id":4101,"type":1,"name":"Радиаторы Обратка"}
+recv: {"t":36.3, "a":1, "trig":0,"id":4103,"type":1,"name":"ТП Подача"}
+recv: {"t":32.9, "a":1, "trig":0,"id":4102,"type":1,"name":"ТП Обратка"}
+recv: {"t":25.5, "a":1, "trig":0,"id":4107,"type":1,"name":"Т Спальня"}
+recv: {"t":25.1, "a":1, "trig":0,"id":4109,"type":1,"name":"Т Зал"}
+recv: {"t":25.2, "a":1, "trig":0,"id":4110,"type":1,"name":"Т Кабинет"}
+recv: {"v":12.2, "a":1, "u":0, "trig":0,"id":20550,"type":0,"stype":0,"name":"Контроль напряжения питания"}
+recv: {"water":35.0, "dhw":29.0, "state":0, "err":0,"id":4097,"type":6,"name":"Navien"}
+recv: {"scmdres":"#S4:19 1 MTS RUS"}
+recv: {"scmdres":"#S7:H1V02_PRO 700 625"}
+recv: {"scmdres":"#S54:<device_id>"}
+recv: {"scmdres":"#S198:<network_data>"}
+recv: {"scmdres":"#S205:!"}
+recv: {"scmdres":"#S208:<wifi_data>"}
+recv: {"scmdres":"#S213:<sim_id>"}
+recv: {"scmdres":"#S224:1 0 1 0"}
+recv: {"scmdres":"SDATE=8 8 26 10 14 19"}
+
+// в любой момент могут приходить обновления разных состояний (без запросов)
+push: {"s":1,"id":9078,"type":15,"name":"Трехходовой ТП"}
+push: {"s":0,"id":9078,"type":15,"name":"Трехходовой ТП"}

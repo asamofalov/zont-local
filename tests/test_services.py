@@ -28,7 +28,7 @@ ENTRY_DATA = {
 def _loaded_entry(hass: HomeAssistant) -> tuple[MockConfigEntry, MagicMock]:
     entry = MockConfigEntry(domain=DOMAIN, data=ENTRY_DATA)
     client = MagicMock(spec=ZontWsClient)
-    client.async_send_command = AsyncMock(return_value={"id": 7, "status": "ok"})
+    client.async_send_command = AsyncMock(return_value={"id": 7, "cmdres": 0})
     entry.runtime_data = client
     entry.add_to_hass(hass)
     entry.mock_state(hass, ConfigEntryState.LOADED)
@@ -59,13 +59,15 @@ async def test_send_command_returns_optional_response(hass: HomeAssistant) -> No
         return_response=True,
     )
 
-    assert response == {"response": {"id": 7, "status": "ok"}}
+    assert response == {"response": {"id": 7, "cmdres": 0}}
     client.async_send_command.assert_awaited_once_with(7, "value")
 
 
 async def test_send_bulk_is_sequential(hass: HomeAssistant) -> None:
     _, client = _loaded_entry(hass)
-    client.async_send_command = AsyncMock(side_effect=[{"id": 7}, {"id": 8}])
+    client.async_send_command = AsyncMock(
+        side_effect=[{"id": 7, "cmdres": 0}, {"id": 8, "cmdres": 0}]
+    )
     async_setup_services(hass)
 
     response = await hass.services.async_call(
@@ -83,8 +85,8 @@ async def test_send_bulk_is_sequential(hass: HomeAssistant) -> None:
 
     assert response == {
         "responses": [
-            {"id": 7, "response": {"id": 7}},
-            {"id": 8, "response": {"id": 8}},
+            {"id": 7, "response": {"id": 7, "cmdres": 0}},
+            {"id": 8, "response": {"id": 8, "cmdres": 0}},
         ]
     }
     assert client.async_send_command.await_args_list[0].args == (7, "first")

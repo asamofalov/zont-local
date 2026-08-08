@@ -43,7 +43,11 @@ class ZontProtocolError(ZontError):
     """Raised when the controller sends an invalid protocol message."""
 
 
-class ZontCommandTimeoutError(ZontError):
+class ZontRequestTimeoutError(ZontError):
+    """Raised when a protocol response is not received in time."""
+
+
+class ZontCommandTimeoutError(ZontRequestTimeoutError):
     """Raised when a command response is not received in time."""
 
 
@@ -56,8 +60,8 @@ class ZontCredentials:
 
 
 @dataclass(slots=True)
-class _CommandSlot:
-    """Lock and reference count for one command identifier."""
+class _RequestSlot:
+    """Lock and reference count for one object identifier."""
 
     lock: asyncio.Lock
     users: int = 0
@@ -162,8 +166,14 @@ class ZontWsClient:
         self._supervisor_task: asyncio.Task[None] | None = None
         self._stop = asyncio.Event()
         self._send_lock = asyncio.Lock()
-        self._command_slots: dict[int, _CommandSlot] = {}
-        self._pending: dict[int, asyncio.Future[dict[str, Any]]] = {}
+        self._command_slots: dict[int, _RequestSlot] = {}
+        self._state_slots: dict[int, _RequestSlot] = {}
+        self._ids_lock = asyncio.Lock()
+        self._scmd_lock = asyncio.Lock()
+        self._pending_commands: dict[int, asyncio.Future[dict[str, Any]]] = {}
+        self._pending_states: dict[int, asyncio.Future[dict[str, Any]]] = {}
+        self._pending_ids: asyncio.Future[list[int]] | None = None
+        self._pending_scmd: asyncio.Future[str] | None = None
 
         self._is_connected = False
         self._last_error: str | None = None
@@ -189,7 +199,7 @@ class ZontWsClient:
     @property
     def pending_count(self) -> int:
         """Return the number of commands waiting for a response."""
-        return len(self._pending)
+        return len(self._pending_commands)
 
     async def async_start(self) -> None:
         """Connect once and start the connection supervisor."""
@@ -223,6 +233,7 @@ class ZontWsClient:
                 await task
 
         self._command_slots.clear()
+        self._state_slots.clear()
 
     async def _async_supervisor(self) -> None:
         """Read messages and own every reconnect attempt."""
@@ -321,7 +332,7 @@ class ZontWsClient:
                 raise ZontProtocolError("Binary WebSocket messages are not supported")
 
     def _handle_incoming(self, raw: str) -> None:
-        """Resolve a command response or publish an unsolicited event."""
+        """Route a protocol response or publish an unsolicited event."""
         try:
             data = json.loads(raw)
         except (TypeError, json.JSONDecodeError):
@@ -330,16 +341,87 @@ class ZontWsClient:
 
         if isinstance(data, Mapping):
             response = dict(data)
-            message_id = response.get("id")
-            if (
-                type(message_id) is int
-                and (future := self._pending.pop(message_id, None)) is not None
-            ):
-                if not future.done():
-                    future.set_result(response)
+            if self._resolve_command_response(response):
+                return
+            if self._resolve_ids_response(response):
+                return
+            if "scmdres" in response:
+                self._resolve_system_command_response(response)
+                return
+            if self._resolve_state_response(response):
                 return
 
         self._fire_event(data)
+
+    def _resolve_command_response(self, response: dict[str, Any]) -> bool:
+        """Resolve a documented object command response."""
+        if "cmdres" not in response:
+            return False
+
+        message_id = _message_id(response)
+        if message_id is None:
+            return False
+
+        future = self._pending_commands.pop(message_id, None)
+        if future is None:
+            return False
+        if not future.done():
+            future.set_result(response)
+        return True
+
+    def _resolve_ids_response(self, response: dict[str, Any]) -> bool:
+        """Resolve the one serialized object ID request."""
+        if "ids" not in response:
+            return False
+
+        future = self._pending_ids
+        if future is None:
+            return False
+        self._pending_ids = None
+
+        ids = response["ids"]
+        if not isinstance(ids, list) or any(type(item) is not int for item in ids):
+            if not future.done():
+                future.set_exception(ZontProtocolError("Object IDs are not integers"))
+            return True
+
+        if not future.done():
+            future.set_result(ids)
+        return True
+
+    def _resolve_system_command_response(self, response: dict[str, Any]) -> None:
+        """Resolve a system command without exposing unmatched sensitive data."""
+        future = self._pending_scmd
+        if future is None:
+            return
+        self._pending_scmd = None
+
+        result = response["scmdres"]
+        if not isinstance(result, str):
+            if not future.done():
+                future.set_exception(
+                    ZontProtocolError("System command response is not text")
+                )
+            return
+
+        if not future.done():
+            future.set_result(result)
+
+    def _resolve_state_response(self, response: dict[str, Any]) -> bool:
+        """Resolve an object state response by its identifier."""
+        if "type" not in response and "failed" not in response:
+            return False
+
+        message_id = _message_id(response)
+        if message_id is None:
+            return False
+
+        future = self._pending_states.pop(message_id, None)
+        if future is None:
+            return False
+        if not future.done():
+            future.set_result(response)
+        return True
 
     def _fire_event(self, payload: Any) -> None:
         """Publish an unsolicited controller message on the HA event bus."""
@@ -355,50 +437,169 @@ class ZontWsClient:
         response_timeout: float = COMMAND_TIMEOUT,
     ) -> dict[str, Any]:
         """Send a command and wait for the matching response."""
-        async with self._async_command_slot(command_id):
-            ws = self._ws
-            if not self._is_connected or ws is None or ws.closed:
-                raise ZontConnectionError("The ZONT controller is offline")
+        async with self._async_request_slot(self._command_slots, command_id):
+            ws = self._connected_websocket()
 
             future: asyncio.Future[dict[str, Any]] = (
                 asyncio.get_running_loop().create_future()
             )
-            self._pending[command_id] = future
+            self._pending_commands[command_id] = future
             try:
-                payload = {"id": command_id, "cmd": command}
                 try:
-                    async with self._send_lock:
-                        if self._ws is not ws or ws.closed:
-                            raise ZontConnectionError(
-                                "The ZONT connection changed before sending"
-                            )
-                        await ws.send_str(
-                            json.dumps(
-                                payload,
-                                ensure_ascii=False,
-                                separators=(",", ":"),
-                            )
-                        )
-                except asyncio.CancelledError:
-                    raise
-                except ZontConnectionError:
-                    raise
-                except (ClientError, OSError) as err:
-                    await self._async_invalidate_connection(ws)
-                    raise ZontConnectionError("Unable to send the command") from err
-
-                try:
+                    await self._async_send_payload(
+                        ws, {"id": command_id, "cmd": command}
+                    )
                     async with asyncio.timeout(response_timeout):
                         return await future
+                except asyncio.CancelledError:
+                    await self._async_invalidate_connection(ws)
+                    raise
                 except TimeoutError as err:
+                    await self._async_invalidate_connection(ws)
                     raise ZontCommandTimeoutError(
                         f"No response for command {command_id}"
                     ) from err
             finally:
-                if self._pending.get(command_id) is future:
-                    self._pending.pop(command_id, None)
+                if self._pending_commands.get(command_id) is future:
+                    self._pending_commands.pop(command_id, None)
                 if not future.done():
                     future.cancel()
+
+    async def async_get_object_ids(
+        self,
+        object_type: int,
+        response_timeout: float = COMMAND_TIMEOUT,
+    ) -> list[int]:
+        """Request object identifiers of one type."""
+        if type(object_type) is not int or not 0 <= object_type <= 255:
+            raise ValueError("Object type must be an integer from 0 to 255")
+
+        async with self._ids_lock:
+            ws = self._connected_websocket()
+            future: asyncio.Future[list[int]] = (
+                asyncio.get_running_loop().create_future()
+            )
+            self._pending_ids = future
+            try:
+                try:
+                    await self._async_send_payload(ws, {"req_ids": object_type})
+                    async with asyncio.timeout(response_timeout):
+                        return await future
+                except asyncio.CancelledError:
+                    await self._async_invalidate_connection(ws)
+                    raise
+                except TimeoutError as err:
+                    await self._async_invalidate_connection(ws)
+                    raise ZontRequestTimeoutError(
+                        f"No object ID response for type {object_type}"
+                    ) from err
+            finally:
+                if self._pending_ids is future:
+                    self._pending_ids = None
+                if not future.done():
+                    future.cancel()
+
+    async def async_get_object_state(
+        self,
+        object_id: int,
+        response_timeout: float = COMMAND_TIMEOUT,
+    ) -> dict[str, Any]:
+        """Request the current state of one object."""
+        if type(object_id) is not int or object_id < 0:
+            raise ValueError("Object ID must be a non-negative integer")
+
+        async with self._async_request_slot(self._state_slots, object_id):
+            ws = self._connected_websocket()
+            future: asyncio.Future[dict[str, Any]] = (
+                asyncio.get_running_loop().create_future()
+            )
+            self._pending_states[object_id] = future
+            try:
+                try:
+                    await self._async_send_payload(
+                        ws, {"id": object_id, "req_state": 0}
+                    )
+                    async with asyncio.timeout(response_timeout):
+                        return await future
+                except asyncio.CancelledError:
+                    await self._async_invalidate_connection(ws)
+                    raise
+                except TimeoutError as err:
+                    await self._async_invalidate_connection(ws)
+                    raise ZontRequestTimeoutError(
+                        f"No state response for object {object_id}"
+                    ) from err
+            finally:
+                if self._pending_states.get(object_id) is future:
+                    self._pending_states.pop(object_id, None)
+                if not future.done():
+                    future.cancel()
+
+    async def async_send_system_command(
+        self,
+        command: str,
+        response_timeout: float = COMMAND_TIMEOUT,
+    ) -> str:
+        """Send one serialized system command and return its text response."""
+        if not isinstance(command, str) or not command.strip():
+            raise ValueError("System command must be non-empty text")
+
+        async with self._scmd_lock:
+            ws = self._connected_websocket()
+            future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+            self._pending_scmd = future
+            try:
+                try:
+                    await self._async_send_payload(ws, {"scmd": command})
+                    async with asyncio.timeout(response_timeout):
+                        return await future
+                except asyncio.CancelledError:
+                    await self._async_invalidate_connection(ws)
+                    raise
+                except TimeoutError as err:
+                    await self._async_invalidate_connection(ws)
+                    raise ZontRequestTimeoutError(
+                        "No response for system command"
+                    ) from err
+            finally:
+                if self._pending_scmd is future:
+                    self._pending_scmd = None
+                if not future.done():
+                    future.cancel()
+
+    def _connected_websocket(self) -> ClientWebSocketResponse:
+        """Return the active WebSocket or raise a connection error."""
+        ws = self._ws
+        if not self._is_connected or ws is None or ws.closed:
+            raise ZontConnectionError("The ZONT controller is offline")
+        return ws
+
+    async def _async_send_payload(
+        self,
+        ws: ClientWebSocketResponse,
+        payload: Mapping[str, Any],
+    ) -> None:
+        """Serialize and send one payload through the expected connection."""
+        try:
+            async with self._send_lock:
+                if self._ws is not ws or ws.closed:
+                    raise ZontConnectionError(
+                        "The ZONT connection changed before sending"
+                    )
+                await ws.send_str(
+                    json.dumps(
+                        payload,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                )
+        except asyncio.CancelledError:
+            raise
+        except ZontConnectionError:
+            raise
+        except (ClientError, OSError) as err:
+            await self._async_invalidate_connection(ws)
+            raise ZontConnectionError("Unable to send the request") from err
 
     async def _async_invalidate_connection(self, ws: ClientWebSocketResponse) -> None:
         """Close a broken connection and wake the supervisor."""
@@ -408,19 +609,23 @@ class ZontWsClient:
         await _async_close_websocket(ws)
 
     @asynccontextmanager
-    async def _async_command_slot(self, command_id: int) -> AsyncIterator[None]:
-        """Serialize requests that share the same protocol identifier."""
-        slot = self._command_slots.get(command_id)
+    async def _async_request_slot(
+        self,
+        slots: dict[int, _RequestSlot],
+        object_id: int,
+    ) -> AsyncIterator[None]:
+        """Serialize requests of one class that share an object identifier."""
+        slot = slots.get(object_id)
         if slot is None:
-            slot = self._command_slots[command_id] = _CommandSlot(asyncio.Lock())
+            slot = slots[object_id] = _RequestSlot(asyncio.Lock())
         slot.users += 1
         try:
             async with slot.lock:
                 yield
         finally:
             slot.users -= 1
-            if slot.users == 0 and self._command_slots.get(command_id) is slot:
-                self._command_slots.pop(command_id, None)
+            if slot.users == 0 and slots.get(object_id) is slot:
+                slots.pop(object_id, None)
 
     async def _async_wait_before_reconnect(self, index: int) -> None:
         """Wait for the next reconnect without delaying shutdown."""
@@ -458,12 +663,40 @@ class ZontWsClient:
         )
 
     def _fail_pending(self, error: ZontConnectionError) -> None:
-        """Fail and remove every in-flight command."""
-        pending = tuple(self._pending.values())
-        self._pending.clear()
+        """Fail and remove every in-flight protocol request."""
+        pending: list[asyncio.Future[Any]] = [
+            *self._pending_commands.values(),
+            *self._pending_states.values(),
+        ]
+        self._pending_commands.clear()
+        self._pending_states.clear()
+        if self._pending_ids is not None:
+            pending.append(self._pending_ids)
+            self._pending_ids = None
+        if self._pending_scmd is not None:
+            pending.append(self._pending_scmd)
+            self._pending_scmd = None
         for future in pending:
             if not future.done():
                 future.set_exception(error)
                 # Mark the exception retrieved. Awaiting the future still raises it,
                 # while a simultaneously failing sender does not leak a warning.
                 future.exception()
+
+
+def _message_id(response: Mapping[str, Any]) -> int | None:
+    """Return a valid lower- or upper-case protocol object identifier."""
+    lower_id = response.get("id")
+    upper_id = response.get("Id")
+
+    if lower_id is not None and type(lower_id) is not int:
+        return None
+    if upper_id is not None and type(upper_id) is not int:
+        return None
+    if lower_id is not None and upper_id is not None and lower_id != upper_id:
+        return None
+    if type(lower_id) is int:
+        return lower_id
+    if type(upper_id) is int:
+        return upper_id
+    return None
