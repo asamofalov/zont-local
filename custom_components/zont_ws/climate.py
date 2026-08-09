@@ -38,9 +38,8 @@ from .heating_config import (
     ZontHeatingCircuitControlData,
 )
 from .heating_modes import (
-    mode_disables_circuits,
     mode_is_applicable_to_circuit,
-    relevant_heating_circuit_ids,
+    validated_off_mode_id,
 )
 from .objects import ZontHeatingCircuitData, ZontHeatingCircuitMode
 
@@ -183,22 +182,13 @@ class ZontConsumerClimate(ZontObjectCoordinatorEntity, ClimateEntity):
     @property
     def _off_mode_id(self) -> int | None:
         """Return the selected off mode when it remains safe and applicable."""
-        configured = self._entry.options.get(CONF_HEATING_OFF_MODE_ID)
-        if type(configured) is not int:
-            return None
-        mode = self.coordinator.data.heating_modes.get(configured)
-        if mode is None or not mode_disables_circuits(
-            mode,
-            relevant_heating_circuit_ids(self.coordinator.data.objects),
-        ):
-            return None
-        if not mode_is_applicable_to_circuit(
-            configured,
+        return validated_off_mode_id(
+            self._entry.options.get(CONF_HEATING_OFF_MODE_ID),
             self._object_id,
+            self.coordinator.data.objects,
             self.coordinator.data.heating_states,
-        ):
-            return None
-        return configured
+            self.coordinator.data.heating_modes,
+        )
 
     @property
     def _can_turn_on(self) -> bool:

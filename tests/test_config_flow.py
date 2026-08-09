@@ -16,7 +16,9 @@ from custom_components.zont_ws.client import (
 from custom_components.zont_ws.const import (
     CONF_AUTO_TITLE,
     CONF_CONTROLLER,
+    CONF_DHW_ON_TEMPERATURE,
     CONF_HEATING_OFF_MODE_ID,
+    DHW_DEFAULT_ON_TEMPERATURE,
     DOMAIN,
 )
 from custom_components.zont_ws.controller import (
@@ -166,7 +168,10 @@ async def test_user_flow_success(hass: HomeAssistant, monkeypatch) -> None:
     assert result["title"] == AUTO_TITLE
     assert result["data"] == ENTRY_DATA
     assert result["result"].unique_id == SERIAL_NUMBER
-    assert result["options"] == {CONF_HEATING_OFF_MODE_ID: OFF_MODE_ID}
+    assert result["options"] == {
+        CONF_HEATING_OFF_MODE_ID: OFF_MODE_ID,
+        CONF_DHW_ON_TEMPERATURE: DHW_DEFAULT_ON_TEMPERATURE,
+    }
     discover.assert_awaited_once()
     assert discover.await_args.args[1] == USER_DATA
 
@@ -251,12 +256,30 @@ async def test_options_flow_updates_off_mode(hass: HomeAssistant, monkeypatch) -
 
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
-        {CONF_HEATING_OFF_MODE_ID: str(second_mode.object_id)},
+        {
+            CONF_HEATING_OFF_MODE_ID: str(second_mode.object_id),
+            CONF_DHW_ON_TEMPERATURE: 55,
+        },
     )
 
     assert result["type"] is data_entry_flow.FlowResultType.CREATE_ENTRY
-    assert entry.options == {CONF_HEATING_OFF_MODE_ID: second_mode.object_id}
+    assert entry.options == {
+        CONF_HEATING_OFF_MODE_ID: second_mode.object_id,
+        CONF_DHW_ON_TEMPERATURE: 55.0,
+    }
     discover.assert_awaited_once()
+
+
+@pytest.mark.parametrize("temperature", [4.9, 75.1, float("nan"), True, "invalid"])
+def test_dhw_on_temperature_validation_rejects_invalid_values(
+    temperature: object,
+) -> None:
+    assert (
+        zont_config_flow._validate_dhw_on_temperature(
+            {CONF_DHW_ON_TEMPERATURE: temperature}
+        )
+        is None
+    )
 
 
 async def test_loaded_options_flow_reuses_coordinator_data(

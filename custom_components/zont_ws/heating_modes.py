@@ -92,6 +92,27 @@ def eligible_off_modes(
     )
 
 
+def validated_off_mode_id(
+    configured_mode_id: object,
+    circuit_id: int,
+    objects: Mapping[int, ZontObject],
+    states: Mapping[int, ZontHeatingCircuitInternalState],
+    modes: Mapping[int, ZontHeatingModeConfiguration],
+) -> int | None:
+    """Return the configured off mode when it remains safe for a circuit."""
+    if type(configured_mode_id) is not int:
+        return None
+    mode = modes.get(configured_mode_id)
+    if mode is None or not mode_disables_circuits(
+        mode,
+        relevant_heating_circuit_ids(objects),
+    ):
+        return None
+    if not mode_is_applicable_to_circuit(configured_mode_id, circuit_id, states):
+        return None
+    return configured_mode_id
+
+
 def mode_disables_circuits(
     mode: ZontHeatingModeConfiguration,
     circuit_ids: frozenset[int],

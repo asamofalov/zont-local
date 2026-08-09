@@ -13,6 +13,9 @@ from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
     SelectOptionDict,
     SelectSelector,
     SelectSelectorConfig,
@@ -31,8 +34,12 @@ from .client import (
 from .const import (
     CONF_AUTO_TITLE,
     CONF_CONTROLLER,
+    CONF_DHW_ON_TEMPERATURE,
     CONF_HEATING_OFF_MODE_ID,
     CONFIG_ENTRY_VERSION,
+    DHW_DEFAULT_ON_TEMPERATURE,
+    DHW_MAX_TARGET_TEMPERATURE,
+    DHW_MIN_TARGET_TEMPERATURE,
     DOMAIN,
 )
 from .controller import (
@@ -60,6 +67,7 @@ ERROR_CANNOT_IDENTIFY = "cannot_identify"
 ERROR_CANNOT_READ_MODES = "cannot_read_modes"
 ERROR_DIFFERENT_CONTROLLER = "different_controller"
 ERROR_INVALID_AUTH = "invalid_auth"
+ERROR_INVALID_DHW_ON_TEMPERATURE = "invalid_dhw_on_temperature"
 ERROR_INVALID_HOST = "invalid_host"
 ERROR_INVALID_OFF_MODE = "invalid_off_mode"
 ERROR_NO_OFF_MODE = "no_off_mode"
@@ -125,13 +133,19 @@ class ZontWsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except (KeyError, TypeError, ValueError):
                 errors["base"] = ERROR_INVALID_OFF_MODE
             else:
-                if mode_id not in {mode.object_id for mode in self._off_modes}:
+                temperature = _validate_dhw_on_temperature(user_input)
+                if temperature is None:
+                    errors["base"] = ERROR_INVALID_DHW_ON_TEMPERATURE
+                elif mode_id not in {mode.object_id for mode in self._off_modes}:
                     errors["base"] = ERROR_INVALID_OFF_MODE
                 else:
                     return self.async_create_entry(
                         title=self._pending_title,
                         data=self._pending_data,
-                        options={CONF_HEATING_OFF_MODE_ID: mode_id},
+                        options={
+                            CONF_HEATING_OFF_MODE_ID: mode_id,
+                            CONF_DHW_ON_TEMPERATURE: temperature,
+                        },
                     )
 
         return self.async_show_form(
@@ -339,18 +353,34 @@ class ZontWsOptionsFlow(config_entries.OptionsFlowWithReload):
             except (KeyError, TypeError, ValueError):
                 errors["base"] = ERROR_INVALID_OFF_MODE
             else:
-                if mode_id in {mode.object_id for mode in off_modes}:
+                temperature = _validate_dhw_on_temperature(user_input)
+                if temperature is None:
+                    errors["base"] = ERROR_INVALID_DHW_ON_TEMPERATURE
+                elif mode_id in {mode.object_id for mode in off_modes}:
                     return self.async_create_entry(
-                        data={CONF_HEATING_OFF_MODE_ID: mode_id}
+                        data={
+                            CONF_HEATING_OFF_MODE_ID: mode_id,
+                            CONF_DHW_ON_TEMPERATURE: temperature,
+                        }
                     )
-                errors["base"] = ERROR_INVALID_OFF_MODE
+                else:
+                    errors["base"] = ERROR_INVALID_OFF_MODE
 
         current_mode_id = self.config_entry.options.get(CONF_HEATING_OFF_MODE_ID)
+        current_dhw_temperature = self.config_entry.options.get(
+            CONF_DHW_ON_TEMPERATURE,
+            DHW_DEFAULT_ON_TEMPERATURE,
+        )
         return self.async_show_form(
             step_id="init",
             data_schema=_heating_mode_schema(
                 off_modes,
                 current_mode_id if type(current_mode_id) is int else None,
+                (
+                    float(current_dhw_temperature)
+                    if _is_valid_dhw_on_temperature(current_dhw_temperature)
+                    else DHW_DEFAULT_ON_TEMPERATURE
+                ),
             ),
             errors=errors,
         )
@@ -472,8 +502,9 @@ def _heating_mode_data_is_complete(data: ZontData) -> bool:
 def _heating_mode_schema(
     modes: tuple[ZontHeatingModeConfiguration, ...],
     default: int | None = None,
+    dhw_on_temperature: float = DHW_DEFAULT_ON_TEMPERATURE,
 ) -> vol.Schema:
-    """Return a required selector for an eligible controller mode."""
+    """Return selectors for safe heating on and off behavior."""
     options = [
         SelectOptionDict(
             value=str(mode.object_id),
@@ -491,8 +522,35 @@ def _heating_mode_schema(
                     options=options,
                     custom_value=False,
                 )
-            )
+            ),
+            vol.Required(
+                CONF_DHW_ON_TEMPERATURE,
+                default=dhw_on_temperature,
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=DHW_MIN_TARGET_TEMPERATURE,
+                    max=DHW_MAX_TARGET_TEMPERATURE,
+                    step=1.0,
+                    unit_of_measurement="°C",
+                    mode=NumberSelectorMode.BOX,
+                )
+            ),
         }
+    )
+
+
+def _validate_dhw_on_temperature(user_input: dict[str, Any]) -> float | None:
+    """Return a valid configured DHW on temperature."""
+    value = user_input.get(CONF_DHW_ON_TEMPERATURE, DHW_DEFAULT_ON_TEMPERATURE)
+    return float(value) if _is_valid_dhw_on_temperature(value) else None
+
+
+def _is_valid_dhw_on_temperature(value: Any) -> bool:
+    """Return whether a value is a supported DHW on temperature."""
+    return (
+        isinstance(value, int | float)
+        and not isinstance(value, bool)
+        and DHW_MIN_TARGET_TEMPERATURE <= value <= DHW_MAX_TARGET_TEMPERATURE
     )
 
 

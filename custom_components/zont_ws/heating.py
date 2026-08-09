@@ -85,6 +85,38 @@ async def async_set_heating_circuit_temperature_and_refresh(
             )
 
 
+async def async_set_heating_circuit_temperature_and_confirm_active(
+    client: ZontWsClient,
+    coordinator: ZontDataUpdateCoordinator,
+    object_id: int,
+    temperature: float,
+) -> None:
+    """Set a target and require the circuit to confirm an active state."""
+    await async_set_heating_circuit_temperature(client, object_id, temperature)
+    try:
+        refreshed = await coordinator.async_refresh_object(object_id)
+    except asyncio.CancelledError:
+        raise
+    except (ZontConnectionError, ZontRequestTimeoutError, ZontProtocolError) as err:
+        raise ZontCommandStateError(
+            "The accepted heating target could not be confirmed"
+        ) from err
+    if not refreshed:
+        raise ZontCommandStateError(
+            "The accepted heating target did not return a usable state"
+        )
+
+    obj = coordinator.data.objects.get(object_id)
+    if (
+        not isinstance(obj, ZontHeatingCircuitData)
+        or obj.mode is not ZontHeatingCircuitMode.HEAT
+        or obj.target_temperature is None
+        or celsius_to_decikelvin(obj.target_temperature)
+        != celsius_to_decikelvin(temperature)
+    ):
+        raise ZontCommandStateError("The heating target was not applied")
+
+
 async def async_apply_heating_mode_and_refresh(
     client: ZontWsClient,
     coordinator: ZontDataUpdateCoordinator,
