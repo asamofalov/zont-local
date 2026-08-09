@@ -5,9 +5,11 @@ from __future__ import annotations
 import pytest
 from custom_components.zont_ws.objects import (
     ANALOG_INPUT_SUBTYPE_NAMES,
+    HEATING_CIRCUIT_SUBTYPE_NAMES,
     OBJECT_TYPE_ANALOG_INPUT,
     OBJECT_TYPE_DIGITAL_BUS_ADAPTER,
     OBJECT_TYPE_DIGITAL_TEMPERATURE_SENSOR,
+    OBJECT_TYPE_HEATING_CIRCUIT,
     OBJECT_TYPE_NTC_TEMPERATURE_SENSOR,
     OBJECT_TYPE_RADIO_SENSOR,
     RADIO_SENSOR_SUBTYPE_NAMES,
@@ -16,14 +18,18 @@ from custom_components.zont_ws.objects import (
     ZontDigitalBusAdapterData,
     ZontDigitalBusState,
     ZontDigitalTemperatureSensorData,
+    ZontHeatingCircuitData,
+    ZontHeatingCircuitMode,
     ZontNtcTemperatureSensorData,
     ZontObjectParseError,
     ZontRadioSensorData,
     analog_input_model,
+    heating_circuit_model,
     immutable_objects,
     parse_analog_input,
     parse_digital_bus_adapter,
     parse_digital_temperature_sensor,
+    parse_heating_circuit,
     parse_ntc_temperature_sensor,
     parse_radio_sensor,
     parse_zont_object,
@@ -56,6 +62,128 @@ def test_parse_complete_analog_input() -> None:
         unit_code=0,
         triggered=False,
     )
+
+
+def test_parse_complete_heating_circuit() -> None:
+    circuit = parse_heating_circuit(
+        {
+            "id": 8362,
+            "type": OBJECT_TYPE_HEATING_CIRCUIT,
+            "stype": 1,
+            "name": "ГВС",
+            "c": 29,
+            "s": 60,
+            "m": "heat",
+            "m_id": 20501,
+            "f": 0,
+        }
+    )
+
+    assert circuit == ZontHeatingCircuitData(
+        object_id=8362,
+        object_type=16,
+        name="ГВС",
+        subtype=1,
+        current_temperature=29.0,
+        target_temperature=60.0,
+        mode=ZontHeatingCircuitMode.HEAT,
+        mode_id=20501,
+        fault=False,
+    )
+    assert (
+        parse_zont_object(
+            {
+                "id": 8362,
+                "type": 16,
+                "stype": 1,
+                "name": "ГВС",
+                "c": 29,
+            }
+        ).object_id
+        == 8362
+    )
+
+
+def test_heating_circuit_subtypes_have_models() -> None:
+    assert HEATING_CIRCUIT_SUBTYPE_NAMES == {
+        0: "Котловой контур",
+        1: "Контур ГВС",
+        2: "Охладительный контур",
+        3: "Контур потребителя",
+    }
+    assert heating_circuit_model(4) == "Контур отопления (подтип 4)"
+
+
+def test_partial_heating_circuit_update_preserves_absent_fields() -> None:
+    previous = ZontHeatingCircuitData(
+        object_id=8362,
+        object_type=16,
+        name="ГВС",
+        subtype=1,
+        current_temperature=29,
+        target_temperature=60,
+        mode=ZontHeatingCircuitMode.HEAT,
+        mode_id=20501,
+        fault=False,
+    )
+
+    circuit = parse_heating_circuit(
+        {"id": 8362, "c": 30.5},
+        previous,
+        partial=True,
+    )
+
+    assert circuit.current_temperature == 30.5
+    assert circuit.target_temperature == 60
+    assert circuit.mode is ZontHeatingCircuitMode.HEAT
+    assert circuit.mode_id == 20501
+    assert circuit.fault is False
+
+
+def test_invalid_heating_fields_are_ignored() -> None:
+    circuit = parse_heating_circuit(
+        {
+            "id": 20496,
+            "type": 16,
+            "stype": 3,
+            "name": "Радиаторы",
+            "c": True,
+            "s": float("nan"),
+            "m": "automatic",
+            "m_id": -1,
+            "f": 2,
+        }
+    )
+
+    assert not circuit.available
+    assert circuit.current_temperature is None
+    assert circuit.target_temperature is None
+    assert circuit.mode is None
+    assert circuit.mode_id is None
+    assert circuit.fault is None
+
+
+def test_unavailable_heating_circuit_preserves_last_state() -> None:
+    previous = ZontHeatingCircuitData(
+        object_id=8362,
+        object_type=16,
+        name="ГВС",
+        subtype=1,
+        current_temperature=29,
+        target_temperature=60,
+        mode=ZontHeatingCircuitMode.HEAT,
+        mode_id=20501,
+        fault=False,
+    )
+
+    circuit = parse_heating_circuit(
+        {"id": 8362, "type": 16, "stype": 1, "name": "ГВС"},
+        previous,
+    )
+
+    assert not circuit.available
+    assert circuit.current_temperature == 29
+    assert circuit.target_temperature == 60
 
 
 def test_all_documented_analog_input_subtypes_have_models() -> None:

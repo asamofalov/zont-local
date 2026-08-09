@@ -147,6 +147,12 @@
     "command_timeout": {
       "message": "Контроллер ZONT не ответил на команду {id}"
     },
+    "command_rejected": {
+      "message": "Контроллер ZONT отклонил команду для объекта {id}"
+    },
+    "temperature_out_of_range": {
+      "message": "Укажите температуру от {min_temperature} до {max_temperature} °C"
+    },
     "protocol_error": {
       "message": "Контроллер ZONT вернул некорректный ответ"
     }

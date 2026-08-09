@@ -248,14 +248,29 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
                 self._object_error_types.discard(object_type)
         return immutable_objects(objects)
 
+    async def async_refresh_object(self, object_id: int) -> bool:
+        """Refresh one known object without running the complete coordinator poll."""
+        response = await self._client.async_get_object_state(object_id)
+        return self._async_apply_object_payload(response, partial=False)
+
     @callback
     def _async_message_received(self, payload: object) -> None:
         """Merge an unsolicited supported object state into the snapshot."""
         if not isinstance(payload, Mapping):
             return
+        self._async_apply_object_payload(payload, partial=True)
+
+    @callback
+    def _async_apply_object_payload(
+        self,
+        payload: Mapping[str, object],
+        *,
+        partial: bool,
+    ) -> bool:
+        """Merge one object payload into the current immutable snapshot."""
         object_id = payload.get("id")
         if type(object_id) is not int or object_id < 0:
-            return
+            return False
 
         previous = self.data.objects.get(object_id)
         object_type = payload.get(
@@ -263,35 +278,36 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
             previous.object_type if previous is not None else None,
         )
         if object_type not in SUPPORTED_OBJECT_TYPES:
-            return
+            return False
 
         objects = dict(self.data.objects)
         if payload.get("failed"):
             if previous is None:
-                return
+                return False
             objects[object_id] = unavailable_object(previous)
         else:
             try:
                 objects[object_id] = parse_zont_object(
                     payload,
                     previous,
-                    partial=previous is not None,
+                    partial=partial and previous is not None,
                 )
             except ZontObjectParseError:
-                return
+                return False
 
         updated = ZontData(
             controller=self.data.controller,
             objects=immutable_objects(objects),
         )
         if updated == self.data:
-            return
+            return True
 
         # Keep the periodic control poll deadline: async_set_updated_data()
         # intentionally resets it, which would let frequent push messages defer
         # discovery indefinitely.
         self.data = updated
         self.async_update_listeners()
+        return True
 
     def _log_object_error(self, object_type: int) -> None:
         """Log one warning per type for a consecutive protocol error series."""

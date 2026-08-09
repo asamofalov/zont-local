@@ -72,7 +72,7 @@ class ZontObjectCoordinatorEntity(CoordinatorEntity[ZontDataUpdateCoordinator]):
         entry: ConfigEntry[ZontRuntimeData],
         object_id: int,
         unique_id_suffix: str,
-        suggested_object_id: str,
+        suggested_object_id: str | None,
     ) -> None:
         """Initialize an entity linked to a discovered controller object."""
         super().__init__(entry.runtime_data.coordinator)
@@ -91,7 +91,7 @@ class ZontObjectCoordinatorEntity(CoordinatorEntity[ZontDataUpdateCoordinator]):
         self._zont_object_id_suffix = suggested_object_id
 
     @property
-    def suggested_object_id(self) -> str:
+    def suggested_object_id(self) -> str | None:
         """Return the field suffix used in a new Home Assistant entity ID."""
         return self._zont_object_id_suffix
 

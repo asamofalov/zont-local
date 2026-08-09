@@ -17,6 +17,7 @@ PLATFORMS: tuple[Platform, ...] = (
     Platform.BINARY_SENSOR,
     Platform.BUTTON,
     Platform.SENSOR,
+    Platform.WATER_HEATER,
 )
 
 CONNECTION_TIMEOUT = 5.0

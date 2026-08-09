@@ -27,6 +27,8 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+type ZontCommand = str | int | float
+
 
 class ZontError(Exception):
     """Base exception for ZONT client errors."""
@@ -519,7 +521,7 @@ class ZontWsClient:
     async def async_send_command(
         self,
         command_id: int,
-        command: str,
+        command: ZontCommand,
         response_timeout: float = COMMAND_TIMEOUT,
     ) -> dict[str, Any]:
         """Send a command and wait for the matching response."""

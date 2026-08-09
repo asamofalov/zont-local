@@ -40,9 +40,11 @@ from .objects import (
     ZontAnalogInputData,
     ZontDigitalBusAdapterData,
     ZontDigitalTemperatureSensorData,
+    ZontHeatingCircuitData,
     ZontNtcTemperatureSensorData,
     ZontRadioSensorData,
     analog_input_model,
+    heating_circuit_model,
     object_device_identifier,
     radio_sensor_model,
 )
@@ -171,6 +173,9 @@ def _async_sync_object_devices(
         elif isinstance(obj, ZontNtcTemperatureSensorData):
             manufacturer = None
             model = "NTC-термодатчик"
+        elif isinstance(obj, ZontHeatingCircuitData) and obj.subtype == 1:
+            manufacturer = None
+            model = heating_circuit_model(obj.subtype)
         elif (
             isinstance(obj, ZontRadioSensorData)
             and obj.subtype in SUPPORTED_RADIO_SENSOR_SUBTYPES

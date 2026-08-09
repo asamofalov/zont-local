@@ -13,13 +13,24 @@ OBJECT_TYPE_ANALOG_INPUT = 0
 OBJECT_TYPE_DIGITAL_TEMPERATURE_SENSOR = 1
 OBJECT_TYPE_DIGITAL_BUS_ADAPTER = 6
 OBJECT_TYPE_RADIO_SENSOR = 8
+OBJECT_TYPE_HEATING_CIRCUIT = 16
 OBJECT_TYPE_NTC_TEMPERATURE_SENSOR = 27
 SUPPORTED_OBJECT_TYPES = (
     OBJECT_TYPE_ANALOG_INPUT,
     OBJECT_TYPE_DIGITAL_TEMPERATURE_SENSOR,
     OBJECT_TYPE_DIGITAL_BUS_ADAPTER,
     OBJECT_TYPE_RADIO_SENSOR,
+    OBJECT_TYPE_HEATING_CIRCUIT,
     OBJECT_TYPE_NTC_TEMPERATURE_SENSOR,
+)
+
+HEATING_CIRCUIT_SUBTYPE_NAMES = MappingProxyType(
+    {
+        0: "Котловой контур",
+        1: "Контур ГВС",
+        2: "Охладительный контур",
+        3: "Контур потребителя",
+    }
 )
 
 ANALOG_INPUT_SUBTYPE_NAMES = MappingProxyType(
@@ -90,6 +101,14 @@ class ZontDigitalBusState(StrEnum):
     ERROR = "error"
 
 
+class ZontHeatingCircuitMode(StrEnum):
+    """Documented observed modes of a heating circuit."""
+
+    HEAT = "heat"
+    COOL = "cool"
+    OFF = "off"
+
+
 @dataclass(frozen=True, slots=True)
 class ZontObjectData:
     """Common descriptive data for one ZONT object."""
@@ -152,12 +171,25 @@ class ZontRadioSensorData(ZontObjectData):
     triggered: bool | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class ZontHeatingCircuitData(ZontObjectData):
+    """Observed state and setpoint of one heating circuit."""
+
+    subtype: int = 0
+    current_temperature: float | None = None
+    target_temperature: float | None = None
+    mode: ZontHeatingCircuitMode | None = None
+    mode_id: int | None = None
+    fault: bool | None = None
+
+
 type ZontObject = (
     ZontAnalogInputData
     | ZontDigitalBusAdapterData
     | ZontDigitalTemperatureSensorData
     | ZontNtcTemperatureSensorData
     | ZontRadioSensorData
+    | ZontHeatingCircuitData
 )
 
 
@@ -174,6 +206,14 @@ def radio_sensor_model(subtype: int) -> str:
     return RADIO_SENSOR_SUBTYPE_NAMES.get(
         subtype,
         f"Радиодатчик (подтип {subtype})",
+    )
+
+
+def heating_circuit_model(subtype: int) -> str:
+    """Return the documented display name for a heating circuit subtype."""
+    return HEATING_CIRCUIT_SUBTYPE_NAMES.get(
+        subtype,
+        f"Контур отопления (подтип {subtype})",
     )
 
 
@@ -421,6 +461,96 @@ def parse_radio_sensor(
     )
 
 
+def parse_heating_circuit(
+    payload: Mapping[str, Any],
+    previous: ZontHeatingCircuitData | None = None,
+    *,
+    partial: bool = False,
+) -> ZontHeatingCircuitData:
+    """Parse a full or partial heating circuit payload."""
+    object_id = _identity_int(payload, "id", previous.object_id if previous else None)
+    object_type = _identity_int(
+        payload,
+        "type",
+        previous.object_type if previous else None,
+    )
+    if object_type != OBJECT_TYPE_HEATING_CIRCUIT:
+        raise ZontObjectParseError("Object is not a heating circuit")
+
+    name = payload.get("name", previous.name if previous else None)
+    if not isinstance(name, str) or not name.strip():
+        raise ZontObjectParseError("Object name is missing")
+
+    subtype = _identity_int(
+        payload,
+        "stype",
+        previous.subtype if previous else None,
+    )
+    current_temperature = _optional_number(
+        payload,
+        "c",
+        previous.current_temperature if previous is not None else None,
+        partial,
+    )
+    target_temperature = _optional_number(
+        payload,
+        "s",
+        previous.target_temperature if previous is not None else None,
+        partial,
+    )
+    mode = _optional_heating_circuit_mode(
+        payload,
+        previous.mode if previous is not None else None,
+        partial,
+    )
+    mode_id = _optional_non_negative_int(
+        payload,
+        "m_id",
+        previous.mode_id if previous is not None else None,
+        partial,
+    )
+    fault = _optional_binary_state(
+        payload,
+        "f",
+        previous.fault if previous is not None else None,
+        partial,
+    )
+    available = _object_available(
+        payload,
+        previous.available if previous is not None else None,
+        partial,
+        any(
+            value is not None
+            for value in (
+                current_temperature,
+                target_temperature,
+                mode,
+                mode_id,
+                fault,
+            )
+        ),
+    )
+    if not available and previous is not None:
+        current_temperature = previous.current_temperature
+        target_temperature = previous.target_temperature
+        mode = previous.mode
+        mode_id = previous.mode_id
+        fault = previous.fault
+
+    return ZontHeatingCircuitData(
+        object_id=object_id,
+        object_type=object_type,
+        name=name.strip(),
+        available=available,
+        subtype=subtype,
+        current_temperature=current_temperature,
+        target_temperature=target_temperature,
+        mode=mode,
+        mode_id=mode_id,
+        fault=fault,
+    )
+
+
 def _parse_temperature_sensor[T: ZontTemperatureSensorData](
     payload: Mapping[str, Any],
     previous: T | None,
@@ -521,6 +651,15 @@ def parse_zont_object(
             previous_adapter,
             partial=partial,
         )
+    if object_type == OBJECT_TYPE_HEATING_CIRCUIT:
+        previous_circuit = (
+            previous if isinstance(previous, ZontHeatingCircuitData) else None
+        )
+        return parse_heating_circuit(
+            payload,
+            previous_circuit,
+            partial=partial,
+        )
     raise ZontObjectParseError("Object type is not supported")
 
 
@@ -603,6 +742,21 @@ def _optional_non_negative_int(
         return previous if partial else None
     value = payload[key]
     return value if type(value) is int and value >= 0 else None
+
+
+def _optional_heating_circuit_mode(
+    payload: Mapping[str, Any],
+    previous: ZontHeatingCircuitMode | None,
+    partial: bool,
+) -> ZontHeatingCircuitMode | None:
+    """Read an optional documented heating circuit mode."""
+    if "m" not in payload:
+        return previous if partial else None
+    value = payload["m"]
+    try:
+        return ZontHeatingCircuitMode(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _integer_field(

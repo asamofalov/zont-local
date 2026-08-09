@@ -418,6 +418,31 @@ async def test_command_response_is_correlated(
 
 
 @pytest.mark.asyncio
+async def test_numeric_command_is_serialized_without_string_conversion(
+    fake_hass: Any, auth_error_callback: Any
+) -> None:
+    ws = auth_socket()
+    client = ZontWsClient(
+        fake_hass,
+        FakeSession([ws]),  # type: ignore[arg-type]
+        "ws://controller/ws",
+        ZontCredentials("user", "password"),
+        "entry",
+        "device",
+        auth_error_callback,
+    )
+    await async_start_client(client)
+
+    command_task = asyncio.create_task(client.async_send_command(8362, 3330))
+    await asyncio.sleep(0)
+
+    assert ws.sent[-1] == {"id": 8362, "cmd": 3330}
+    client._handle_incoming('{"id":8362,"cmdres":0}')
+    assert await command_task == {"id": 8362, "cmdres": 0}
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
 async def test_push_state_does_not_complete_command(
     fake_hass: Any, auth_error_callback: Any
 ) -> None:

@@ -36,6 +36,7 @@ from custom_components.zont_ws.objects import (
     ZontDigitalBusAdapterData,
     ZontDigitalBusState,
     ZontDigitalTemperatureSensorData,
+    ZontHeatingCircuitData,
     ZontNtcTemperatureSensorData,
     ZontRadioSensorData,
     immutable_objects,
@@ -514,6 +515,64 @@ async def test_supported_radio_sensor_is_registered_as_typed_child_device(
     assert sensor.via_device_id == controller.id
 
 
+async def test_dhw_circuit_is_registered_as_child_device(
+    hass: HomeAssistant,
+) -> None:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=SERIAL_NUMBER,
+        data=ENTRY_DATA,
+    )
+    entry.add_to_hass(hass)
+    registry = dr.async_get(hass)
+    controller = registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, SERIAL_NUMBER)},
+        name="ZONT H1V02 PRO",
+    )
+    coordinator = MagicMock(spec=ZontDataUpdateCoordinator)
+    coordinator.data = ZontData(
+        controller=ZontControllerData(info=CONTROLLER_INFO),
+        objects=immutable_objects(
+            {
+                8362: ZontHeatingCircuitData(
+                    object_id=8362,
+                    object_type=16,
+                    name="ГВС",
+                    subtype=1,
+                    current_temperature=29,
+                    target_temperature=60,
+                ),
+                20496: ZontHeatingCircuitData(
+                    object_id=20496,
+                    object_type=16,
+                    name="Радиаторы",
+                    subtype=3,
+                    current_temperature=38.5,
+                ),
+            }
+        ),
+    )
+    entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontWsClient), coordinator)
+
+    _async_sync_object_devices(hass, entry, controller.id)
+
+    circuit = registry.async_get_device(
+        identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:8362")}
+    )
+    assert circuit is not None
+    assert circuit.name == "ГВС"
+    assert circuit.manufacturer is None
+    assert circuit.model == "Контур ГВС"
+    assert circuit.via_device_id == controller.id
+    assert (
+        registry.async_get_device(
+            identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:20496")}
+        )
+        is None
+    )
+
+
 async def test_unsupported_radio_subtype_is_not_registered(
     hass: HomeAssistant,
 ) -> None:
@@ -726,6 +785,62 @@ async def test_discovered_radio_sensor_creates_prefixed_entities(
             )
             == f"sensor.gostinaia_{suffix}"
         )
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_discovered_dhw_circuit_creates_primary_water_heater_entity(
+    hass: HomeAssistant,
+) -> None:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=CONFIG_ENTRY_VERSION,
+        unique_id=SERIAL_NUMBER,
+        data={
+            **ENTRY_DATA,
+            CONF_CONTROLLER: CONTROLLER_INFO.as_dict(),
+            CONF_AUTO_TITLE: "ZONT H1V02 PRO (192.0.2.10)",
+        },
+    )
+    entry.add_to_hass(hass)
+
+    def start_with_dhw_circuit(coordinator: ZontDataUpdateCoordinator) -> None:
+        coordinator.data = ZontData(
+            controller=ZontControllerData(info=CONTROLLER_INFO),
+            objects=immutable_objects(
+                {
+                    8362: ZontHeatingCircuitData(
+                        object_id=8362,
+                        object_type=16,
+                        name="ГВС",
+                        subtype=1,
+                        current_temperature=29,
+                        target_temperature=60,
+                    )
+                }
+            ),
+        )
+        coordinator.async_update_listeners()
+
+    with (
+        patch.object(ZontWsClient, "async_start", new=AsyncMock()),
+        patch.object(
+            ZontDataUpdateCoordinator,
+            "async_start",
+            new=start_with_dhw_circuit,
+        ),
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert (
+        er.async_get(hass).async_get_entity_id(
+            "water_heater",
+            DOMAIN,
+            f"{SERIAL_NUMBER}_8362_water_heater",
+        )
+        == "water_heater.gvs"
+    )
 
     assert await hass.config_entries.async_unload(entry.entry_id)
 
