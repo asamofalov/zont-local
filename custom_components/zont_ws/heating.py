@@ -13,6 +13,7 @@ from .client import (
     ZontRequestTimeoutError,
     ZontWsClient,
 )
+from .objects import ZontHeatingCircuitData, ZontHeatingCircuitMode
 
 if TYPE_CHECKING:
     from .coordinator import ZontDataUpdateCoordinator
@@ -29,6 +30,10 @@ class ZontCommandRejectedError(ZontProtocolError):
         """Initialize an error with the controller result."""
         self.result = result
         super().__init__("The ZONT controller rejected the command")
+
+
+class ZontCommandStateError(ZontProtocolError):
+    """Raised when an accepted heating command is not confirmed by state."""
 
 
 def celsius_to_decikelvin(temperature: float) -> int:
@@ -78,3 +83,38 @@ async def async_set_heating_circuit_temperature_and_refresh(
                 "but did not return a usable state",
                 object_id,
             )
+
+
+async def async_apply_heating_mode_and_refresh(
+    client: ZontWsClient,
+    coordinator: ZontDataUpdateCoordinator,
+    object_id: int,
+    mode_id: int,
+    *,
+    expect_off: bool,
+) -> None:
+    """Apply one named mode to one circuit and confirm its actual state."""
+    response = await client.async_send_command(object_id, str(mode_id))
+    result = response.get("cmdres")
+    if type(result) is not int or result != 0:
+        raise ZontCommandRejectedError(result)
+
+    try:
+        refreshed = await coordinator.async_refresh_object(object_id)
+    except asyncio.CancelledError:
+        raise
+    except (ZontConnectionError, ZontRequestTimeoutError, ZontProtocolError) as err:
+        raise ZontCommandStateError(
+            "The accepted heating mode could not be confirmed"
+        ) from err
+    if not refreshed:
+        raise ZontCommandStateError(
+            "The accepted heating mode did not return a usable state"
+        )
+
+    obj = coordinator.data.objects.get(object_id)
+    if not isinstance(obj, ZontHeatingCircuitData) or obj.mode_id != mode_id:
+        raise ZontCommandStateError("The heating mode was not applied")
+    is_off = obj.mode is ZontHeatingCircuitMode.OFF
+    if is_off != expect_off:
+        raise ZontCommandStateError("The heating mode state is unexpected")

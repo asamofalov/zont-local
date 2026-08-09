@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -16,7 +17,7 @@ from custom_components.zont_ws.climate import (
     ZontConsumerClimate,
     async_setup_entry,
 )
-from custom_components.zont_ws.const import DOMAIN
+from custom_components.zont_ws.const import CONF_HEATING_OFF_MODE_ID, DOMAIN
 from custom_components.zont_ws.coordinator import (
     ZontControllerData,
     ZontData,
@@ -26,7 +27,11 @@ from custom_components.zont_ws.coordinator import (
 from custom_components.zont_ws.heating_config import (
     ZontConsumerControlMode,
     ZontHeatingCircuitControlData,
+    ZontHeatingCircuitInternalState,
+    ZontHeatingModeConfiguration,
     immutable_heating_controls,
+    immutable_heating_modes,
+    immutable_heating_states,
 )
 from custom_components.zont_ws.objects import (
     ZontHeatingCircuitData,
@@ -43,11 +48,18 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 def _entry(
     objects: dict[int, ZontHeatingCircuitData],
     controls: dict[int, ZontHeatingCircuitControlData] | None = None,
+    *,
+    off_mode_id: int | None = None,
+    modes: dict[int, ZontHeatingModeConfiguration] | None = None,
+    states: dict[int, ZontHeatingCircuitInternalState] | None = None,
 ) -> tuple[MockConfigEntry, MagicMock, MagicMock]:
     entry = MockConfigEntry(
         domain=DOMAIN,
         unique_id="ABCDEF123456",
         data={},
+        options=(
+            {CONF_HEATING_OFF_MODE_ID: off_mode_id} if off_mode_id is not None else {}
+        ),
     )
     client = MagicMock(spec=ZontWsClient)
     client.async_send_command = AsyncMock(
@@ -59,11 +71,25 @@ def _entry(
         controller=ZontControllerData(info=None),
         objects=immutable_objects(objects),
         heating_controls=immutable_heating_controls(controls),
+        heating_states=immutable_heating_states(states),
+        heating_modes=immutable_heating_modes(modes),
     )
     coordinator.async_add_listener.return_value = lambda: None
     coordinator.async_refresh_object = AsyncMock(return_value=True)
     entry.runtime_data = ZontRuntimeData(client, coordinator)
     return entry, client, coordinator
+
+
+def _mode(
+    mode_id: int,
+    name: str,
+    targets: dict[int, int],
+) -> ZontHeatingModeConfiguration:
+    return ZontHeatingModeConfiguration(mode_id, name, targets)
+
+
+def _state(*mode_ids: int) -> ZontHeatingCircuitInternalState:
+    return ZontHeatingCircuitInternalState(20496, 4104, 1, mode_ids)
 
 
 def _circuit(
@@ -119,6 +145,45 @@ def test_climate_exposes_target_only_and_observed_mode() -> None:
     assert entity.unique_id == "ABCDEF123456_20496_climate"
     assert entity.suggested_object_id is None
     assert entity.device_info["identifiers"] == {(DOMAIN, "ABCDEF123456:object:20496")}
+
+
+def test_climate_exposes_standard_on_off_with_valid_binding() -> None:
+    objects = {
+        20496: _circuit(target_temperature=42),
+        8362: _circuit(8362, subtype=1, target_temperature=60),
+    }
+    entry, _, _ = _entry(
+        objects,
+        {20496: _control()},
+        off_mode_id=20504,
+        modes={20504: _mode(20504, "Выключен", {20496: 0, 8362: 0})},
+        states={20496: _state(20504)},
+    )
+    entity = ZontConsumerClimate(entry, 20496)
+
+    assert entity.hvac_modes == [HVACMode.HEAT, HVACMode.OFF]
+    assert entity.supported_features == (
+        ClimateEntityFeature.TARGET_TEMPERATURE
+        | ClimateEntityFeature.TURN_ON
+        | ClimateEntityFeature.TURN_OFF
+    )
+
+
+def test_climate_rejects_off_mode_that_does_not_cover_dhw() -> None:
+    entry, _, _ = _entry(
+        {
+            20496: _circuit(target_temperature=42),
+            8362: _circuit(8362, subtype=1, target_temperature=60),
+        },
+        {20496: _control()},
+        off_mode_id=20504,
+        modes={20504: _mode(20504, "Частичный", {20496: 0})},
+        states={20496: _state(20504)},
+    )
+    entity = ZontConsumerClimate(entry, 20496)
+
+    assert entity.hvac_modes == []
+    assert entity.supported_features is ClimateEntityFeature.TARGET_TEMPERATURE
 
 
 @pytest.mark.parametrize(
@@ -199,6 +264,151 @@ async def test_set_temperature_works_in_heat_and_off_modes(
     client.async_send_command.assert_awaited_once_with(20496, 3150)
     coordinator.async_refresh_object.assert_awaited_once_with(20496)
     assert entity.target_temperature == 42
+
+
+async def test_turn_off_and_on_restore_previous_named_mode() -> None:
+    objects = {
+        20496: replace(_circuit(target_temperature=42), mode_id=20501),
+        8362: _circuit(8362, subtype=1, target_temperature=60),
+    }
+    entry, client, coordinator = _entry(
+        objects,
+        {20496: _control()},
+        off_mode_id=20504,
+        modes={
+            20501: _mode(20501, "Комфорт", {20496: 3150}),
+            20504: _mode(20504, "Выключен", {20496: 0, 8362: 0}),
+        },
+        states={20496: _state(20501, 20504)},
+    )
+    entity = ZontConsumerClimate(entry, 20496)
+
+    async def refresh(object_id: int) -> bool:
+        command = client.async_send_command.await_args.args[1]
+        circuit = coordinator.data.objects[object_id]
+        assert isinstance(circuit, ZontHeatingCircuitData)
+        if command == "20504":
+            circuit = replace(
+                circuit,
+                mode=ZontHeatingCircuitMode.OFF,
+                mode_id=20504,
+                target_temperature=None,
+            )
+        else:
+            circuit = replace(
+                circuit,
+                mode=ZontHeatingCircuitMode.HEAT,
+                mode_id=20501,
+                target_temperature=42,
+            )
+        coordinator.data = replace(
+            coordinator.data,
+            objects=immutable_objects({**coordinator.data.objects, object_id: circuit}),
+        )
+        return True
+
+    coordinator.async_refresh_object.side_effect = refresh
+
+    await entity.async_turn_off()
+    assert entity.hvac_mode is HVACMode.OFF
+    await entity.async_turn_on()
+
+    assert entity.hvac_mode is HVACMode.HEAT
+    assert [call.args for call in client.async_send_command.await_args_list] == [
+        (20496, "20504"),
+        (20496, "20501"),
+    ]
+
+
+async def test_turn_on_after_restart_uses_minimum_setpoint() -> None:
+    entry, client, coordinator = _entry(
+        {
+            20496: replace(
+                _circuit(
+                    mode=ZontHeatingCircuitMode.OFF,
+                    target_temperature=None,
+                ),
+                mode_id=20504,
+            ),
+            8362: _circuit(8362, subtype=1, target_temperature=None),
+        },
+        {20496: _control()},
+        off_mode_id=20504,
+        modes={20504: _mode(20504, "Выключен", {20496: 0, 8362: 0})},
+        states={20496: _state(20504)},
+    )
+    entity = ZontConsumerClimate(entry, 20496)
+
+    await entity.async_turn_on()
+
+    client.async_send_command.assert_awaited_once_with(20496, 3140)
+    coordinator.async_refresh_object.assert_awaited_once_with(20496)
+
+
+async def test_manual_state_replaces_remembered_named_mode() -> None:
+    entry, client, coordinator = _entry(
+        {
+            20496: replace(_circuit(target_temperature=42), mode_id=20501),
+            8362: _circuit(8362, subtype=1, target_temperature=60),
+        },
+        {20496: _control()},
+        off_mode_id=20504,
+        modes={
+            20501: _mode(20501, "Комфорт", {20496: 3150}),
+            20504: _mode(20504, "Выключен", {20496: 0, 8362: 0}),
+        },
+        states={20496: _state(20501, 20504)},
+    )
+    entity = ZontConsumerClimate(entry, 20496)
+    coordinator.data = replace(
+        coordinator.data,
+        objects=immutable_objects(
+            {
+                **coordinator.data.objects,
+                20496: replace(_circuit(target_temperature=43), mode_id=0),
+            }
+        ),
+    )
+    entity._remember_active_state()
+    coordinator.data = replace(
+        coordinator.data,
+        objects=immutable_objects(
+            {
+                **coordinator.data.objects,
+                20496: replace(
+                    _circuit(
+                        mode=ZontHeatingCircuitMode.OFF,
+                        target_temperature=None,
+                    ),
+                    mode_id=20504,
+                ),
+            }
+        ),
+    )
+
+    await entity.async_turn_on()
+
+    client.async_send_command.assert_awaited_once_with(20496, 3160)
+
+
+async def test_turn_off_requires_confirmed_state() -> None:
+    entry, _, coordinator = _entry(
+        {
+            20496: _circuit(target_temperature=42),
+            8362: _circuit(8362, subtype=1, target_temperature=60),
+        },
+        {20496: _control()},
+        off_mode_id=20504,
+        modes={20504: _mode(20504, "Выключен", {20496: 0, 8362: 0})},
+        states={20496: _state(20504)},
+    )
+    entity = ZontConsumerClimate(entry, 20496)
+
+    with pytest.raises(HomeAssistantError) as raised:
+        await entity.async_turn_off()
+
+    assert raised.value.translation_key == "heating_state_not_confirmed"
+    coordinator.async_refresh_object.assert_awaited_once_with(20496)
 
 
 @pytest.mark.parametrize("temperature", [40.9, 80.1, float("nan"), None, True])

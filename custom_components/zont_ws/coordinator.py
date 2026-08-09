@@ -20,7 +20,12 @@ from .client import (
     ZontRequestTimeoutError,
     ZontWsClient,
 )
-from .const import CONTROLLER_INFO_TIMEOUT, DOMAIN, connection_signal
+from .const import (
+    CONF_HEATING_OFF_MODE_ID,
+    CONTROLLER_INFO_TIMEOUT,
+    DOMAIN,
+    connection_signal,
+)
 from .controller import (
     COMMAND_SERVER_INFO,
     COMMAND_SUPPLY_VOLTAGE,
@@ -31,19 +36,24 @@ from .controller import (
     parse_supply_voltage_response,
 )
 from .heating_config import (
+    OBJECT_TYPE_HEATING_MODE,
     ZontConsumerControlMode,
     ZontHeatingCircuitConfiguration,
     ZontHeatingCircuitControlData,
     ZontHeatingCircuitInternalState,
     ZontHeatingConfigParseError,
+    ZontHeatingModeConfiguration,
     ZontTemperatureSensorConfiguration,
     immutable_heating_controls,
+    immutable_heating_modes,
     immutable_heating_states,
     parse_heating_circuit_configuration,
     parse_heating_circuit_internal_state,
+    parse_heating_mode_configuration,
     parse_temperature_sensor_configuration,
     resolve_heating_circuit_control,
 )
+from .heating_modes import mode_disables_circuits, relevant_heating_circuit_ids
 from .objects import (
     SUPPORTED_OBJECT_TYPES,
     ZontHeatingCircuitData,
@@ -82,6 +92,9 @@ class ZontData:
     )
     heating_states: Mapping[int, ZontHeatingCircuitInternalState] = (
         immutable_heating_states()
+    )
+    heating_modes: Mapping[int, ZontHeatingModeConfiguration] = (
+        immutable_heating_modes()
     )
 
 
@@ -131,6 +144,7 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
         ] = {}
         self._heating_configuration_refresh_needed = True
         self._heating_metadata_errors: set[tuple[str, int]] = set()
+        self._off_mode_warning_active = False
         self._shutdown_complete = False
 
     @property
@@ -211,6 +225,7 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
             (
                 heating_controls,
                 heating_states,
+                heating_modes,
             ) = await self._async_refresh_heating_metadata(objects)
         except ZontConnectionError as err:
             raise UpdateFailed("Unable to update ZONT controller data") from err
@@ -220,7 +235,7 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
         if not self._client.is_connected:
             raise UpdateFailed("The ZONT controller disconnected during update")
 
-        return ZontData(
+        updated = ZontData(
             controller=ZontControllerData(
                 info=info,
                 server_status=server_status,
@@ -229,7 +244,10 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
             objects=objects,
             heating_controls=heating_controls,
             heating_states=heating_states,
+            heating_modes=heating_modes,
         )
+        self._log_invalid_off_mode(updated)
+        return updated
 
     async def _async_refresh_objects(
         self,
@@ -344,6 +362,7 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
             objects=immutable_objects(objects),
             heating_controls=self.data.heating_controls,
             heating_states=self.data.heating_states,
+            heating_modes=self.data.heating_modes,
         )
         if updated == self.data:
             return True
@@ -361,24 +380,35 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
     ) -> tuple[
         Mapping[int, ZontHeatingCircuitControlData],
         Mapping[int, ZontHeatingCircuitInternalState],
+        Mapping[int, ZontHeatingModeConfiguration],
     ]:
-        """Refresh control metadata and internal consumer-circuit states."""
+        """Refresh heating modes, controls, and internal circuit states."""
         circuit_ids = {
             obj.object_id
             for obj in objects.values()
-            if isinstance(obj, ZontHeatingCircuitData) and obj.subtype == 3
+            if isinstance(obj, ZontHeatingCircuitData) and obj.subtype in (1, 3)
         }
         if not circuit_ids:
             self._heating_configuration_refresh_needed = False
-            return immutable_heating_controls(), immutable_heating_states()
+            return (
+                immutable_heating_controls(),
+                immutable_heating_states(),
+                immutable_heating_modes(),
+            )
 
         force_configuration = self._heating_configuration_refresh_needed
         refresh_incomplete = False
         controls: dict[int, ZontHeatingCircuitControlData] = {}
         states: dict[int, ZontHeatingCircuitInternalState] = {}
+        modes = self.data.heating_modes
+        if force_configuration:
+            modes, modes_incomplete = await self._async_refresh_heating_modes()
+            refresh_incomplete |= modes_incomplete
         for object_id in sorted(circuit_ids):
+            circuit = objects[object_id]
+            assert isinstance(circuit, ZontHeatingCircuitData)
             configuration = self._heating_configurations.get(object_id)
-            if force_configuration or configuration is None:
+            if circuit.subtype == 3 and (force_configuration or configuration is None):
                 try:
                     response = await self._client.async_send_system_command(
                         f"#Z{object_id}?"
@@ -424,7 +454,7 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
                 states[object_id] = internal_state
                 self._heating_metadata_errors.discard(("state", object_id))
 
-            if configuration is None:
+            if circuit.subtype != 3 or configuration is None:
                 continue
 
             control = resolve_heating_circuit_control(
@@ -475,7 +505,44 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
             )
 
         self._heating_configuration_refresh_needed = refresh_incomplete
-        return immutable_heating_controls(controls), immutable_heating_states(states)
+        return (
+            immutable_heating_controls(controls),
+            immutable_heating_states(states),
+            modes,
+        )
+
+    async def _async_refresh_heating_modes(
+        self,
+    ) -> tuple[Mapping[int, ZontHeatingModeConfiguration], bool]:
+        """Discover current named heating modes and their circuit targets."""
+        try:
+            mode_ids = await self._client.async_get_object_ids(OBJECT_TYPE_HEATING_MODE)
+        except asyncio.CancelledError:
+            raise
+        except (ZontConnectionError, ZontRequestTimeoutError):
+            raise
+        except ZontProtocolError:
+            self._log_heating_metadata_error("mode discovery", 0)
+            return immutable_heating_modes(), True
+
+        modes: dict[int, ZontHeatingModeConfiguration] = {}
+        refresh_incomplete = False
+        for mode_id in mode_ids:
+            try:
+                response = await self._client.async_send_system_command(f"#Z{mode_id}?")
+                modes[mode_id] = parse_heating_mode_configuration(response, mode_id)
+            except asyncio.CancelledError:
+                raise
+            except (ZontConnectionError, ZontRequestTimeoutError):
+                raise
+            except (ZontProtocolError, ZontHeatingConfigParseError):
+                refresh_incomplete = True
+                self._log_heating_metadata_error("mode configuration", mode_id)
+            else:
+                self._heating_metadata_errors.discard(("mode configuration", mode_id))
+
+        self._heating_metadata_errors.discard(("mode discovery", 0))
+        return immutable_heating_modes(modes), refresh_incomplete
 
     @staticmethod
     def _control_needs_sensor_configuration(
@@ -510,6 +577,29 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
             "the integration will retry during the next update",
             source,
             object_id,
+        )
+
+    def _log_invalid_off_mode(self, data: ZontData) -> None:
+        """Log once while the configured mode no longer disables all circuits."""
+        configured = self._entry.options.get(CONF_HEATING_OFF_MODE_ID)
+        if type(configured) is not int:
+            self._off_mode_warning_active = False
+            return
+        mode = data.heating_modes.get(configured)
+        valid = mode is not None and mode_disables_circuits(
+            mode,
+            relevant_heating_circuit_ids(data.objects),
+        )
+        if valid:
+            self._off_mode_warning_active = False
+            return
+        if self._off_mode_warning_active:
+            return
+        self._off_mode_warning_active = True
+        _LOGGER.warning(
+            "Configured ZONT off mode %s no longer disables all DHW and consumer "
+            "circuits; heating on/off controls are disabled until it is reconfigured",
+            configured,
         )
 
     def _log_object_error(self, object_type: int) -> None:

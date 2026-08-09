@@ -143,6 +143,128 @@ async def async_validate_connection(
     await _async_close_websocket(ws)
 
 
+class ZontTemporaryRequestSession:
+    """Run serialized requests on a short-lived authenticated connection."""
+
+    def __init__(self, ws: ClientWebSocketResponse) -> None:
+        """Initialize the request session."""
+        self._ws = ws
+
+    async def async_get_object_ids(
+        self,
+        object_type: int,
+        response_timeout: float = COMMAND_TIMEOUT,
+    ) -> list[int]:
+        """Return object identifiers for one type."""
+        if type(object_type) is not int or not 0 <= object_type <= 255:
+            raise ValueError("Object type must be an integer from 0 to 255")
+        await self._send({"req_ids": object_type})
+        response = await self._receive_matching(
+            lambda payload: "ids" in payload,
+            response_timeout,
+        )
+        ids = response["ids"]
+        if not isinstance(ids, list) or any(
+            type(object_id) is not int or object_id < 0 for object_id in ids
+        ):
+            raise ZontProtocolError("Object ID response is invalid")
+        return ids
+
+    async def async_get_object_state(
+        self,
+        object_id: int,
+        response_timeout: float = COMMAND_TIMEOUT,
+    ) -> dict[str, Any]:
+        """Return the current state of one object."""
+        if type(object_id) is not int or object_id < 0:
+            raise ValueError("Object ID must be a non-negative integer")
+        await self._send({"id": object_id, "req_state": 0})
+        response = await self._receive_matching(
+            lambda payload: payload.get("id") == object_id and "cmdres" not in payload,
+            response_timeout,
+        )
+        return dict(response)
+
+    async def async_send_system_command(
+        self,
+        command: str,
+        response_timeout: float = COMMAND_TIMEOUT,
+    ) -> str:
+        """Send one system command and return its text result."""
+        if not isinstance(command, str) or not command.strip():
+            raise ValueError("System command must be non-empty text")
+        await self._send({"scmd": command})
+        response = await self._receive_matching(
+            lambda payload: "scmdres" in payload,
+            response_timeout,
+        )
+        result = response["scmdres"]
+        if not isinstance(result, str):
+            raise ZontProtocolError("System command response is not text")
+        return result
+
+    async def _send(self, payload: Mapping[str, Any]) -> None:
+        try:
+            await self._ws.send_str(
+                json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+            )
+        except (ClientError, OSError, RuntimeError) as err:
+            raise ZontConnectionError("Unable to send controller request") from err
+
+    async def _receive_matching(
+        self,
+        matcher: Callable[[Mapping[str, Any]], bool],
+        response_timeout: float,
+    ) -> Mapping[str, Any]:
+        try:
+            async with asyncio.timeout(response_timeout):
+                while True:
+                    message = await self._ws.receive()
+                    if message.type is WSMsgType.TEXT:
+                        try:
+                            response = json.loads(message.data)
+                        except (TypeError, json.JSONDecodeError) as err:
+                            raise ZontProtocolError(
+                                "Controller response is not JSON"
+                            ) from err
+                        if not isinstance(response, Mapping):
+                            # The controller can interleave JSON scalar push
+                            # messages, such as CFG_RELOAD_REQ, with replies.
+                            continue
+                        if matcher(response):
+                            return response
+                        continue
+                    if message.type in (
+                        WSMsgType.CLOSE,
+                        WSMsgType.CLOSED,
+                        WSMsgType.CLOSING,
+                        WSMsgType.ERROR,
+                    ):
+                        raise ZontConnectionError("The WebSocket was closed")
+                    if message.type is WSMsgType.BINARY:
+                        raise ZontProtocolError(
+                            "Binary WebSocket messages are not supported"
+                        )
+        except TimeoutError as err:
+            raise ZontRequestTimeoutError("No controller response") from err
+        except (ClientError, OSError, RuntimeError) as err:
+            raise ZontConnectionError("Unable to request controller data") from err
+
+
+@asynccontextmanager
+async def async_open_temporary_request_session(
+    session: ClientSession,
+    url: str,
+    credentials: ZontCredentials,
+) -> AsyncIterator[ZontTemporaryRequestSession]:
+    """Open and close a serialized temporary request session."""
+    ws = await _async_open_websocket(session, url, credentials)
+    try:
+        yield ZontTemporaryRequestSession(ws)
+    finally:
+        await _async_close_websocket(ws)
+
+
 async def async_request_system_commands(
     session: ClientSession,
     url: str,
@@ -151,59 +273,17 @@ async def async_request_system_commands(
     response_timeout: float = COMMAND_TIMEOUT,
 ) -> list[str]:
     """Run serialized system commands on one temporary connection."""
-    ws = await _async_open_websocket(session, url, credentials)
-    try:
-        responses = []
+    async with async_open_temporary_request_session(
+        session, url, credentials
+    ) as request_session:
+        responses: list[str] = []
         for command in commands:
             responses.append(
-                await _async_request_system_command(ws, command, response_timeout)
+                await request_session.async_send_system_command(
+                    command, response_timeout
+                )
             )
         return responses
-    finally:
-        await _async_close_websocket(ws)
-
-
-async def _async_request_system_command(
-    ws: ClientWebSocketResponse,
-    command: str,
-    response_timeout: float,
-) -> str:
-    """Send one system command on a temporary config-flow connection."""
-    try:
-        await ws.send_str(
-            json.dumps({"scmd": command}, ensure_ascii=False, separators=(",", ":"))
-        )
-        async with asyncio.timeout(response_timeout):
-            while True:
-                message = await ws.receive()
-                if message.type is WSMsgType.TEXT:
-                    try:
-                        response = json.loads(message.data)
-                    except (TypeError, json.JSONDecodeError) as err:
-                        raise ZontProtocolError(
-                            "System command response is not JSON"
-                        ) from err
-                    if not isinstance(response, Mapping) or "scmdres" not in response:
-                        continue
-                    result = response["scmdres"]
-                    if not isinstance(result, str):
-                        raise ZontProtocolError("System command response is not text")
-                    return result
-                if message.type in (
-                    WSMsgType.CLOSE,
-                    WSMsgType.CLOSED,
-                    WSMsgType.CLOSING,
-                    WSMsgType.ERROR,
-                ):
-                    raise ZontConnectionError("The WebSocket was closed")
-                if message.type is WSMsgType.BINARY:
-                    raise ZontProtocolError(
-                        "Binary WebSocket messages are not supported"
-                    )
-    except TimeoutError as err:
-        raise ZontRequestTimeoutError("No response for system command") from err
-    except (ClientError, OSError, RuntimeError) as err:
-        raise ZontConnectionError("Unable to request controller data") from err
 
 
 class ZontWsClient:

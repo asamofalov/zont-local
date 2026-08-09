@@ -15,6 +15,7 @@ from custom_components.zont_ws.controller import (
     ZontIdentificationError,
     ZontServerStatus,
     async_identify_controller,
+    async_identify_controller_from_requests,
     async_restart_controller,
     controller_configuration_url,
     controller_device_name,
@@ -227,6 +228,25 @@ async def test_identify_controller_uses_required_system_commands(monkeypatch) ->
         ("#S54?", "#S7?"),
         response_timeout=3.0,
     )
+
+
+@pytest.mark.asyncio
+async def test_identify_controller_reuses_authenticated_request_session() -> None:
+    requests = AsyncMock()
+    requests.async_send_system_command.side_effect = [
+        "#S54:abcdef123456",
+        "#S7:H1V02_PRO 700 625",
+    ]
+
+    info = await async_identify_controller_from_requests(requests)
+
+    assert info.serial_number == "ABCDEF123456"
+    assert [
+        call.args for call in requests.async_send_system_command.await_args_list
+    ] == [
+        ("#S54?", 3.0),
+        ("#S7?", 3.0),
+    ]
 
 
 @pytest.mark.asyncio

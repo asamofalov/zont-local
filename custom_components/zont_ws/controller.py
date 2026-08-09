@@ -15,6 +15,7 @@ from .client import (
     ZontCredentials,
     ZontProtocolError,
     ZontRequestTimeoutError,
+    ZontTemporaryRequestSession,
     ZontWsClient,
     async_request_system_commands,
 )
@@ -185,6 +186,27 @@ async def async_identify_controller(
             credentials,
             ("#S54?", "#S7?"),
             response_timeout=CONTROLLER_INFO_TIMEOUT,
+        )
+        serial_number = parse_serial_response(serial_response)
+        return ZontControllerInfo(serial_number).with_identity_response(
+            identity_response
+        )
+    except (ZontProtocolError, ZontRequestTimeoutError, ValueError) as err:
+        raise ZontIdentificationError(
+            "Unable to obtain complete controller identity"
+        ) from err
+
+
+async def async_identify_controller_from_requests(
+    requests: ZontTemporaryRequestSession,
+) -> ZontControllerInfo:
+    """Obtain controller identity through an already authenticated connection."""
+    try:
+        serial_response = await requests.async_send_system_command(
+            "#S54?", CONTROLLER_INFO_TIMEOUT
+        )
+        identity_response = await requests.async_send_system_command(
+            "#S7?", CONTROLLER_INFO_TIMEOUT
         )
         serial_number = parse_serial_response(serial_response)
         return ZontControllerInfo(serial_number).with_identity_response(

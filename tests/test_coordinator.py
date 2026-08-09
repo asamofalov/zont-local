@@ -537,8 +537,9 @@ async def test_refresh_discovers_heating_circuit(hass: HomeAssistant) -> None:
     client.async_send_system_command.side_effect = [
         "#S224:1 0 1 0",
         "#S6:123 0",
+        "#Y8362$3330,3330,[],0,0,20501,4097,0,[20501,20504],0,0",
     ]
-    client.async_get_object_ids.side_effect = [[], [], [], [], [8362], []]
+    client.async_get_object_ids.side_effect = [[], [], [], [], [8362], [], []]
     client.async_get_object_state.return_value = {
         "id": 8362,
         "type": 16,
@@ -559,6 +560,10 @@ async def test_refresh_discovers_heating_circuit(hass: HomeAssistant) -> None:
     assert circuit.target_temperature == 60
     assert circuit.mode is ZontHeatingCircuitMode.HEAT
     assert circuit.available
+    assert coordinator.data.heating_states[8362].applicable_mode_ids == (
+        20501,
+        20504,
+    )
 
 
 async def test_refresh_resolves_consumer_water_range(hass: HomeAssistant) -> None:
@@ -570,7 +575,7 @@ async def test_refresh_resolves_consumer_water_range(hass: HomeAssistant) -> Non
         "2562,0,0,2730,0,0,0,0,0,0,0,3230,100,10,0,0,0,0,0",
         "#Y20496$3160,3140,[],0,0,0,4104,138,[20504],0,0",
     ]
-    client.async_get_object_ids.side_effect = [[], [], [], [], [20496], []]
+    client.async_get_object_ids.side_effect = [[], [], [], [], [20496], [], []]
     client.async_get_object_state.return_value = {
         "id": 20496,
         "type": 16,
@@ -600,6 +605,62 @@ async def test_refresh_resolves_consumer_water_range(hass: HomeAssistant) -> Non
     ]
 
 
+async def test_refresh_discovers_heating_modes_and_dhw_applicability(
+    hass: HomeAssistant,
+) -> None:
+    coordinator, client = _coordinator(hass)
+    client.async_get_object_ids.side_effect = [
+        [],
+        [],
+        [],
+        [],
+        [8362, 20496],
+        [],
+        [20504],
+    ]
+    client.async_get_object_state.side_effect = [
+        {
+            "id": 8362,
+            "type": 16,
+            "stype": 1,
+            "name": "ГВС",
+            "c": 29,
+            "s": 60,
+            "m": "heat",
+            "m_id": 20501,
+        },
+        {
+            "id": 20496,
+            "type": 16,
+            "stype": 3,
+            "name": "Радиаторы",
+            "c": 42.5,
+            "s": 41,
+            "m": "heat",
+            "m_id": 0,
+        },
+    ]
+    client.async_send_system_command.side_effect = [
+        "#S224:1 0 1 0",
+        "#S6:123 0",
+        "#Z20504:20,'Выключен',[8362,20496],[0,0],[0,0],29,[0,0],10,0,10,4,0",
+        "#Y8362$3330,3330,[],0,0,20501,4097,0,[20501,20504],0,0",
+        "#Z20496:16,'Радиаторы',3,3140,3530,0,0,4104,0,20,[9044],"
+        "2562,0,0,2730,0,0,0,0,0,0,0,3230,100,10,0,0,0,0,0",
+        "#Y20496$3160,3140,[],0,0,0,4104,1,[20504],0,0",
+    ]
+
+    await coordinator.async_refresh()
+
+    assert coordinator.last_update_success
+    assert coordinator.data.heating_modes[20504].name == "Выключен"
+    assert coordinator.data.heating_modes[20504].disables_circuit(8362)
+    assert coordinator.data.heating_states[8362].applicable_mode_ids == (
+        20501,
+        20504,
+    )
+
+
 async def test_air_sensor_configuration_is_cached_but_state_is_refreshed(
     hass: HomeAssistant,
 ) -> None:
@@ -626,7 +687,10 @@ async def test_air_sensor_configuration_is_cached_but_state_is_refreshed(
         [],
         [],
         [],
+        [],
+        [],
         [9825],
+        [],
         [],
     ]
     client.async_get_object_state.side_effect = [
@@ -691,7 +755,9 @@ async def test_failed_internal_state_read_clears_current_state_only(
         [],
         [],
         [],
+        [],
         [20496],
+        [],
         [],
     ]
     client.async_get_object_state.return_value = {
@@ -734,6 +800,7 @@ async def test_invalid_consumer_configuration_does_not_block_other_circuit(
         [],
         [],
         [9171, 20496],
+        [],
         [],
     ]
     client.async_get_object_state.side_effect = [

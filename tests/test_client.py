@@ -17,6 +17,7 @@ from custom_components.zont_ws.client import (
     ZontProtocolError,
     ZontRequestTimeoutError,
     ZontWsClient,
+    async_open_temporary_request_session,
     async_request_system_commands,
     async_validate_connection,
 )
@@ -192,6 +193,47 @@ async def test_temporary_system_commands_are_serialized() -> None:
         {"user": "user", "pass": "password"},
         {"scmd": "#S54?"},
         {"scmd": "#S7?"},
+    ]
+    assert ws.closed
+
+
+@pytest.mark.asyncio
+async def test_temporary_session_reads_ids_and_object_state() -> None:
+    ws = FakeWebSocket(
+        [
+            FakeMessage(WSMsgType.TEXT, json.dumps({"auth": 200})),
+            FakeMessage(WSMsgType.TEXT, json.dumps({"id": 7, "type": 1})),
+            FakeMessage(WSMsgType.TEXT, json.dumps("CFG_RELOAD_REQ")),
+            FakeMessage(WSMsgType.TEXT, json.dumps({"ids": [8362, 20496]})),
+            FakeMessage(WSMsgType.TEXT, json.dumps({"id": 8362, "type": 16})),
+            FakeMessage(
+                WSMsgType.TEXT,
+                json.dumps(
+                    {
+                        "id": 20496,
+                        "type": 16,
+                        "stype": 3,
+                        "name": "Радиаторы",
+                    }
+                ),
+            ),
+        ]
+    )
+
+    async with async_open_temporary_request_session(
+        FakeSession([ws]),  # type: ignore[arg-type]
+        "ws://controller/ws",
+        ZontCredentials("user", "password"),
+    ) as requests:
+        ids = await requests.async_get_object_ids(16)
+        state = await requests.async_get_object_state(20496)
+
+    assert ids == [8362, 20496]
+    assert state["name"] == "Радиаторы"
+    assert ws.sent == [
+        {"user": "user", "pass": "password"},
+        {"req_ids": 16},
+        {"id": 20496, "req_state": 0},
     ]
     assert ws.closed
 

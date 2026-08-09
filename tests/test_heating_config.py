@@ -16,11 +16,14 @@ from custom_components.zont_ws.heating_config import (
     ZontHeatingCircuitConfiguration,
     ZontHeatingCircuitInternalState,
     ZontHeatingConfigParseError,
+    ZontHeatingModeConfiguration,
     ZontTemperatureSensorConfiguration,
     immutable_heating_controls,
+    immutable_heating_modes,
     immutable_heating_states,
     parse_heating_circuit_configuration,
     parse_heating_circuit_internal_state,
+    parse_heating_mode_configuration,
     parse_temperature_sensor_configuration,
     resolve_heating_circuit_control,
 )
@@ -95,6 +98,7 @@ def test_parse_internal_state_target_sensor() -> None:
     assert state.object_id == 9171
     assert state.target_sensor_id == 4103
     assert state.status_register == 1
+    assert state.applicable_mode_ids == (20501, 20504)
     assert state.is_blocked is False
     assert state.has_sensor_fault is False
     assert state.is_summer_mode is False
@@ -139,6 +143,42 @@ def test_short_internal_state_keeps_control_data_without_status() -> None:
 def test_invalid_internal_status_register_is_rejected() -> None:
     with pytest.raises(ZontHeatingConfigParseError):
         parse_heating_circuit_internal_state("#Y20496$3160,3140,[],0,0,0,4104,-1")
+
+
+def test_parse_heating_mode_configuration() -> None:
+    mode = parse_heating_mode_configuration(
+        "#Z20504:20,'Выключен',[20496,8362,9171],[0,0,0],"
+        "[0,0,0],29,[0,0,0],10,0,10,4,0",
+        20504,
+    )
+
+    assert mode.object_id == 20504
+    assert mode.name == "Выключен"
+    assert dict(mode.circuit_targets) == {20496: 0, 8362: 0, 9171: 0}
+    assert mode.disables_circuit(8362)
+    assert not mode.disables_circuit(9825)
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        "#Z20504:16,'Не режим',[20496],[0]",
+        "#Z20504:20,'',[20496],[0]",
+        "#Z20504:20,'Выключен',[20496,8362],[0]",
+        "#Z20504:20,'Выключен',[20496,20496],[0,0]",
+        "#Z20504:20,'Выключен',[20496],[-1]",
+    ],
+)
+def test_invalid_heating_mode_configuration_is_rejected(response: str) -> None:
+    with pytest.raises(ZontHeatingConfigParseError):
+        parse_heating_mode_configuration(response)
+
+
+def test_invalid_internal_mode_list_is_rejected() -> None:
+    with pytest.raises(ZontHeatingConfigParseError):
+        parse_heating_circuit_internal_state(
+            "#Y20496$3160,3140,[],0,0,0,4104,1,[20501,-1]"
+        )
 
 
 @pytest.mark.parametrize(
@@ -337,3 +377,12 @@ def test_internal_state_mapping_is_immutable() -> None:
 
     with pytest.raises(TypeError):
         states[9171] = states[20496]  # type: ignore[index]
+
+
+def test_heating_mode_mapping_is_immutable() -> None:
+    modes = immutable_heating_modes(
+        {20504: ZontHeatingModeConfiguration(20504, "Выключен", {})}
+    )
+
+    with pytest.raises(TypeError):
+        modes[20501] = modes[20504]  # type: ignore[index]

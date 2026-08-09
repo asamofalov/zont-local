@@ -7,6 +7,7 @@ DOMAIN = "zont_ws"
 CONFIG_ENTRY_VERSION = 3
 CONF_CONTROLLER = "controller"
 CONF_AUTO_TITLE = "auto_title"
+CONF_HEATING_OFF_MODE_ID = "heating_off_mode_id"
 
 SERVICE_SEND_COMMAND = "send_command"
 SERVICE_SEND_BULK = "send_bulk"

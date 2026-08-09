@@ -22,11 +22,13 @@ from .client import (
     ZontConnectionError,
     ZontProtocolError,
 )
-from .const import DOMAIN
+from .const import CONF_HEATING_OFF_MODE_ID, DOMAIN
 from .coordinator import ZontRuntimeData
 from .entity import ZontObjectCoordinatorEntity
 from .heating import (
     ZontCommandRejectedError,
+    ZontCommandStateError,
+    async_apply_heating_mode_and_refresh,
     async_set_heating_circuit_temperature_and_refresh,
 )
 from .heating_config import (
@@ -34,6 +36,11 @@ from .heating_config import (
     AIR_MIN_TEMPERATURE,
     CONSUMER_CIRCUIT_SUBTYPE,
     ZontHeatingCircuitControlData,
+)
+from .heating_modes import (
+    mode_disables_circuits,
+    mode_is_applicable_to_circuit,
+    relevant_heating_circuit_ids,
 )
 from .objects import ZontHeatingCircuitData, ZontHeatingCircuitMode
 
@@ -76,7 +83,6 @@ class ZontConsumerClimate(ZontObjectCoordinatorEntity, ClimateEntity):
     _attr_name = None
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_target_temperature_step = TARGET_TEMPERATURE_STEP
-    _attr_hvac_modes: list[HVACMode] = []
 
     def __init__(
         self,
@@ -84,8 +90,12 @@ class ZontConsumerClimate(ZontObjectCoordinatorEntity, ClimateEntity):
         object_id: int,
     ) -> None:
         """Initialize a ZONT consumer climate entity."""
+        self._entry = entry
         self._client = entry.runtime_data.client
         super().__init__(entry, object_id, "climate", None)
+        self._last_active_mode_id: int | None = None
+        self._last_active_target: float | None = None
+        self._remember_active_state()
 
     @property
     def _circuit(self) -> ZontHeatingCircuitData | None:
@@ -110,11 +120,21 @@ class ZontConsumerClimate(ZontObjectCoordinatorEntity, ClimateEntity):
 
     @property
     def supported_features(self) -> ClimateEntityFeature:
-        """Expose target control only after a safe range is known."""
+        """Expose only controls confirmed by current controller metadata."""
+        features = ClimateEntityFeature(0)
         control = self._control
         if control is not None and control.can_set_temperature:
-            return ClimateEntityFeature.TARGET_TEMPERATURE
-        return ClimateEntityFeature(0)
+            features |= ClimateEntityFeature.TARGET_TEMPERATURE
+        if self._off_mode_id is not None and self._can_turn_on:
+            features |= ClimateEntityFeature.TURN_ON | ClimateEntityFeature.TURN_OFF
+        return features
+
+    @property
+    def hvac_modes(self) -> list[HVACMode]:
+        """Return the standard modes supported by the configured binding."""
+        if self._off_mode_id is None or not self._can_turn_on:
+            return []
+        return [HVACMode.HEAT, HVACMode.OFF]
 
     @property
     def current_temperature(self) -> float | None:
@@ -159,6 +179,169 @@ class ZontConsumerClimate(ZontObjectCoordinatorEntity, ClimateEntity):
             ZontHeatingCircuitMode.COOL: HVACMode.COOL,
             ZontHeatingCircuitMode.OFF: HVACMode.OFF,
         }[circuit.mode]
+
+    @property
+    def _off_mode_id(self) -> int | None:
+        """Return the selected off mode when it remains safe and applicable."""
+        configured = self._entry.options.get(CONF_HEATING_OFF_MODE_ID)
+        if type(configured) is not int:
+            return None
+        mode = self.coordinator.data.heating_modes.get(configured)
+        if mode is None or not mode_disables_circuits(
+            mode,
+            relevant_heating_circuit_ids(self.coordinator.data.objects),
+        ):
+            return None
+        if not mode_is_applicable_to_circuit(
+            configured,
+            self._object_id,
+            self.coordinator.data.heating_states,
+        ):
+            return None
+        return configured
+
+    @property
+    def _can_turn_on(self) -> bool:
+        """Return whether an active state can be restored safely."""
+        circuit = self._circuit
+        if circuit is None or circuit.mode not in (
+            ZontHeatingCircuitMode.HEAT,
+            ZontHeatingCircuitMode.OFF,
+        ):
+            return False
+        if self._restorable_mode_id is not None:
+            return True
+        control = self._control
+        return control is not None and control.can_set_temperature
+
+    @property
+    def _restorable_mode_id(self) -> int | None:
+        """Return the remembered non-off mode when it is still valid."""
+        mode_id = self._last_active_mode_id
+        if mode_id is None:
+            return None
+        mode = self.coordinator.data.heating_modes.get(mode_id)
+        if (
+            mode is None
+            or mode.circuit_targets.get(self._object_id) in (None, 0)
+            or not mode_is_applicable_to_circuit(
+                mode_id,
+                self._object_id,
+                self.coordinator.data.heating_states,
+            )
+        ):
+            return None
+        return mode_id
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Remember the last active state before writing the new HA state."""
+        self._remember_active_state()
+        super()._handle_coordinator_update()
+
+    @callback
+    def _remember_active_state(self) -> None:
+        """Cache the last observed active mode and target for this HA session."""
+        circuit = self._circuit
+        if circuit is None or circuit.mode is ZontHeatingCircuitMode.OFF:
+            return
+        self._last_active_mode_id = (
+            circuit.mode_id
+            if circuit.mode_id is not None and circuit.mode_id > 0
+            else None
+        )
+        if circuit.target_temperature is not None and isfinite(
+            circuit.target_temperature
+        ):
+            self._last_active_target = circuit.target_temperature
+
+    async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
+        """Turn the circuit on or off through the configured binding."""
+        if hvac_mode is HVACMode.OFF:
+            await self.async_turn_off()
+            return
+        if hvac_mode is HVACMode.HEAT:
+            await self.async_turn_on()
+            return
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="heating_hvac_mode_unavailable",
+        )
+
+    async def async_turn_off(self) -> None:
+        """Apply the configured all-off mode only to this circuit."""
+        circuit = self._circuit
+        if circuit is not None and circuit.mode is ZontHeatingCircuitMode.OFF:
+            return
+        mode_id = self._off_mode_id
+        if mode_id is None or not self._can_turn_on:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="heating_off_mode_unavailable",
+            )
+        self._remember_active_state()
+        await self._async_apply_mode(mode_id, expect_off=True)
+
+    async def async_turn_on(self) -> None:
+        """Restore the previous mode, setpoint, or minimum safe setpoint."""
+        circuit = self._circuit
+        if circuit is not None and circuit.mode is not ZontHeatingCircuitMode.OFF:
+            return
+        if self._off_mode_id is None or not self._can_turn_on:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="heating_turn_on_unavailable",
+            )
+
+        if (mode_id := self._restorable_mode_id) is not None:
+            await self._async_apply_mode(mode_id, expect_off=False)
+            return
+
+        target = self._last_active_target
+        if target is None or not self.min_temp <= target <= self.max_temp:
+            target = self.min_temp
+        await self.async_set_temperature(**{ATTR_TEMPERATURE: target})
+
+    async def _async_apply_mode(self, mode_id: int, *, expect_off: bool) -> None:
+        """Apply one mode and translate protocol failures for Home Assistant."""
+        try:
+            await async_apply_heating_mode_and_refresh(
+                self._client,
+                self.coordinator,
+                self._object_id,
+                mode_id,
+                expect_off=expect_off,
+            )
+        except asyncio.CancelledError:
+            raise
+        except ZontCommandRejectedError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="command_rejected",
+                translation_placeholders={"id": str(self._object_id)},
+            ) from err
+        except ZontCommandTimeoutError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="command_timeout",
+                translation_placeholders={"id": str(self._object_id)},
+            ) from err
+        except ZontConnectionError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="controller_offline",
+            ) from err
+        except ZontCommandStateError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="heating_state_not_confirmed",
+                translation_placeholders={"id": str(self._object_id)},
+            ) from err
+        except ZontProtocolError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="protocol_error",
+            ) from err
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         """Set the consumer-circuit target temperature."""

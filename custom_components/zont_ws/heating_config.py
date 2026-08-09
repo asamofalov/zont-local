@@ -14,6 +14,7 @@ from .objects import OBJECT_TYPE_HEATING_CIRCUIT
 OBJECT_TYPE_WIRED_TEMPERATURE_SENSOR = 1
 OBJECT_TYPE_RADIO_SENSOR = 8
 OBJECT_TYPE_ANALOG_TEMPERATURE_SENSOR = 27
+OBJECT_TYPE_HEATING_MODE = 20
 SUPPORTED_TEMPERATURE_SENSOR_CONFIG_TYPES = frozenset(
     {
         OBJECT_TYPE_WIRED_TEMPERATURE_SENSOR,
@@ -98,6 +99,7 @@ class ZontHeatingCircuitInternalState:
     object_id: int
     target_sensor_id: int | None
     status_register: int | None
+    applicable_mode_ids: tuple[int, ...] = ()
 
     @property
     def is_blocked(self) -> bool | None:
@@ -138,6 +140,19 @@ class ZontTemperatureSensorConfiguration:
 
 
 @dataclass(frozen=True, slots=True)
+class ZontHeatingModeConfiguration:
+    """Named ZONT heating mode and its per-circuit raw setpoints."""
+
+    object_id: int
+    name: str
+    circuit_targets: Mapping[int, int]
+
+    def disables_circuit(self, circuit_id: int) -> bool:
+        """Return whether this mode explicitly disables one circuit."""
+        return self.circuit_targets.get(circuit_id) == 0
+
+
+@dataclass(frozen=True, slots=True)
 class ZontHeatingCircuitControlData:
     """Resolved Home Assistant control capabilities of a consumer circuit."""
 
@@ -165,6 +180,13 @@ def immutable_heating_states(
 ) -> Mapping[int, ZontHeatingCircuitInternalState]:
     """Return an immutable copy of consumer-circuit internal states."""
     return MappingProxyType(dict(states or {}))
+
+
+def immutable_heating_modes(
+    modes: Mapping[int, ZontHeatingModeConfiguration] | None = None,
+) -> Mapping[int, ZontHeatingModeConfiguration]:
+    """Return an immutable copy of heating-mode configurations."""
+    return MappingProxyType(dict(modes or {}))
 
 
 def parse_heating_circuit_configuration(
@@ -215,6 +237,41 @@ def parse_heating_circuit_internal_state(
         object_id=object_id,
         target_sensor_id=_optional_object_id(fields, 6),
         status_register=_non_negative_int(fields, 7) if len(fields) > 7 else None,
+        applicable_mode_ids=(
+            _non_negative_int_list(fields, 8) if len(fields) > 8 else ()
+        ),
+    )
+
+
+def parse_heating_mode_configuration(
+    response: str,
+    expected_object_id: int | None = None,
+) -> ZontHeatingModeConfiguration:
+    """Parse a ``#Z<id>`` heating-mode response."""
+    object_id, fields = _parse_response(response, "#Z", ":")
+    _validate_expected_id(object_id, expected_object_id)
+    if len(fields) < 4 or _required_int(fields, 0) != OBJECT_TYPE_HEATING_MODE:
+        raise ZontHeatingConfigParseError(
+            "Response is not a supported heating-mode configuration"
+        )
+
+    name = fields[1]
+    if not isinstance(name, str) or not name.strip():
+        raise ZontHeatingConfigParseError("Heating-mode name is missing")
+
+    circuit_ids = _non_negative_int_list(fields, 2)
+    targets = _non_negative_int_list(fields, 3)
+    if len(circuit_ids) != len(targets):
+        raise ZontHeatingConfigParseError(
+            "Heating-mode circuit and target lists have different lengths"
+        )
+    if len(set(circuit_ids)) != len(circuit_ids):
+        raise ZontHeatingConfigParseError("Heating-mode circuit IDs are duplicated")
+
+    return ZontHeatingModeConfiguration(
+        object_id=object_id,
+        name=name.strip(),
+        circuit_targets=MappingProxyType(dict(zip(circuit_ids, targets, strict=True))),
     )
 
 
@@ -500,6 +557,15 @@ def _optional_non_negative_int(fields: tuple[Any, ...], index: int) -> int | Non
 def _optional_object_id(fields: tuple[Any, ...], index: int) -> int | None:
     value = _optional_non_negative_int(fields, index)
     return None if value in (None, 0, 65_535) else value
+
+
+def _non_negative_int_list(fields: tuple[Any, ...], index: int) -> tuple[int, ...]:
+    if index >= len(fields) or not isinstance(fields[index], list):
+        raise ZontHeatingConfigParseError("Required internal integer list is missing")
+    values = fields[index]
+    if any(type(value) is not int or value < 0 for value in values):
+        raise ZontHeatingConfigParseError("Internal integer list is invalid")
+    return tuple(values)
 
 
 def _configuration_temperature(fields: tuple[Any, ...], index: int) -> float | None:
