@@ -31,6 +31,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from .coordinator import ZontRuntimeData
 from .entity import ZontCoordinatorEntity, ZontObjectCoordinatorEntity
 from .heating_config import CONSUMER_CIRCUIT_SUBTYPE, ZontConsumerControlMode
+from .mixer import ZontMixerInternalState
 from .objects import (
     ANALOG_BINARY_FIRST_SUBTYPES,
     ZontAnalogInputData,
@@ -38,6 +39,8 @@ from .objects import (
     ZontDigitalBusState,
     ZontDigitalTemperatureSensorData,
     ZontHeatingCircuitData,
+    ZontMixerData,
+    ZontMixerDirection,
     ZontNtcTemperatureSensorData,
     ZontRadioSensorData,
     ZontTemperatureSensorData,
@@ -56,6 +59,13 @@ CONNECTION_CHANNEL_STATES = (
 
 DIGITAL_BUS_STATES = tuple(state.value for state in ZontDigitalBusState)
 CONSUMER_CONTROL_MODE_STATES = tuple(mode.value for mode in ZontConsumerControlMode)
+MIXER_STATE_STATES = (
+    "idle",
+    "opening",
+    "closing",
+    "fully_open",
+    "fully_closed",
+)
 
 ANALOG_INPUT_UNITS: dict[int, str | None] = {
     0: UnitOfElectricPotential.VOLT,
@@ -274,6 +284,12 @@ async def async_setup_entry(
                         ZontHeatingControlModeSensor(entry, obj.object_id)
                     )
                 continue
+            if isinstance(obj, ZontMixerData):
+                identity = (obj.object_id, "state")
+                if identity not in known_entities:
+                    known_entities.add(identity)
+                    new_entities.append(ZontMixerStateSensor(entry, obj.object_id))
+                continue
             if isinstance(obj, ZontDigitalBusAdapterData) and obj.available:
                 for description in DIGITAL_BUS_SENSOR_DESCRIPTIONS:
                     identity = (obj.object_id, description.key)
@@ -367,6 +383,55 @@ class ZontHeatingControlModeSensor(ZontObjectCoordinatorEntity, SensorEntity):
         """Return the configured base control mode."""
         control = self.coordinator.data.heating_controls.get(self._object_id)
         return control.control_mode.value if control and control.control_mode else None
+
+
+class ZontMixerStateSensor(ZontObjectCoordinatorEntity, SensorEntity):
+    """Represent the read-only movement or end position of one mixer."""
+
+    _attr_name = None
+    _attr_translation_key = "mixer_state"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = list(MIXER_STATE_STATES)
+
+    def __init__(
+        self,
+        entry: ConfigEntry[ZontRuntimeData],
+        object_id: int,
+    ) -> None:
+        """Initialize a mixer state sensor."""
+        super().__init__(entry, object_id, "state", None)
+
+    @property
+    def available(self) -> bool:
+        """Return whether a current, unambiguous mixer state is known."""
+        return super().available and self.native_value is not None
+
+    @property
+    def native_value(self) -> str | None:
+        """Return movement first, otherwise the periodically read position."""
+        obj = self.object_data
+        if not isinstance(obj, ZontMixerData) or obj.direction is None:
+            return None
+        if obj.direction is ZontMixerDirection.OPENING:
+            return "opening"
+        if obj.direction is ZontMixerDirection.CLOSING:
+            return "closing"
+
+        state = self.coordinator.data.mixer_states.get(self._object_id)
+        return _stopped_mixer_state(state)
+
+
+def _stopped_mixer_state(state: ZontMixerInternalState | None) -> str | None:
+    """Resolve one stopped mixer position without guessing contradictions."""
+    if state is None:
+        return None
+    if state.is_fully_open and state.is_fully_closed:
+        return None
+    if state.is_fully_open:
+        return "fully_open"
+    if state.is_fully_closed:
+        return "fully_closed"
+    return "idle"
 
 
 class ZontDigitalBusSensor(ZontObjectCoordinatorEntity, SensorEntity):

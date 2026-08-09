@@ -29,11 +29,16 @@ from .heating_config import (
     ZontHeatingCircuitControlData,
     ZontHeatingCircuitInternalState,
 )
+from .mixer import ZontMixerInternalState
 from .objects import (
     ZontAnalogInputData,
     ZontHeatingCircuitData,
+    ZontMixerData,
+    ZontPumpData,
     ZontRadioSensorData,
+    ZontRelayData,
 )
+from .relay import ZontRelayInternalState
 
 ANALOG_TRIGGER_DEVICE_CLASSES: dict[int, BinarySensorDeviceClass | None] = {
     3: BinarySensorDeviceClass.DOOR,
@@ -124,6 +129,38 @@ HEATING_CIRCUIT_BINARY_SENSOR_DESCRIPTIONS_BY_SUBTYPE = {
 }
 
 
+@dataclass(frozen=True, kw_only=True)
+class ZontMixerBinarySensorEntityDescription(BinarySensorEntityDescription):
+    """Describe one diagnostic mixer flag."""
+
+    value_fn: Callable[[ZontMixerInternalState], bool]
+
+
+MIXER_BINARY_SENSOR_DESCRIPTIONS = (
+    ZontMixerBinarySensorEntityDescription(
+        key="sensor_fault",
+        translation_key="mixer_sensor_fault",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda state: state.has_sensor_fault,
+    ),
+    ZontMixerBinarySensorEntityDescription(
+        key="output_fault",
+        translation_key="mixer_output_fault",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda state: state.has_output_fault,
+    ),
+    ZontMixerBinarySensorEntityDescription(
+        key="set_failed",
+        translation_key="mixer_set_failed",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda state: state.has_set_failed,
+    ),
+)
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry[ZontRuntimeData],
@@ -176,6 +213,34 @@ async def async_setup_entry(
                             description,
                         )
                     )
+                continue
+            if isinstance(obj, ZontPumpData):
+                identity = (obj.object_id, "running")
+                if identity in known_entities:
+                    continue
+                known_entities.add(identity)
+                new_entities.append(ZontPumpRunningBinarySensor(entry, obj.object_id))
+                continue
+            if isinstance(obj, ZontMixerData):
+                for description in MIXER_BINARY_SENSOR_DESCRIPTIONS:
+                    identity = (obj.object_id, description.key)
+                    if identity in known_entities:
+                        continue
+                    known_entities.add(identity)
+                    new_entities.append(
+                        ZontMixerBinarySensor(
+                            entry,
+                            obj.object_id,
+                            description,
+                        )
+                    )
+                continue
+            if isinstance(obj, ZontRelayData):
+                identity = (obj.object_id, "failed")
+                if identity in known_entities:
+                    continue
+                known_entities.add(identity)
+                new_entities.append(ZontRelayFailedBinarySensor(entry, obj.object_id))
                 continue
             if (
                 not isinstance(obj, ZontRadioSensorData)
@@ -290,6 +355,111 @@ class ZontHeatingCircuitBinarySensor(
             self.coordinator.data.heating_controls.get(self._object_id),
             self.coordinator.data.heating_states.get(self._object_id),
         )
+
+
+class ZontPumpRunningBinarySensor(
+    ZontObjectCoordinatorEntity,
+    BinarySensorEntity,
+):
+    """Represent the observed running state of one pump."""
+
+    _attr_name = None
+    _attr_device_class = BinarySensorDeviceClass.RUNNING
+
+    def __init__(
+        self,
+        entry: ConfigEntry[ZontRuntimeData],
+        object_id: int,
+    ) -> None:
+        """Initialize a pump running-state sensor."""
+        super().__init__(entry, object_id, "running", None)
+
+    @property
+    def available(self) -> bool:
+        """Return whether the pump currently provides its running state."""
+        return super().available and self.is_on is not None
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return whether the pump is physically running."""
+        obj = self.object_data
+        return obj.running if isinstance(obj, ZontPumpData) else None
+
+
+class ZontMixerBinarySensor(
+    ZontObjectCoordinatorEntity,
+    BinarySensorEntity,
+):
+    """Represent one read-only mixer diagnostic flag."""
+
+    entity_description: ZontMixerBinarySensorEntityDescription
+
+    def __init__(
+        self,
+        entry: ConfigEntry[ZontRuntimeData],
+        object_id: int,
+        description: ZontMixerBinarySensorEntityDescription,
+    ) -> None:
+        """Initialize a mixer diagnostic binary sensor."""
+        self.entity_description = description
+        super().__init__(entry, object_id, description.key, description.key)
+
+    @property
+    def available(self) -> bool:
+        """Return whether internal mixer flags have been read."""
+        return super().available and self._internal_state is not None
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return the described mixer diagnostic flag."""
+        state = self._internal_state
+        return self.entity_description.value_fn(state) if state is not None else None
+
+    @property
+    def _internal_state(self) -> ZontMixerInternalState | None:
+        """Return the current internal state of this mixer."""
+        obj = self.object_data
+        if not isinstance(obj, ZontMixerData):
+            return None
+        return self.coordinator.data.mixer_states.get(self._object_id)
+
+
+class ZontRelayFailedBinarySensor(
+    ZontObjectCoordinatorEntity,
+    BinarySensorEntity,
+):
+    """Represent the internal failure flag of one relay."""
+
+    _attr_translation_key = "relay_failed"
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        entry: ConfigEntry[ZontRuntimeData],
+        object_id: int,
+    ) -> None:
+        """Initialize a relay failure sensor."""
+        super().__init__(entry, object_id, "failed", "failed")
+
+    @property
+    def available(self) -> bool:
+        """Return whether internal relay flags have been read."""
+        return super().available and self._internal_state is not None
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return whether the relay reports a failure."""
+        state = self._internal_state
+        return state.has_failed if state is not None else None
+
+    @property
+    def _internal_state(self) -> ZontRelayInternalState | None:
+        """Return the current internal state of this relay."""
+        obj = self.object_data
+        if not isinstance(obj, ZontRelayData):
+            return None
+        return self.coordinator.data.relay_states.get(self._object_id)
 
 
 class ZontAnalogInputTriggeredBinarySensor(

@@ -8,11 +8,15 @@ import pytest
 from custom_components.zont_ws.binary_sensor import (
     HEATING_CIRCUIT_BINARY_SENSOR_DESCRIPTIONS_BY_SUBTYPE,
     HEATING_CIRCUIT_FAULT_DESCRIPTION,
+    MIXER_BINARY_SENSOR_DESCRIPTIONS,
     ZontAnalogInputTriggeredBinarySensor,
     ZontCloudConnectedBinarySensor,
     ZontConnectedBinarySensor,
     ZontHeatingCircuitBinarySensor,
+    ZontMixerBinarySensor,
+    ZontPumpRunningBinarySensor,
     ZontRadioTriggeredBinarySensor,
+    ZontRelayFailedBinarySensor,
     async_setup_entry,
 )
 from custom_components.zont_ws.client import ZontWsClient
@@ -34,12 +38,24 @@ from custom_components.zont_ws.heating_config import (
     immutable_heating_controls,
     immutable_heating_states,
 )
+from custom_components.zont_ws.mixer import (
+    ZontMixerInternalState,
+    immutable_mixer_states,
+)
 from custom_components.zont_ws.objects import (
     ZontAnalogInputData,
     ZontHeatingCircuitData,
+    ZontMixerData,
+    ZontMixerDirection,
     ZontObject,
+    ZontPumpData,
     ZontRadioSensorData,
+    ZontRelayData,
     immutable_objects,
+)
+from custom_components.zont_ws.relay import (
+    ZontRelayInternalState,
+    immutable_relay_states,
 )
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.core import HomeAssistant
@@ -63,6 +79,19 @@ def _object_entry(obj: ZontObject) -> MockConfigEntry:
     )
     coordinator.async_add_listener.return_value = lambda: None
     entry.runtime_data = ZontRuntimeData(client, coordinator)
+    return entry
+
+
+def _relay_entry(state: ZontRelayInternalState | None) -> MockConfigEntry:
+    relay = ZontRelayData(20488, 14, "Реле", output_active=True)
+    entry = _object_entry(relay)
+    entry.runtime_data.coordinator.data = ZontData(
+        controller=ZontControllerData(info=None),
+        objects=immutable_objects({20488: relay}),
+        relay_states=immutable_relay_states(
+            {20488: state} if state is not None else None
+        ),
+    )
     return entry
 
 
@@ -335,6 +364,153 @@ async def test_setup_adds_only_supported_radio_triggers(hass: HomeAssistant) -> 
     assert async_add_entities.call_count == 2
 
 
+@pytest.mark.parametrize(("running", "is_on"), [(True, True), (False, False)])
+def test_pump_binary_sensor_uses_observed_state(
+    running: bool,
+    is_on: bool,
+) -> None:
+    pump = ZontPumpData(9044, 17, "Насос Радиаторы", running=running)
+    entry = _object_entry(pump)
+
+    entity = ZontPumpRunningBinarySensor(entry, 9044)
+
+    assert entity.available
+    assert entity.is_on is is_on
+    assert entity.name is None
+    assert entity.device_class is BinarySensorDeviceClass.RUNNING
+    assert entity.entity_category is None
+    assert entity.unique_id == "ABCDEF123456_9044_running"
+    assert entity.suggested_object_id is None
+    assert entity.device_info["identifiers"] == {(DOMAIN, "ABCDEF123456:object:9044")}
+
+
+def test_pump_binary_sensor_tracks_availability() -> None:
+    pump = ZontPumpData(
+        9044,
+        17,
+        "Насос Радиаторы",
+        available=False,
+        running=True,
+    )
+    entry = _object_entry(pump)
+
+    entity = ZontPumpRunningBinarySensor(entry, 9044)
+
+    assert not entity.available
+    assert entity.is_on
+
+
+async def test_setup_adds_pump_without_duplicates(hass: HomeAssistant) -> None:
+    pump = ZontPumpData(9044, 17, "Насос Радиаторы", running=True)
+    entry = _object_entry(pump)
+    entry.add_to_hass(hass)
+    async_add_entities = MagicMock()
+
+    await async_setup_entry(hass, entry, async_add_entities)
+
+    entities = async_add_entities.call_args_list[1].args[0]
+    assert len(entities) == 1
+    assert isinstance(entities[0], ZontPumpRunningBinarySensor)
+    assert entities[0].available
+
+    listener = entry.runtime_data.coordinator.async_add_listener.call_args.args[0]
+    listener()
+    assert async_add_entities.call_count == 2
+
+
+@pytest.mark.parametrize(
+    ("key", "flags", "expected"),
+    [
+        ("sensor_fault", 32, True),
+        ("sensor_fault", 0, False),
+        ("output_fault", 64, True),
+        ("output_fault", 0, False),
+        ("set_failed", 128, True),
+        ("set_failed", 0, False),
+    ],
+)
+def test_mixer_binary_sensor_uses_internal_flags(
+    key: str,
+    flags: int,
+    expected: bool,
+) -> None:
+    mixer = ZontMixerData(
+        9078,
+        15,
+        "Трехходовой ТП",
+        direction=ZontMixerDirection.IDLE,
+    )
+    entry = _object_entry(mixer)
+    entry.runtime_data.coordinator.data = ZontData(
+        controller=ZontControllerData(info=None),
+        objects=immutable_objects({9078: mixer}),
+        mixer_states=immutable_mixer_states(
+            {
+                9078: ZontMixerInternalState(
+                    object_id=9078,
+                    direction=ZontMixerDirection.IDLE,
+                    state_flags=flags,
+                )
+            }
+        ),
+    )
+    description = next(
+        item for item in MIXER_BINARY_SENSOR_DESCRIPTIONS if item.key == key
+    )
+
+    entity = ZontMixerBinarySensor(entry, 9078, description)
+
+    assert entity.available
+    assert entity.is_on is expected
+    assert entity.device_class is BinarySensorDeviceClass.PROBLEM
+    assert entity.entity_category is EntityCategory.DIAGNOSTIC
+    assert entity.unique_id == f"ABCDEF123456_9078_{key}"
+    assert entity.suggested_object_id == key
+
+
+def test_mixer_binary_sensor_is_unavailable_without_internal_state() -> None:
+    mixer = ZontMixerData(
+        9078,
+        15,
+        "Трехходовой ТП",
+        direction=ZontMixerDirection.OPENING,
+    )
+    entry = _object_entry(mixer)
+    entity = ZontMixerBinarySensor(entry, 9078, MIXER_BINARY_SENSOR_DESCRIPTIONS[0])
+
+    assert not entity.available
+    assert entity.is_on is None
+
+
+async def test_setup_adds_mixer_diagnostics_without_duplicates(
+    hass: HomeAssistant,
+) -> None:
+    mixer = ZontMixerData(
+        9078,
+        15,
+        "Трехходовой ТП",
+        direction=ZontMixerDirection.IDLE,
+    )
+    entry = _object_entry(mixer)
+    entry.add_to_hass(hass)
+    async_add_entities = MagicMock()
+
+    await async_setup_entry(hass, entry, async_add_entities)
+
+    entities = async_add_entities.call_args_list[1].args[0]
+    assert {entity.entity_description.key for entity in entities} == {
+        "sensor_fault",
+        "output_fault",
+        "set_failed",
+    }
+    assert all(isinstance(entity, ZontMixerBinarySensor) for entity in entities)
+    assert all(not entity.available for entity in entities)
+
+    listener = entry.runtime_data.coordinator.async_add_listener.call_args.args[0]
+    listener()
+    assert async_add_entities.call_count == 2
+
+
 async def test_setup_skips_radio_trigger_for_other_subtypes(
     hass: HomeAssistant,
 ) -> None:
@@ -514,3 +690,40 @@ async def test_setup_adds_heating_diagnostics_by_circuit_subtype(
     ]
     dhw_listener()
     assert dhw_add_entities.call_count == 2
+
+
+@pytest.mark.parametrize(("flags", "failed"), [(0, False), (2, True), (15, True)])
+def test_relay_failure_sensor(flags: int, failed: bool) -> None:
+    entry = _relay_entry(ZontRelayInternalState(20488, flags))
+
+    entity = ZontRelayFailedBinarySensor(entry, 20488)
+
+    assert entity.available
+    assert entity.is_on is failed
+    assert entity.device_class is BinarySensorDeviceClass.PROBLEM
+    assert entity.entity_category is EntityCategory.DIAGNOSTIC
+    assert entity.unique_id == "ABCDEF123456_20488_failed"
+    assert entity.suggested_object_id == "failed"
+
+
+def test_relay_failure_sensor_requires_internal_state() -> None:
+    entity = ZontRelayFailedBinarySensor(_relay_entry(None), 20488)
+
+    assert not entity.available
+    assert entity.is_on is None
+
+
+async def test_setup_adds_relay_failure_sensor_once(hass: HomeAssistant) -> None:
+    entry = _relay_entry(ZontRelayInternalState(20488, 0))
+    entry.add_to_hass(hass)
+    async_add_entities = MagicMock()
+
+    await async_setup_entry(hass, entry, async_add_entities)
+
+    entities = async_add_entities.call_args_list[1].args[0]
+    assert len(entities) == 1
+    assert isinstance(entities[0], ZontRelayFailedBinarySensor)
+
+    listener = entry.runtime_data.coordinator.async_add_listener.call_args.args[0]
+    listener()
+    assert async_add_entities.call_count == 2

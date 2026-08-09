@@ -22,12 +22,18 @@ from custom_components.zont_ws.heating_config import (
     ZontHeatingCircuitControlData,
     immutable_heating_controls,
 )
+from custom_components.zont_ws.mixer import (
+    ZontMixerInternalState,
+    immutable_mixer_states,
+)
 from custom_components.zont_ws.objects import (
     ZontAnalogInputData,
     ZontDigitalBusAdapterData,
     ZontDigitalBusState,
     ZontDigitalTemperatureSensorData,
     ZontHeatingCircuitData,
+    ZontMixerData,
+    ZontMixerDirection,
     ZontNtcTemperatureSensorData,
     ZontObject,
     ZontRadioSensorData,
@@ -44,6 +50,7 @@ from custom_components.zont_ws.sensor import (
     ZontDigitalBusSensor,
     ZontDigitalTemperatureSensor,
     ZontHeatingControlModeSensor,
+    ZontMixerStateSensor,
     ZontNtcTemperatureSensor,
     ZontRadioSensor,
     ZontSupplyVoltageSensor,
@@ -67,6 +74,7 @@ def _entry(
     controller: ZontControllerData,
     objects: dict[int, ZontObject] | None = None,
     controls: dict[int, ZontHeatingCircuitControlData] | None = None,
+    mixer_states: dict[int, ZontMixerInternalState] | None = None,
 ) -> MockConfigEntry:
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -80,6 +88,7 @@ def _entry(
         controller=controller,
         objects=immutable_objects(objects),
         heating_controls=immutable_heating_controls(controls),
+        mixer_states=immutable_mixer_states(mixer_states),
     )
     coordinator.async_add_listener.return_value = lambda: None
     entry.runtime_data = ZontRuntimeData(client, coordinator)
@@ -707,3 +716,75 @@ async def test_setup_adds_control_mode_only_for_consumer_circuit(hass) -> None:
     await async_setup_entry(hass, dhw_entry, dhw_add_entities)
 
     assert dhw_add_entities.call_count == 1
+
+
+@pytest.mark.parametrize(
+    ("direction", "flags", "expected", "available"),
+    [
+        (ZontMixerDirection.OPENING, None, "opening", True),
+        (ZontMixerDirection.CLOSING, None, "closing", True),
+        (ZontMixerDirection.IDLE, 1, "fully_open", True),
+        (ZontMixerDirection.IDLE, 2, "fully_closed", True),
+        (ZontMixerDirection.IDLE, 0, "idle", True),
+        (ZontMixerDirection.IDLE, 3, None, False),
+        (ZontMixerDirection.IDLE, None, None, False),
+    ],
+)
+def test_mixer_state_sensor_resolves_movement_and_position(
+    direction: ZontMixerDirection,
+    flags: int | None,
+    expected: str | None,
+    available: bool,
+) -> None:
+    mixer = ZontMixerData(9078, 15, "Трехходовой ТП", direction=direction)
+    states = (
+        {
+            9078: ZontMixerInternalState(
+                object_id=9078,
+                direction=ZontMixerDirection.IDLE,
+                state_flags=flags,
+            )
+        }
+        if flags is not None
+        else None
+    )
+    entry = _entry(ZontControllerData(info=None), {9078: mixer}, mixer_states=states)
+
+    entity = ZontMixerStateSensor(entry, 9078)
+
+    assert entity.available is available
+    assert entity.native_value == expected
+    assert entity.options == [
+        "idle",
+        "opening",
+        "closing",
+        "fully_open",
+        "fully_closed",
+    ]
+    assert entity.device_class is SensorDeviceClass.ENUM
+    assert entity.unique_id == "ABCDEF123456_9078_state"
+    assert entity.suggested_object_id is None
+    assert entity.device_info["identifiers"] == {(DOMAIN, "ABCDEF123456:object:9078")}
+
+
+async def test_setup_adds_mixer_state_without_duplicates(hass) -> None:
+    mixer = ZontMixerData(
+        9078,
+        15,
+        "Трехходовой ТП",
+        direction=ZontMixerDirection.IDLE,
+    )
+    entry = _entry(ZontControllerData(info=None), {9078: mixer})
+    entry.add_to_hass(hass)
+    async_add_entities = MagicMock()
+
+    await async_setup_entry(hass, entry, async_add_entities)
+
+    entities = async_add_entities.call_args_list[1].args[0]
+    assert len(entities) == 1
+    assert isinstance(entities[0], ZontMixerStateSensor)
+    assert not entities[0].available
+
+    listener = entry.runtime_data.coordinator.async_add_listener.call_args.args[0]
+    listener()
+    assert async_add_entities.call_count == 2

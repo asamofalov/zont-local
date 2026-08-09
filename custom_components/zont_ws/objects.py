@@ -13,7 +13,10 @@ OBJECT_TYPE_ANALOG_INPUT = 0
 OBJECT_TYPE_DIGITAL_TEMPERATURE_SENSOR = 1
 OBJECT_TYPE_DIGITAL_BUS_ADAPTER = 6
 OBJECT_TYPE_RADIO_SENSOR = 8
+OBJECT_TYPE_RELAY = 14
+OBJECT_TYPE_MIXER = 15
 OBJECT_TYPE_HEATING_CIRCUIT = 16
+OBJECT_TYPE_PUMP = 17
 OBJECT_TYPE_NTC_TEMPERATURE_SENSOR = 27
 SUPPORTED_OBJECT_TYPES = (
     OBJECT_TYPE_ANALOG_INPUT,
@@ -21,7 +24,10 @@ SUPPORTED_OBJECT_TYPES = (
     OBJECT_TYPE_DIGITAL_BUS_ADAPTER,
     OBJECT_TYPE_RADIO_SENSOR,
     OBJECT_TYPE_HEATING_CIRCUIT,
+    OBJECT_TYPE_PUMP,
     OBJECT_TYPE_NTC_TEMPERATURE_SENSOR,
+    OBJECT_TYPE_MIXER,
+    OBJECT_TYPE_RELAY,
 )
 
 HEATING_CIRCUIT_SUBTYPE_NAMES = MappingProxyType(
@@ -109,6 +115,14 @@ class ZontHeatingCircuitMode(StrEnum):
     OFF = "off"
 
 
+class ZontMixerDirection(StrEnum):
+    """Documented movement states of a mixer."""
+
+    IDLE = "idle"
+    OPENING = "opening"
+    CLOSING = "closing"
+
+
 @dataclass(frozen=True, slots=True)
 class ZontObjectData:
     """Common descriptive data for one ZONT object."""
@@ -183,6 +197,27 @@ class ZontHeatingCircuitData(ZontObjectData):
     fault: bool | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class ZontPumpData(ZontObjectData):
+    """Observed state of one pump."""
+
+    running: bool | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ZontMixerData(ZontObjectData):
+    """Observed movement state of one mixer."""
+
+    direction: ZontMixerDirection | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ZontRelayData(ZontObjectData):
+    """Observed physical output state of one relay."""
+
+    output_active: bool | None = None
+
+
 type ZontObject = (
     ZontAnalogInputData
     | ZontDigitalBusAdapterData
@@ -190,6 +225,9 @@ type ZontObject = (
     | ZontNtcTemperatureSensorData
     | ZontRadioSensorData
     | ZontHeatingCircuitData
+    | ZontPumpData
+    | ZontMixerData
+    | ZontRelayData
 )
 
 
@@ -558,6 +596,137 @@ def parse_heating_circuit(
     )
 
 
+def parse_pump(
+    payload: Mapping[str, Any],
+    previous: ZontPumpData | None = None,
+    *,
+    partial: bool = False,
+) -> ZontPumpData:
+    """Parse a full or partial pump state."""
+    object_id = _identity_int(payload, "id", previous.object_id if previous else None)
+    object_type = _identity_int(
+        payload,
+        "type",
+        previous.object_type if previous else None,
+    )
+    if object_type != OBJECT_TYPE_PUMP:
+        raise ZontObjectParseError("Object is not a pump")
+
+    name = payload.get("name", previous.name if previous else None)
+    if not isinstance(name, str) or not name.strip():
+        raise ZontObjectParseError("Object name is missing")
+
+    running = _optional_binary_state(
+        payload,
+        "s",
+        previous.running if previous is not None else None,
+        partial,
+    )
+    available = _object_available(
+        payload,
+        previous.available if previous is not None else None,
+        partial,
+        running is not None,
+    )
+    if not available and previous is not None:
+        running = previous.running
+
+    return ZontPumpData(
+        object_id=object_id,
+        object_type=object_type,
+        name=name.strip(),
+        available=available,
+        running=running,
+    )
+
+
+def parse_mixer(
+    payload: Mapping[str, Any],
+    previous: ZontMixerData | None = None,
+    *,
+    partial: bool = False,
+) -> ZontMixerData:
+    """Parse a full or partial mixer movement state."""
+    object_id = _identity_int(payload, "id", previous.object_id if previous else None)
+    object_type = _identity_int(
+        payload,
+        "type",
+        previous.object_type if previous else None,
+    )
+    if object_type != OBJECT_TYPE_MIXER:
+        raise ZontObjectParseError("Object is not a mixer")
+
+    name = payload.get("name", previous.name if previous else None)
+    if not isinstance(name, str) or not name.strip():
+        raise ZontObjectParseError("Object name is missing")
+
+    direction = _optional_mixer_direction(
+        payload,
+        previous.direction if previous is not None else None,
+        partial,
+    )
+    available = _object_available(
+        payload,
+        previous.available if previous is not None else None,
+        partial,
+        direction is not None,
+    )
+    if not available and previous is not None:
+        direction = previous.direction
+
+    return ZontMixerData(
+        object_id=object_id,
+        object_type=object_type,
+        name=name.strip(),
+        available=available,
+        direction=direction,
+    )
+
+
+def parse_relay(
+    payload: Mapping[str, Any],
+    previous: ZontRelayData | None = None,
+    *,
+    partial: bool = False,
+) -> ZontRelayData:
+    """Parse a full or partial relay output state."""
+    object_id = _identity_int(payload, "id", previous.object_id if previous else None)
+    object_type = _identity_int(
+        payload,
+        "type",
+        previous.object_type if previous else None,
+    )
+    if object_type != OBJECT_TYPE_RELAY:
+        raise ZontObjectParseError("Object is not a relay")
+
+    name = payload.get("name", previous.name if previous else None)
+    if not isinstance(name, str) or not name.strip():
+        raise ZontObjectParseError("Object name is missing")
+
+    output_active = _optional_binary_state(
+        payload,
+        "s",
+        previous.output_active if previous is not None else None,
+        partial,
+    )
+    available = _object_available(
+        payload,
+        previous.available if previous is not None else None,
+        partial,
+        output_active is not None,
+    )
+    if not available and previous is not None:
+        output_active = previous.output_active
+
+    return ZontRelayData(
+        object_id=object_id,
+        object_type=object_type,
+        name=name.strip(),
+        available=available,
+        output_active=output_active,
+    )
+
+
 def _parse_temperature_sensor[T: ZontTemperatureSensorData](
     payload: Mapping[str, Any],
     previous: T | None,
@@ -667,6 +836,27 @@ def parse_zont_object(
             previous_circuit,
             partial=partial,
         )
+    if object_type == OBJECT_TYPE_MIXER:
+        previous_mixer = previous if isinstance(previous, ZontMixerData) else None
+        return parse_mixer(
+            payload,
+            previous_mixer,
+            partial=partial,
+        )
+    if object_type == OBJECT_TYPE_PUMP:
+        previous_pump = previous if isinstance(previous, ZontPumpData) else None
+        return parse_pump(
+            payload,
+            previous_pump,
+            partial=partial,
+        )
+    if object_type == OBJECT_TYPE_RELAY:
+        previous_relay = previous if isinstance(previous, ZontRelayData) else None
+        return parse_relay(
+            payload,
+            previous_relay,
+            partial=partial,
+        )
     raise ZontObjectParseError("Object type is not supported")
 
 
@@ -764,6 +954,24 @@ def _optional_heating_circuit_mode(
         return ZontHeatingCircuitMode(value)
     except (TypeError, ValueError):
         return None
+
+
+def _optional_mixer_direction(
+    payload: Mapping[str, Any],
+    previous: ZontMixerDirection | None,
+    partial: bool,
+) -> ZontMixerDirection | None:
+    """Read the documented numeric mixer movement state."""
+    if "s" not in payload:
+        return previous if partial else None
+    value = payload["s"]
+    if type(value) is not int:
+        return None
+    return {
+        0: ZontMixerDirection.IDLE,
+        1: ZontMixerDirection.OPENING,
+        2: ZontMixerDirection.CLOSING,
+    }.get(value)
 
 
 def _integer_field(

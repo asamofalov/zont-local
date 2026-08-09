@@ -58,14 +58,32 @@ from .heating_config import (
     resolve_heating_circuit_control,
 )
 from .heating_modes import mode_disables_circuits, relevant_heating_circuit_ids
+from .mixer import (
+    ZontMixerInternalState,
+    ZontMixerStateParseError,
+    immutable_mixer_states,
+    parse_mixer_internal_state,
+)
 from .objects import (
     SUPPORTED_OBJECT_TYPES,
     ZontHeatingCircuitData,
+    ZontMixerData,
+    ZontMixerDirection,
     ZontObject,
     ZontObjectParseError,
+    ZontRelayData,
     immutable_objects,
     parse_zont_object,
     unavailable_object,
+)
+from .relay import (
+    ZontRelayConfiguration,
+    ZontRelayInternalState,
+    ZontRelayParseError,
+    immutable_relay_configurations,
+    immutable_relay_states,
+    parse_relay_configuration,
+    parse_relay_internal_state,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -99,6 +117,11 @@ class ZontData:
     heating_modes: Mapping[int, ZontHeatingModeConfiguration] = (
         immutable_heating_modes()
     )
+    mixer_states: Mapping[int, ZontMixerInternalState] = immutable_mixer_states()
+    relay_configurations: Mapping[int, ZontRelayConfiguration] = (
+        immutable_relay_configurations()
+    )
+    relay_states: Mapping[int, ZontRelayInternalState] = immutable_relay_states()
 
 
 @dataclass(slots=True)
@@ -161,6 +184,10 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
         ] = {}
         self._heating_configuration_refresh_needed = True
         self._heating_metadata_errors: set[tuple[str, int]] = set()
+        self._mixer_state_errors: set[int] = set()
+        self._relay_configurations: dict[int, ZontRelayConfiguration] = {}
+        self._relay_configuration_refresh_needed = True
+        self._relay_metadata_errors: set[tuple[str, int]] = set()
         self._off_mode_warning_active = False
         self._shutdown_complete = False
 
@@ -221,6 +248,7 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
         if self._info_refresh_enabled:
             self._info_refresh_needed = True
         self._heating_configuration_refresh_needed = True
+        self._relay_configuration_refresh_needed = True
         self._entry.async_create_background_task(
             self.hass,
             self.async_refresh(),
@@ -239,6 +267,11 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
             server_status = await self._async_refresh_server_status()
             supply_voltage = await self._async_refresh_supply_voltage()
             objects = await self._async_refresh_objects(previous_data.objects)
+            mixer_states = await self._async_refresh_mixer_states(objects)
+            (
+                relay_configurations,
+                relay_states,
+            ) = await self._async_refresh_relay_metadata(objects)
             (
                 heating_controls,
                 heating_states,
@@ -262,6 +295,9 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
             heating_controls=heating_controls,
             heating_states=heating_states,
             heating_modes=heating_modes,
+            mixer_states=mixer_states,
+            relay_configurations=relay_configurations,
+            relay_states=relay_states,
         )
         self._log_invalid_off_mode(updated)
         return updated
@@ -329,10 +365,11 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
         """Merge an unsolicited supported object state into the snapshot."""
         if payload == _CONFIG_RELOAD_MESSAGE:
             self._heating_configuration_refresh_needed = True
+            self._relay_configuration_refresh_needed = True
             self._entry.async_create_background_task(
                 self.hass,
                 self.async_refresh(),
-                f"{DOMAIN} heating configuration refresh",
+                f"{DOMAIN} object configuration refresh",
             )
             return
         if not isinstance(payload, Mapping):
@@ -374,12 +411,30 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
             except ZontObjectParseError:
                 return False
 
+        mixer_states = self.data.mixer_states
+        obj = objects[object_id]
+        if (
+            isinstance(obj, ZontMixerData)
+            and obj.direction
+            in (ZontMixerDirection.OPENING, ZontMixerDirection.CLOSING)
+            and object_id in mixer_states
+        ):
+            mixer_states = immutable_mixer_states(
+                {
+                    **mixer_states,
+                    object_id: mixer_states[object_id].without_end_position(),
+                }
+            )
+
         updated = ZontData(
             controller=self.data.controller,
             objects=immutable_objects(objects),
             heating_controls=self.data.heating_controls,
             heating_states=self.data.heating_states,
             heating_modes=self.data.heating_modes,
+            mixer_states=mixer_states,
+            relay_configurations=self.data.relay_configurations,
+            relay_states=self.data.relay_states,
         )
         if updated == self.data:
             return True
@@ -390,6 +445,109 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
         self.data = updated
         self.async_update_listeners()
         return True
+
+    async def _async_refresh_mixer_states(
+        self,
+        objects: Mapping[int, ZontObject],
+    ) -> Mapping[int, ZontMixerInternalState]:
+        """Refresh end-position and diagnostic flags for all mixers."""
+        states: dict[int, ZontMixerInternalState] = {}
+        mixer_ids = sorted(
+            obj.object_id for obj in objects.values() if isinstance(obj, ZontMixerData)
+        )
+        for object_id in mixer_ids:
+            try:
+                response = await self._client.async_send_system_command(
+                    f"#Y{object_id}?"
+                )
+                state = parse_mixer_internal_state(response, object_id)
+                mixer = objects[object_id]
+                assert isinstance(mixer, ZontMixerData)
+                if mixer.direction in (
+                    ZontMixerDirection.OPENING,
+                    ZontMixerDirection.CLOSING,
+                ):
+                    state = state.without_end_position()
+                states[object_id] = state
+            except asyncio.CancelledError:
+                raise
+            except (ZontConnectionError, ZontRequestTimeoutError):
+                raise
+            except (ZontProtocolError, ZontMixerStateParseError):
+                self._log_mixer_state_error(object_id)
+            else:
+                self._mixer_state_errors.discard(object_id)
+        return immutable_mixer_states(states)
+
+    async def _async_refresh_relay_metadata(
+        self,
+        objects: Mapping[int, ZontObject],
+    ) -> tuple[
+        Mapping[int, ZontRelayConfiguration],
+        Mapping[int, ZontRelayInternalState],
+    ]:
+        """Refresh cached configurations and live diagnostic flags for relays."""
+        relay_ids = sorted(
+            obj.object_id for obj in objects.values() if isinstance(obj, ZontRelayData)
+        )
+        if not relay_ids:
+            self._relay_configurations.clear()
+            self._relay_configuration_refresh_needed = False
+            return immutable_relay_configurations(), immutable_relay_states()
+
+        force_configuration = self._relay_configuration_refresh_needed
+        refresh_incomplete = False
+        configurations = (
+            {}
+            if force_configuration
+            else {
+                object_id: configuration
+                for object_id, configuration in self._relay_configurations.items()
+                if object_id in relay_ids
+            }
+        )
+        states: dict[int, ZontRelayInternalState] = {}
+        for object_id in relay_ids:
+            if force_configuration or object_id not in configurations:
+                try:
+                    response = await self._client.async_send_system_command(
+                        f"#Z{object_id}?"
+                    )
+                    configurations[object_id] = parse_relay_configuration(
+                        response,
+                        object_id,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except (ZontConnectionError, ZontRequestTimeoutError):
+                    raise
+                except (ZontProtocolError, ZontRelayParseError):
+                    refresh_incomplete = True
+                    configurations.pop(object_id, None)
+                    self._log_relay_metadata_error("configuration", object_id)
+                else:
+                    self._relay_metadata_errors.discard(("configuration", object_id))
+
+            try:
+                response = await self._client.async_send_system_command(
+                    f"#Y{object_id}?"
+                )
+                states[object_id] = parse_relay_internal_state(response, object_id)
+            except asyncio.CancelledError:
+                raise
+            except (ZontConnectionError, ZontRequestTimeoutError):
+                raise
+            except (ZontProtocolError, ZontRelayParseError):
+                self._log_relay_metadata_error("state", object_id)
+            else:
+                self._relay_metadata_errors.discard(("state", object_id))
+
+        self._relay_configurations = configurations
+        self._relay_configuration_refresh_needed = refresh_incomplete
+        return (
+            immutable_relay_configurations(configurations),
+            immutable_relay_states(states),
+        )
 
     async def _async_refresh_heating_metadata(
         self,
@@ -591,6 +749,30 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
         self._heating_metadata_errors.add(key)
         _LOGGER.warning(
             "Unable to read ZONT heating %s for object %s; "
+            "the integration will retry during the next update",
+            source,
+            object_id,
+        )
+
+    def _log_mixer_state_error(self, object_id: int) -> None:
+        """Log one warning for a consecutive mixer-state failure."""
+        if object_id in self._mixer_state_errors:
+            return
+        self._mixer_state_errors.add(object_id)
+        _LOGGER.warning(
+            "Unable to read ZONT mixer state for object %s; "
+            "the integration will retry during the next update",
+            object_id,
+        )
+
+    def _log_relay_metadata_error(self, source: str, object_id: int) -> None:
+        """Log one warning for a consecutive relay metadata failure."""
+        key = (source, object_id)
+        if key in self._relay_metadata_errors:
+            return
+        self._relay_metadata_errors.add(key)
+        _LOGGER.warning(
+            "Unable to read ZONT relay %s for object %s; "
             "the integration will retry during the next update",
             source,
             object_id,

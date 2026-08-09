@@ -10,8 +10,11 @@ from custom_components.zont_ws.objects import (
     OBJECT_TYPE_DIGITAL_BUS_ADAPTER,
     OBJECT_TYPE_DIGITAL_TEMPERATURE_SENSOR,
     OBJECT_TYPE_HEATING_CIRCUIT,
+    OBJECT_TYPE_MIXER,
     OBJECT_TYPE_NTC_TEMPERATURE_SENSOR,
+    OBJECT_TYPE_PUMP,
     OBJECT_TYPE_RADIO_SENSOR,
+    OBJECT_TYPE_RELAY,
     RADIO_SENSOR_SUBTYPE_NAMES,
     SUPPORTED_RADIO_SENSOR_SUBTYPES,
     ZontAnalogInputData,
@@ -20,9 +23,13 @@ from custom_components.zont_ws.objects import (
     ZontDigitalTemperatureSensorData,
     ZontHeatingCircuitData,
     ZontHeatingCircuitMode,
+    ZontMixerData,
+    ZontMixerDirection,
     ZontNtcTemperatureSensorData,
     ZontObjectParseError,
+    ZontPumpData,
     ZontRadioSensorData,
+    ZontRelayData,
     analog_input_model,
     heating_circuit_model,
     immutable_objects,
@@ -30,8 +37,11 @@ from custom_components.zont_ws.objects import (
     parse_digital_bus_adapter,
     parse_digital_temperature_sensor,
     parse_heating_circuit,
+    parse_mixer,
     parse_ntc_temperature_sensor,
+    parse_pump,
     parse_radio_sensor,
+    parse_relay,
     parse_zont_object,
     radio_sensor_model,
     unavailable_object,
@@ -112,6 +122,170 @@ def test_heating_circuit_subtypes_have_models() -> None:
         3: "Контур потребителя",
     }
     assert heating_circuit_model(4) == "Контур отопления (подтип 4)"
+
+
+@pytest.mark.parametrize(("state", "running"), [(0, False), (1, True)])
+def test_parse_complete_pump_state(state: int, running: bool) -> None:
+    pump = parse_pump(
+        {
+            "id": 9044,
+            "type": OBJECT_TYPE_PUMP,
+            "name": "Насос Радиаторы",
+            "s": state,
+        }
+    )
+
+    assert pump == ZontPumpData(
+        object_id=9044,
+        object_type=17,
+        name="Насос Радиаторы",
+        running=running,
+    )
+    assert (
+        parse_zont_object(
+            {
+                "id": 9044,
+                "type": 17,
+                "name": "Насос Радиаторы",
+                "s": state,
+            }
+        )
+        == pump
+    )
+
+
+@pytest.mark.parametrize(("state", "active"), [(0, False), (1, True)])
+def test_parse_complete_relay_state(state: int, active: bool) -> None:
+    relay = parse_relay(
+        {
+            "id": 20488,
+            "type": OBJECT_TYPE_RELAY,
+            "name": "Реле",
+            "s": state,
+        }
+    )
+
+    assert relay == ZontRelayData(
+        object_id=20488,
+        object_type=14,
+        name="Реле",
+        output_active=active,
+    )
+    assert (
+        parse_zont_object({"id": 20488, "type": 14, "name": "Реле", "s": state})
+        == relay
+    )
+
+
+def test_partial_relay_update_preserves_identity() -> None:
+    previous = ZontRelayData(20488, 14, "Реле", output_active=True)
+
+    relay = parse_relay({"id": 20488, "s": 0}, previous, partial=True)
+
+    assert relay.name == "Реле"
+    assert relay.available
+    assert relay.output_active is False
+
+
+def test_invalid_complete_relay_state_is_unavailable_and_preserves_value() -> None:
+    previous = ZontRelayData(20488, 14, "Реле", output_active=True)
+
+    relay = parse_relay(
+        {"id": 20488, "type": 14, "name": "Реле", "s": 2},
+        previous,
+    )
+
+    assert not relay.available
+    assert relay.output_active is True
+
+
+@pytest.mark.parametrize(
+    ("state", "direction"),
+    [
+        (0, ZontMixerDirection.IDLE),
+        (1, ZontMixerDirection.OPENING),
+        (2, ZontMixerDirection.CLOSING),
+    ],
+)
+def test_parse_complete_mixer_state(
+    state: int,
+    direction: ZontMixerDirection,
+) -> None:
+    mixer = parse_mixer(
+        {
+            "id": 9078,
+            "type": OBJECT_TYPE_MIXER,
+            "name": "Трехходовой ТП",
+            "s": state,
+        }
+    )
+
+    assert mixer == ZontMixerData(
+        object_id=9078,
+        object_type=15,
+        name="Трехходовой ТП",
+        direction=direction,
+    )
+    assert (
+        parse_zont_object(
+            {"id": 9078, "type": 15, "name": "Трехходовой ТП", "s": state}
+        )
+        == mixer
+    )
+
+
+def test_partial_mixer_update_preserves_identity() -> None:
+    previous = ZontMixerData(
+        9078,
+        15,
+        "Трехходовой ТП",
+        direction=ZontMixerDirection.IDLE,
+    )
+
+    mixer = parse_mixer({"id": 9078, "s": 1}, previous, partial=True)
+
+    assert mixer.name == "Трехходовой ТП"
+    assert mixer.available
+    assert mixer.direction is ZontMixerDirection.OPENING
+
+
+def test_invalid_complete_mixer_state_is_unavailable_and_preserves_value() -> None:
+    previous = ZontMixerData(
+        9078,
+        15,
+        "Трехходовой ТП",
+        direction=ZontMixerDirection.IDLE,
+    )
+
+    mixer = parse_mixer(
+        {"id": 9078, "type": 15, "name": "Трехходовой ТП", "s": 3},
+        previous,
+    )
+
+    assert not mixer.available
+    assert mixer.direction is ZontMixerDirection.IDLE
+
+
+def test_partial_pump_update_preserves_identity() -> None:
+    previous = ZontPumpData(9044, 17, "Насос Радиаторы", running=True)
+
+    pump = parse_pump({"id": 9044, "s": 0}, previous, partial=True)
+
+    assert pump.name == "Насос Радиаторы"
+    assert pump.available
+    assert pump.running is False
+
+
+def test_invalid_complete_pump_state_is_unavailable_and_preserves_value() -> None:
+    previous = ZontPumpData(9044, 17, "Насос Радиаторы", running=True)
+
+    pump = parse_pump(
+        {"id": 9044, "type": 17, "name": "Насос Радиаторы", "s": 2},
+        previous,
+    )
+
+    assert not pump.available
+    assert pump.running is True
 
 
 def test_partial_heating_circuit_update_preserves_absent_fields() -> None:

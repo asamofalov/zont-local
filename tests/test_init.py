@@ -44,8 +44,12 @@ from custom_components.zont_ws.objects import (
     ZontDigitalBusState,
     ZontDigitalTemperatureSensorData,
     ZontHeatingCircuitData,
+    ZontMixerData,
+    ZontMixerDirection,
     ZontNtcTemperatureSensorData,
+    ZontPumpData,
     ZontRadioSensorData,
+    ZontRelayData,
     immutable_objects,
 )
 from homeassistant.config_entries import ConfigEntryAuthFailed, ConfigEntryNotReady
@@ -579,6 +583,115 @@ async def test_supported_heating_circuits_are_registered_as_child_devices(
     assert consumer.name == "Радиаторы"
     assert consumer.model == "Контур потребителя"
     assert consumer.via_device_id == controller.id
+
+
+async def test_pump_is_registered_as_child_device(hass: HomeAssistant) -> None:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=SERIAL_NUMBER,
+        data=ENTRY_DATA,
+    )
+    entry.add_to_hass(hass)
+    registry = dr.async_get(hass)
+    controller = registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, SERIAL_NUMBER)},
+        name="ZONT H1V02 PRO",
+    )
+    coordinator = MagicMock(spec=ZontDataUpdateCoordinator)
+    coordinator.data = ZontData(
+        controller=ZontControllerData(info=CONTROLLER_INFO),
+        objects=immutable_objects(
+            {9044: ZontPumpData(9044, 17, "Насос Радиаторы", running=True)}
+        ),
+    )
+    entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontWsClient), coordinator)
+
+    _async_sync_object_devices(hass, entry, controller.id)
+
+    pump = registry.async_get_device(
+        identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:9044")}
+    )
+    assert pump is not None
+    assert pump.name == "Насос Радиаторы"
+    assert pump.manufacturer is None
+    assert pump.model == "Насос"
+    assert pump.via_device_id == controller.id
+
+
+async def test_mixer_is_registered_as_child_device(hass: HomeAssistant) -> None:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=SERIAL_NUMBER,
+        data=ENTRY_DATA,
+    )
+    entry.add_to_hass(hass)
+    registry = dr.async_get(hass)
+    controller = registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, SERIAL_NUMBER)},
+        name="ZONT H1V02 PRO",
+    )
+    coordinator = MagicMock(spec=ZontDataUpdateCoordinator)
+    coordinator.data = ZontData(
+        controller=ZontControllerData(info=CONTROLLER_INFO),
+        objects=immutable_objects(
+            {
+                9078: ZontMixerData(
+                    9078,
+                    15,
+                    "Трехходовой ТП",
+                    direction=ZontMixerDirection.IDLE,
+                )
+            }
+        ),
+    )
+    entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontWsClient), coordinator)
+
+    _async_sync_object_devices(hass, entry, controller.id)
+
+    mixer = registry.async_get_device(
+        identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:9078")}
+    )
+    assert mixer is not None
+    assert mixer.name == "Трехходовой ТП"
+    assert mixer.manufacturer is None
+    assert mixer.model == "Смеситель"
+    assert mixer.via_device_id == controller.id
+
+
+async def test_relay_is_registered_as_child_device(hass: HomeAssistant) -> None:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=SERIAL_NUMBER,
+        data=ENTRY_DATA,
+    )
+    entry.add_to_hass(hass)
+    registry = dr.async_get(hass)
+    controller = registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, SERIAL_NUMBER)},
+        name="ZONT H1V02 PRO",
+    )
+    coordinator = MagicMock(spec=ZontDataUpdateCoordinator)
+    coordinator.data = ZontData(
+        controller=ZontControllerData(info=CONTROLLER_INFO),
+        objects=immutable_objects(
+            {20488: ZontRelayData(20488, 14, "Реле", output_active=True)}
+        ),
+    )
+    entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontWsClient), coordinator)
+
+    _async_sync_object_devices(hass, entry, controller.id)
+
+    relay = registry.async_get_device(
+        identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:20488")}
+    )
+    assert relay is not None
+    assert relay.name == "Реле"
+    assert relay.manufacturer is None
+    assert relay.model == "Реле"
+    assert relay.via_device_id == controller.id
 
 
 async def test_unsupported_radio_subtype_is_not_registered(
