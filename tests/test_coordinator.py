@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, call
 
+import pytest
 from custom_components.zont_ws.client import ZontProtocolError, ZontWsClient
-from custom_components.zont_ws.const import DOMAIN
+from custom_components.zont_ws.const import (
+    DEFAULT_SCAN_INTERVAL,
+    DOMAIN,
+    MAX_SCAN_INTERVAL,
+    MIN_SCAN_INTERVAL,
+)
 from custom_components.zont_ws.controller import (
     COMMAND_SERVER_INFO,
     COMMAND_SUPPLY_VOLTAGE,
@@ -32,14 +39,23 @@ from custom_components.zont_ws.objects import (
     ZontRadioSensorData,
     immutable_objects,
 )
+from homeassistant.const import CONF_SCAN_INTERVAL
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 
 def _coordinator(
     hass: HomeAssistant,
+    scan_interval: object | None = None,
 ) -> tuple[ZontDataUpdateCoordinator, MagicMock]:
-    entry = MockConfigEntry(domain=DOMAIN, unique_id="ABCDEF123456", data={})
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="ABCDEF123456",
+        data={},
+        options=(
+            {CONF_SCAN_INTERVAL: scan_interval} if scan_interval is not None else {}
+        ),
+    )
     client = MagicMock(spec=ZontWsClient)
     client.is_connected = True
     client.async_send_system_command = AsyncMock()
@@ -53,6 +69,30 @@ def _coordinator(
         on_controller_info=MagicMock(),
     )
     return coordinator, client
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [
+        (None, DEFAULT_SCAN_INTERVAL),
+        (MIN_SCAN_INTERVAL, MIN_SCAN_INTERVAL),
+        (MAX_SCAN_INTERVAL, MAX_SCAN_INTERVAL),
+        (60.0, 60),
+        (MIN_SCAN_INTERVAL - 1, DEFAULT_SCAN_INTERVAL),
+        (MAX_SCAN_INTERVAL + 1, DEFAULT_SCAN_INTERVAL),
+        (10.5, DEFAULT_SCAN_INTERVAL),
+        (True, DEFAULT_SCAN_INTERVAL),
+        ("60", DEFAULT_SCAN_INTERVAL),
+    ],
+)
+def test_coordinator_uses_safe_scan_interval(
+    hass: HomeAssistant,
+    configured: object | None,
+    expected: int,
+) -> None:
+    coordinator, _ = _coordinator(hass, configured)
+
+    assert coordinator.update_interval == timedelta(seconds=expected)
 
 
 async def test_refresh_builds_one_controller_snapshot(hass: HomeAssistant) -> None:

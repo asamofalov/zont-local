@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import CONF_SCAN_INTERVAL
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -23,7 +24,10 @@ from .client import (
 from .const import (
     CONF_HEATING_OFF_MODE_ID,
     CONTROLLER_INFO_TIMEOUT,
+    DEFAULT_SCAN_INTERVAL,
     DOMAIN,
+    MAX_SCAN_INTERVAL,
+    MIN_SCAN_INTERVAL,
     connection_signal,
 )
 from .controller import (
@@ -66,7 +70,6 @@ from .objects import (
 
 _LOGGER = logging.getLogger(__name__)
 
-_UPDATE_INTERVAL = timedelta(minutes=1)
 _SOURCE_SERVER_STATUS = "server_status"
 _SOURCE_SUPPLY_VOLTAGE = "supply_voltage"
 _CONFIG_RELOAD_MESSAGE = "CFG_RELOAD_REQ"
@@ -106,6 +109,18 @@ class ZontRuntimeData:
     coordinator: ZontDataUpdateCoordinator
 
 
+def _scan_interval_seconds(value: object) -> int:
+    """Return a safe periodic control-poll interval."""
+    if (
+        isinstance(value, int | float)
+        and not isinstance(value, bool)
+        and float(value).is_integer()
+        and MIN_SCAN_INTERVAL <= value <= MAX_SCAN_INTERVAL
+    ):
+        return int(value)
+    return DEFAULT_SCAN_INTERVAL
+
+
 class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
     """Own the current ZONT data snapshot and its refresh lifecycle."""
 
@@ -123,7 +138,9 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
             _LOGGER,
             config_entry=entry,
             name=DOMAIN,
-            update_interval=_UPDATE_INTERVAL,
+            update_interval=timedelta(
+                seconds=_scan_interval_seconds(entry.options.get(CONF_SCAN_INTERVAL))
+            ),
             always_update=False,
         )
         self.data = ZontData(controller=ZontControllerData(info=initial_info))

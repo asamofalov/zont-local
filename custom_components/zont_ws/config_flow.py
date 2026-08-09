@@ -9,7 +9,13 @@ from typing import Any, cast
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState, ConfigFlowResult
-from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
+from homeassistant.const import (
+    CONF_HOST,
+    CONF_PASSWORD,
+    CONF_SCAN_INTERVAL,
+    CONF_USERNAME,
+    UnitOfTime,
+)
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
@@ -37,10 +43,13 @@ from .const import (
     CONF_DHW_ON_TEMPERATURE,
     CONF_HEATING_OFF_MODE_ID,
     CONFIG_ENTRY_VERSION,
+    DEFAULT_SCAN_INTERVAL,
     DHW_DEFAULT_ON_TEMPERATURE,
     DHW_MAX_TARGET_TEMPERATURE,
     DHW_MIN_TARGET_TEMPERATURE,
     DOMAIN,
+    MAX_SCAN_INTERVAL,
+    MIN_SCAN_INTERVAL,
 )
 from .controller import (
     ZontControllerInfo,
@@ -70,6 +79,7 @@ ERROR_INVALID_AUTH = "invalid_auth"
 ERROR_INVALID_DHW_ON_TEMPERATURE = "invalid_dhw_on_temperature"
 ERROR_INVALID_HOST = "invalid_host"
 ERROR_INVALID_OFF_MODE = "invalid_off_mode"
+ERROR_INVALID_SCAN_INTERVAL = "invalid_scan_interval"
 ERROR_NO_OFF_MODE = "no_off_mode"
 ERROR_UNKNOWN = "unknown"
 
@@ -136,6 +146,8 @@ class ZontWsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 temperature = _validate_dhw_on_temperature(user_input)
                 if temperature is None:
                     errors["base"] = ERROR_INVALID_DHW_ON_TEMPERATURE
+                elif (scan_interval := _validate_scan_interval(user_input)) is None:
+                    errors["base"] = ERROR_INVALID_SCAN_INTERVAL
                 elif mode_id not in {mode.object_id for mode in self._off_modes}:
                     errors["base"] = ERROR_INVALID_OFF_MODE
                 else:
@@ -145,6 +157,7 @@ class ZontWsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         options={
                             CONF_HEATING_OFF_MODE_ID: mode_id,
                             CONF_DHW_ON_TEMPERATURE: temperature,
+                            CONF_SCAN_INTERVAL: scan_interval,
                         },
                     )
 
@@ -356,11 +369,14 @@ class ZontWsOptionsFlow(config_entries.OptionsFlowWithReload):
                 temperature = _validate_dhw_on_temperature(user_input)
                 if temperature is None:
                     errors["base"] = ERROR_INVALID_DHW_ON_TEMPERATURE
+                elif (scan_interval := _validate_scan_interval(user_input)) is None:
+                    errors["base"] = ERROR_INVALID_SCAN_INTERVAL
                 elif mode_id in {mode.object_id for mode in off_modes}:
                     return self.async_create_entry(
                         data={
                             CONF_HEATING_OFF_MODE_ID: mode_id,
                             CONF_DHW_ON_TEMPERATURE: temperature,
+                            CONF_SCAN_INTERVAL: scan_interval,
                         }
                     )
                 else:
@@ -370,6 +386,9 @@ class ZontWsOptionsFlow(config_entries.OptionsFlowWithReload):
         current_dhw_temperature = self.config_entry.options.get(
             CONF_DHW_ON_TEMPERATURE,
             DHW_DEFAULT_ON_TEMPERATURE,
+        )
+        current_scan_interval = _valid_scan_interval_or_default(
+            self.config_entry.options.get(CONF_SCAN_INTERVAL)
         )
         return self.async_show_form(
             step_id="init",
@@ -381,6 +400,7 @@ class ZontWsOptionsFlow(config_entries.OptionsFlowWithReload):
                     if _is_valid_dhw_on_temperature(current_dhw_temperature)
                     else DHW_DEFAULT_ON_TEMPERATURE
                 ),
+                current_scan_interval,
             ),
             errors=errors,
         )
@@ -503,6 +523,7 @@ def _heating_mode_schema(
     modes: tuple[ZontHeatingModeConfiguration, ...],
     default: int | None = None,
     dhw_on_temperature: float = DHW_DEFAULT_ON_TEMPERATURE,
+    scan_interval: int = DEFAULT_SCAN_INTERVAL,
 ) -> vol.Schema:
     """Return selectors for safe heating on and off behavior."""
     options = [
@@ -535,6 +556,18 @@ def _heating_mode_schema(
                     mode=NumberSelectorMode.BOX,
                 )
             ),
+            vol.Required(
+                CONF_SCAN_INTERVAL,
+                default=scan_interval,
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=MIN_SCAN_INTERVAL,
+                    max=MAX_SCAN_INTERVAL,
+                    step=1,
+                    unit_of_measurement=UnitOfTime.SECONDS,
+                    mode=NumberSelectorMode.BOX,
+                )
+            ),
         }
     )
 
@@ -552,6 +585,25 @@ def _is_valid_dhw_on_temperature(value: Any) -> bool:
         and not isinstance(value, bool)
         and DHW_MIN_TARGET_TEMPERATURE <= value <= DHW_MAX_TARGET_TEMPERATURE
     )
+
+
+def _validate_scan_interval(user_input: dict[str, Any]) -> int | None:
+    """Return a valid control-poll interval in seconds."""
+    value = user_input.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
+    if (
+        not isinstance(value, int | float)
+        or isinstance(value, bool)
+        or not float(value).is_integer()
+        or not MIN_SCAN_INTERVAL <= value <= MAX_SCAN_INTERVAL
+    ):
+        return None
+    return int(value)
+
+
+def _valid_scan_interval_or_default(value: Any) -> int:
+    """Return a stored interval or the backward-compatible default."""
+    validated = _validate_scan_interval({CONF_SCAN_INTERVAL: value})
+    return validated if validated is not None else DEFAULT_SCAN_INTERVAL
 
 
 def _password_selector() -> TextSelector:

@@ -18,8 +18,11 @@ from custom_components.zont_ws.const import (
     CONF_CONTROLLER,
     CONF_DHW_ON_TEMPERATURE,
     CONF_HEATING_OFF_MODE_ID,
+    DEFAULT_SCAN_INTERVAL,
     DHW_DEFAULT_ON_TEMPERATURE,
     DOMAIN,
+    MAX_SCAN_INTERVAL,
+    MIN_SCAN_INTERVAL,
 )
 from custom_components.zont_ws.controller import (
     ZontControllerInfo,
@@ -38,7 +41,12 @@ from custom_components.zont_ws.heating_modes import ZontHeatingModeDiscovery
 from custom_components.zont_ws.objects import ZontHeatingCircuitData
 from homeassistant import config_entries, data_entry_flow
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
+from homeassistant.const import (
+    CONF_HOST,
+    CONF_PASSWORD,
+    CONF_SCAN_INTERVAL,
+    CONF_USERNAME,
+)
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -171,6 +179,7 @@ async def test_user_flow_success(hass: HomeAssistant, monkeypatch) -> None:
     assert result["options"] == {
         CONF_HEATING_OFF_MODE_ID: OFF_MODE_ID,
         CONF_DHW_ON_TEMPERATURE: DHW_DEFAULT_ON_TEMPERATURE,
+        CONF_SCAN_INTERVAL: DEFAULT_SCAN_INTERVAL,
     }
     discover.assert_awaited_once()
     assert discover.await_args.args[1] == USER_DATA
@@ -259,6 +268,7 @@ async def test_options_flow_updates_off_mode(hass: HomeAssistant, monkeypatch) -
         {
             CONF_HEATING_OFF_MODE_ID: str(second_mode.object_id),
             CONF_DHW_ON_TEMPERATURE: 55,
+            CONF_SCAN_INTERVAL: MAX_SCAN_INTERVAL,
         },
     )
 
@@ -266,6 +276,7 @@ async def test_options_flow_updates_off_mode(hass: HomeAssistant, monkeypatch) -
     assert entry.options == {
         CONF_HEATING_OFF_MODE_ID: second_mode.object_id,
         CONF_DHW_ON_TEMPERATURE: 55.0,
+        CONF_SCAN_INTERVAL: MAX_SCAN_INTERVAL,
     }
     discover.assert_awaited_once()
 
@@ -280,6 +291,32 @@ def test_dhw_on_temperature_validation_rejects_invalid_values(
         )
         is None
     )
+
+
+@pytest.mark.parametrize(
+    "interval",
+    [
+        MIN_SCAN_INTERVAL - 1,
+        MAX_SCAN_INTERVAL + 1,
+        10.5,
+        float("nan"),
+        True,
+        "60",
+    ],
+)
+def test_scan_interval_validation_rejects_invalid_values(interval: object) -> None:
+    assert (
+        zont_config_flow._validate_scan_interval({CONF_SCAN_INTERVAL: interval}) is None
+    )
+
+
+@pytest.mark.parametrize("interval", [MIN_SCAN_INTERVAL, 60.0, MAX_SCAN_INTERVAL])
+def test_scan_interval_validation_accepts_integer_seconds(
+    interval: int | float,
+) -> None:
+    assert zont_config_flow._validate_scan_interval(
+        {CONF_SCAN_INTERVAL: interval}
+    ) == int(interval)
 
 
 async def test_loaded_options_flow_reuses_coordinator_data(
