@@ -55,6 +55,21 @@
       },
       "radio_triggered": {
         "name": "Сработка"
+      },
+      "heating_weather_compensation": {
+        "name": "Погодозависимая автоматика"
+      },
+      "heating_blocked": {
+        "name": "Контур заблокирован"
+      },
+      "heating_sensor_fault": {
+        "name": "Неисправность датчика"
+      },
+      "heating_summer_mode": {
+        "name": "Летний режим"
+      },
+      "heating_fault": {
+        "name": "Неисправность"
       }
     },
     "button": {
@@ -125,6 +140,14 @@
       },
       "radio_signal_strength": {
         "name": "Уровень сигнала"
+      },
+      "heating_control_mode": {
+        "name": "Способ регулирования",
+        "state": {
+          "air": "По воздуху",
+          "air_pid": "По воздуху с ПИД",
+          "water": "По теплоносителю"
+        }
       }
     }
   },

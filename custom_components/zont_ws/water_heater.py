@@ -28,12 +28,12 @@ from .heating import (
     ZontCommandRejectedError,
     async_set_heating_circuit_temperature_and_refresh,
 )
+from .heating_config import DHW_CIRCUIT_SUBTYPE
 from .objects import ZontHeatingCircuitData
 
 MIN_TARGET_TEMPERATURE = 5.0
 MAX_TARGET_TEMPERATURE = 75.0
 TARGET_TEMPERATURE_STEP = 1.0
-DHW_CIRCUIT_SUBTYPE = 1
 
 
 async def async_setup_entry(

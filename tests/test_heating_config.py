@@ -14,9 +14,11 @@ from custom_components.zont_ws.heating_config import (
     WEATHER_COMPENSATION_REQUEST_ONLY_FLAG,
     ZontConsumerControlMode,
     ZontHeatingCircuitConfiguration,
+    ZontHeatingCircuitInternalState,
     ZontHeatingConfigParseError,
     ZontTemperatureSensorConfiguration,
     immutable_heating_controls,
+    immutable_heating_states,
     parse_heating_circuit_configuration,
     parse_heating_circuit_internal_state,
     parse_temperature_sensor_configuration,
@@ -92,6 +94,51 @@ def test_parse_internal_state_target_sensor() -> None:
 
     assert state.object_id == 9171
     assert state.target_sensor_id == 4103
+    assert state.status_register == 1
+    assert state.is_blocked is False
+    assert state.has_sensor_fault is False
+    assert state.is_summer_mode is False
+
+
+@pytest.mark.parametrize(
+    ("status_register", "blocked", "sensor_fault", "summer_mode"),
+    [
+        (0, False, False, False),
+        (2, True, False, False),
+        (8, False, True, False),
+        (128, False, False, True),
+        (138, True, True, True),
+    ],
+)
+def test_parse_internal_state_status_flags(
+    status_register: int,
+    blocked: bool,
+    sensor_fault: bool,
+    summer_mode: bool,
+) -> None:
+    state = parse_heating_circuit_internal_state(
+        f"#Y20496$3160,3140,[],0,0,0,4104,{status_register}"
+    )
+
+    assert state.status_register == status_register
+    assert state.is_blocked is blocked
+    assert state.has_sensor_fault is sensor_fault
+    assert state.is_summer_mode is summer_mode
+
+
+def test_short_internal_state_keeps_control_data_without_status() -> None:
+    state = parse_heating_circuit_internal_state("#Y20496$3160,3140,[],0,0,0,4104")
+
+    assert state.target_sensor_id == 4104
+    assert state.status_register is None
+    assert state.is_blocked is None
+    assert state.has_sensor_fault is None
+    assert state.is_summer_mode is None
+
+
+def test_invalid_internal_status_register_is_rejected() -> None:
+    with pytest.raises(ZontHeatingConfigParseError):
+        parse_heating_circuit_internal_state("#Y20496$3160,3140,[],0,0,0,4104,-1")
 
 
 @pytest.mark.parametrize(
@@ -281,3 +328,12 @@ def test_resolved_control_mapping_is_immutable() -> None:
 
     with pytest.raises(TypeError):
         controls[9171] = controls[20496]  # type: ignore[index]
+
+
+def test_internal_state_mapping_is_immutable() -> None:
+    states = immutable_heating_states(
+        {20496: ZontHeatingCircuitInternalState(20496, 4104, 138)}
+    )
+
+    with pytest.raises(TypeError):
+        states[9171] = states[20496]  # type: ignore[index]

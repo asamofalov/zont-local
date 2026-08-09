@@ -16,7 +16,11 @@ from custom_components.zont_ws.coordinator import (
     ZontData,
     ZontDataUpdateCoordinator,
 )
-from custom_components.zont_ws.heating_config import ZontConsumerControlMode
+from custom_components.zont_ws.heating_config import (
+    ZontConsumerControlMode,
+    ZontHeatingCircuitInternalState,
+    immutable_heating_states,
+)
 from custom_components.zont_ws.objects import (
     ZontAnalogInputData,
     ZontDigitalBusAdapterData,
@@ -564,7 +568,7 @@ async def test_refresh_resolves_consumer_water_range(hass: HomeAssistant) -> Non
         "#S6:123 0",
         "#Z20496:16,'Радиаторы',3,3140,3530,0,0,4104,0,20,[9044],"
         "2562,0,0,2730,0,0,0,0,0,0,0,3230,100,10,0,0,0,0,0",
-        "#Y20496$3160,3140,[],0,0,0,4104,1,[20504],0,0",
+        "#Y20496$3160,3140,[],0,0,0,4104,138,[20504],0,0",
     ]
     client.async_get_object_ids.side_effect = [[], [], [], [], [20496], []]
     client.async_get_object_state.return_value = {
@@ -584,6 +588,10 @@ async def test_refresh_resolves_consumer_water_range(hass: HomeAssistant) -> Non
     control = coordinator.data.heating_controls[20496]
     assert control.control_mode is ZontConsumerControlMode.WATER
     assert (control.min_temperature, control.max_temperature) == (41, 80)
+    state = coordinator.data.heating_states[20496]
+    assert state.is_blocked
+    assert state.has_sensor_fault
+    assert state.is_summer_mode
     assert client.async_send_system_command.await_args_list == [
         call(COMMAND_SERVER_INFO, response_timeout=3.0),
         call(COMMAND_SUPPLY_VOLTAGE, response_timeout=3.0),
@@ -649,12 +657,62 @@ async def test_air_sensor_configuration_is_cached_but_state_is_refreshed(
     assert control.control_mode is ZontConsumerControlMode.AIR_PID
     assert control.has_weather_compensation
     assert (control.min_temperature, control.max_temperature) == (10, 40)
+    assert coordinator.data.heating_states[9825].status_register == 1
     commands = [
         call.args[0] for call in client.async_send_system_command.await_args_list
     ]
     assert commands.count("#Z9825?") == 1
     assert commands.count("#Z4110?") == 1
     assert commands.count("#Y9825?") == 2
+
+
+async def test_failed_internal_state_read_clears_current_state_only(
+    hass: HomeAssistant,
+) -> None:
+    coordinator, client = _coordinator(hass)
+    client.async_send_system_command.side_effect = [
+        "#S224:1 0 1 0",
+        "#S6:123 0",
+        "#Z20496:16,'Радиаторы',3,3140,3530,0,0,4104,0,20,[9044],"
+        "2562,0,0,2730,0,0,0,0,0,0,0,3230,100,10,0,0,0,0,0",
+        "#Y20496$3160,3140,[],0,0,0,4104,2,[20504],0,0",
+        "#S224:1 0 1 0",
+        "#S6:123 0",
+        "#Y20496:!",
+    ]
+    client.async_get_object_ids.side_effect = [
+        [],
+        [],
+        [],
+        [],
+        [20496],
+        [],
+        [],
+        [],
+        [],
+        [],
+        [20496],
+        [],
+    ]
+    client.async_get_object_state.return_value = {
+        "id": 20496,
+        "type": 16,
+        "stype": 3,
+        "name": "Радиаторы",
+        "c": 42.5,
+        "s": 41,
+        "m": "heat",
+        "f": 0,
+    }
+
+    await coordinator.async_refresh()
+    assert coordinator.data.heating_states[20496].is_blocked
+
+    await coordinator.async_refresh()
+
+    assert coordinator.last_update_success
+    assert 20496 not in coordinator.data.heating_states
+    assert coordinator.data.heating_controls[20496].can_set_temperature
 
 
 async def test_invalid_consumer_configuration_does_not_block_other_circuit(
@@ -704,6 +762,7 @@ async def test_invalid_consumer_configuration_does_not_block_other_circuit(
     assert coordinator.last_update_success
     assert 9171 not in coordinator.data.heating_controls
     assert coordinator.data.heating_controls[20496].can_set_temperature
+    assert set(coordinator.data.heating_states) == {9171, 20496}
     assert coordinator._heating_configuration_refresh_needed
 
 
@@ -751,6 +810,35 @@ async def test_push_merges_partial_heating_circuit_state(
     assert circuit.current_temperature == 30.5
     assert circuit.target_temperature == 60
     assert circuit.mode is ZontHeatingCircuitMode.HEAT
+
+
+async def test_push_preserves_internal_heating_state(hass: HomeAssistant) -> None:
+    coordinator, _ = _coordinator(hass)
+    internal_state = ZontHeatingCircuitInternalState(
+        object_id=20496,
+        target_sensor_id=4104,
+        status_register=138,
+    )
+    coordinator.data = ZontData(
+        controller=ZontControllerData(info=None),
+        objects=immutable_objects(
+            {
+                20496: ZontHeatingCircuitData(
+                    object_id=20496,
+                    object_type=16,
+                    name="Радиаторы",
+                    subtype=3,
+                    current_temperature=42.5,
+                    fault=False,
+                )
+            }
+        ),
+        heating_states=immutable_heating_states({20496: internal_state}),
+    )
+
+    coordinator._async_message_received({"id": 20496, "c": 43})
+
+    assert coordinator.data.heating_states[20496] == internal_state
 
 
 async def test_targeted_object_refresh_merges_controller_state(

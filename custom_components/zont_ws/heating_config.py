@@ -22,9 +22,13 @@ SUPPORTED_TEMPERATURE_SENSOR_CONFIG_TYPES = frozenset(
     }
 )
 
+DHW_CIRCUIT_SUBTYPE = 1
 CONSUMER_CIRCUIT_SUBTYPE = 3
 WEATHER_COMPENSATION_REQUEST_ONLY_FLAG = 128
 SLAVE_MODE_FLAG = 1_048_576
+CIRCUIT_STATE_BLOCKED_FLAG = 2
+CIRCUIT_STATE_SENSOR_FAULT_FLAG = 8
+CIRCUIT_STATE_SUMMER_MODE_FLAG = 128
 
 AIR_MIN_TEMPERATURE = 5.0
 AIR_MAX_TEMPERATURE = 40.0
@@ -89,10 +93,38 @@ class ZontHeatingCircuitConfiguration:
 
 @dataclass(frozen=True, slots=True)
 class ZontHeatingCircuitInternalState:
-    """Internal state fields needed for setpoint metadata."""
+    """Internal state reported for one consumer heating circuit."""
 
     object_id: int
     target_sensor_id: int | None
+    status_register: int | None
+
+    @property
+    def is_blocked(self) -> bool | None:
+        """Return whether the circuit is blocked."""
+        return (
+            bool(self.status_register & CIRCUIT_STATE_BLOCKED_FLAG)
+            if self.status_register is not None
+            else None
+        )
+
+    @property
+    def has_sensor_fault(self) -> bool | None:
+        """Return whether the circuit reports a sensor fault."""
+        return (
+            bool(self.status_register & CIRCUIT_STATE_SENSOR_FAULT_FLAG)
+            if self.status_register is not None
+            else None
+        )
+
+    @property
+    def is_summer_mode(self) -> bool | None:
+        """Return whether the circuit is in summer mode."""
+        return (
+            bool(self.status_register & CIRCUIT_STATE_SUMMER_MODE_FLAG)
+            if self.status_register is not None
+            else None
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,6 +158,13 @@ def immutable_heating_controls(
 ) -> Mapping[int, ZontHeatingCircuitControlData]:
     """Return an immutable copy of resolved circuit controls."""
     return MappingProxyType(dict(controls or {}))
+
+
+def immutable_heating_states(
+    states: Mapping[int, ZontHeatingCircuitInternalState] | None = None,
+) -> Mapping[int, ZontHeatingCircuitInternalState]:
+    """Return an immutable copy of consumer-circuit internal states."""
+    return MappingProxyType(dict(states or {}))
 
 
 def parse_heating_circuit_configuration(
@@ -175,6 +214,7 @@ def parse_heating_circuit_internal_state(
     return ZontHeatingCircuitInternalState(
         object_id=object_id,
         target_sensor_id=_optional_object_id(fields, 6),
+        status_register=_non_negative_int(fields, 7) if len(fields) > 7 else None,
     )
 
 

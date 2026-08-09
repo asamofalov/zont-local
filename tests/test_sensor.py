@@ -17,11 +17,17 @@ from custom_components.zont_ws.coordinator import (
     ZontDataUpdateCoordinator,
     ZontRuntimeData,
 )
+from custom_components.zont_ws.heating_config import (
+    ZontConsumerControlMode,
+    ZontHeatingCircuitControlData,
+    immutable_heating_controls,
+)
 from custom_components.zont_ws.objects import (
     ZontAnalogInputData,
     ZontDigitalBusAdapterData,
     ZontDigitalBusState,
     ZontDigitalTemperatureSensorData,
+    ZontHeatingCircuitData,
     ZontNtcTemperatureSensorData,
     ZontObject,
     ZontRadioSensorData,
@@ -30,12 +36,14 @@ from custom_components.zont_ws.objects import (
 from custom_components.zont_ws.sensor import (
     ANALOG_INPUT_UNITS,
     CONNECTION_CHANNEL_STATES,
+    CONSUMER_CONTROL_MODE_STATES,
     DIGITAL_BUS_SENSOR_DESCRIPTIONS,
     RADIO_SENSOR_DESCRIPTIONS,
     ZontAnalogInputValueSensor,
     ZontConnectionChannelSensor,
     ZontDigitalBusSensor,
     ZontDigitalTemperatureSensor,
+    ZontHeatingControlModeSensor,
     ZontNtcTemperatureSensor,
     ZontRadioSensor,
     ZontSupplyVoltageSensor,
@@ -58,6 +66,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 def _entry(
     controller: ZontControllerData,
     objects: dict[int, ZontObject] | None = None,
+    controls: dict[int, ZontHeatingCircuitControlData] | None = None,
 ) -> MockConfigEntry:
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -70,6 +79,7 @@ def _entry(
     coordinator.data = ZontData(
         controller=controller,
         objects=immutable_objects(objects),
+        heating_controls=immutable_heating_controls(controls),
     )
     coordinator.async_add_listener.return_value = lambda: None
     entry.runtime_data = ZontRuntimeData(client, coordinator)
@@ -637,3 +647,63 @@ async def test_setup_adds_analog_value_without_waiting_for_current_value(
     listener = entry.runtime_data.coordinator.async_add_listener.call_args.args[0]
     listener()
     assert async_add_entities.call_count == 2
+
+
+def test_heating_control_mode_sensor_uses_resolved_enum() -> None:
+    circuit = ZontHeatingCircuitData(
+        object_id=9825,
+        object_type=16,
+        name="Кабинет",
+        subtype=3,
+    )
+    control = ZontHeatingCircuitControlData(
+        control_mode=ZontConsumerControlMode.AIR_PID,
+        has_weather_compensation=True,
+        target_sensor_id=4110,
+        min_temperature=10,
+        max_temperature=40,
+    )
+    entry = _entry(
+        ZontControllerData(info=None),
+        {9825: circuit},
+        {9825: control},
+    )
+
+    entity = ZontHeatingControlModeSensor(entry, 9825)
+
+    assert entity.available
+    assert entity.native_value == "air_pid"
+    assert entity.options == list(CONSUMER_CONTROL_MODE_STATES)
+    assert entity.device_class is SensorDeviceClass.ENUM
+    assert entity.entity_category is EntityCategory.DIAGNOSTIC
+    assert entity.entity_registry_enabled_default
+    assert entity.unique_id == "ABCDEF123456_9825_control_mode"
+    assert entity.suggested_object_id == "control_mode"
+    assert entity.device_info["identifiers"] == {(DOMAIN, "ABCDEF123456:object:9825")}
+
+
+async def test_setup_adds_control_mode_only_for_consumer_circuit(hass) -> None:
+    consumer = ZontHeatingCircuitData(9825, 16, "Кабинет", subtype=3)
+    entry = _entry(ZontControllerData(info=None), {9825: consumer})
+    entry.add_to_hass(hass)
+    async_add_entities = MagicMock()
+
+    await async_setup_entry(hass, entry, async_add_entities)
+
+    entities = async_add_entities.call_args_list[1].args[0]
+    assert len(entities) == 1
+    assert isinstance(entities[0], ZontHeatingControlModeSensor)
+    assert not entities[0].available
+
+    listener = entry.runtime_data.coordinator.async_add_listener.call_args.args[0]
+    listener()
+    assert async_add_entities.call_count == 2
+
+    dhw = ZontHeatingCircuitData(8362, 16, "ГВС", subtype=1)
+    dhw_entry = _entry(ZontControllerData(info=None), {8362: dhw})
+    dhw_entry.add_to_hass(hass)
+    dhw_add_entities = MagicMock()
+
+    await async_setup_entry(hass, dhw_entry, dhw_add_entities)
+
+    assert dhw_add_entities.call_count == 1

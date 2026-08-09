@@ -34,7 +34,9 @@ from custom_components.zont_ws.coordinator import (
 from custom_components.zont_ws.heating_config import (
     ZontConsumerControlMode,
     ZontHeatingCircuitControlData,
+    ZontHeatingCircuitInternalState,
     immutable_heating_controls,
+    immutable_heating_states,
 )
 from custom_components.zont_ws.objects import (
     ZontAnalogInputData,
@@ -795,7 +797,7 @@ async def test_discovered_radio_sensor_creates_prefixed_entities(
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
-async def test_discovered_dhw_circuit_creates_primary_water_heater_entity(
+async def test_discovered_dhw_circuit_creates_water_heater_and_fault_entities(
     hass: HomeAssistant,
 ) -> None:
     entry = MockConfigEntry(
@@ -822,6 +824,7 @@ async def test_discovered_dhw_circuit_creates_primary_water_heater_entity(
                         subtype=1,
                         current_temperature=29,
                         target_temperature=60,
+                        fault=True,
                     )
                 }
             ),
@@ -839,19 +842,31 @@ async def test_discovered_dhw_circuit_creates_primary_water_heater_entity(
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
+    registry = er.async_get(hass)
     assert (
-        er.async_get(hass).async_get_entity_id(
+        registry.async_get_entity_id(
             "water_heater",
             DOMAIN,
             f"{SERIAL_NUMBER}_8362_water_heater",
         )
         == "water_heater.gvs"
     )
+    assert (
+        registry.async_get_entity_id(
+            "binary_sensor",
+            DOMAIN,
+            f"{SERIAL_NUMBER}_8362_fault",
+        )
+        == "binary_sensor.gvs_fault"
+    )
+    fault_state = hass.states.get("binary_sensor.gvs_fault")
+    assert fault_state is not None
+    assert fault_state.state == "on"
 
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
-async def test_discovered_consumer_circuit_creates_primary_climate_entity(
+async def test_discovered_consumer_circuit_creates_primary_and_diagnostic_entities(
     hass: HomeAssistant,
 ) -> None:
     entry = MockConfigEntry(
@@ -880,6 +895,7 @@ async def test_discovered_consumer_circuit_creates_primary_climate_entity(
                         subtype=3,
                         current_temperature=42.5,
                         target_temperature=41,
+                        fault=True,
                     )
                 }
             ),
@@ -887,10 +903,19 @@ async def test_discovered_consumer_circuit_creates_primary_climate_entity(
                 {
                     20496: ZontHeatingCircuitControlData(
                         control_mode=ZontConsumerControlMode.WATER,
-                        has_weather_compensation=False,
+                        has_weather_compensation=True,
                         target_sensor_id=4104,
                         min_temperature=41,
                         max_temperature=80,
+                    )
+                }
+            ),
+            heating_states=immutable_heating_states(
+                {
+                    20496: ZontHeatingCircuitInternalState(
+                        object_id=20496,
+                        target_sensor_id=4104,
+                        status_register=138,
                     )
                 }
             ),
@@ -908,14 +933,37 @@ async def test_discovered_consumer_circuit_creates_primary_climate_entity(
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
+    registry = er.async_get(hass)
     assert (
-        er.async_get(hass).async_get_entity_id(
+        registry.async_get_entity_id(
             "climate",
             DOMAIN,
             f"{SERIAL_NUMBER}_20496_climate",
         )
         == "climate.radiatory"
     )
+    expected_entities = {
+        "sensor": {"control_mode"},
+        "binary_sensor": {
+            "weather_compensation",
+            "blocked",
+            "sensor_fault",
+            "summer_mode",
+            "fault",
+        },
+    }
+    for platform, suffixes in expected_entities.items():
+        for suffix in suffixes:
+            entity_id = f"{platform}.radiatory_{suffix}"
+            assert (
+                registry.async_get_entity_id(
+                    platform,
+                    DOMAIN,
+                    f"{SERIAL_NUMBER}_20496_{suffix}",
+                )
+                == entity_id
+            )
+            assert hass.states.get(entity_id) is not None
 
     assert await hass.config_entries.async_unload(entry.entry_id)
 

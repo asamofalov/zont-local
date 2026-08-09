@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
+
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
+    BinarySensorEntityDescription,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
@@ -19,7 +23,17 @@ from .entity import (
     ZontEntityMixin,
     ZontObjectCoordinatorEntity,
 )
-from .objects import ZontAnalogInputData, ZontRadioSensorData
+from .heating_config import (
+    CONSUMER_CIRCUIT_SUBTYPE,
+    DHW_CIRCUIT_SUBTYPE,
+    ZontHeatingCircuitControlData,
+    ZontHeatingCircuitInternalState,
+)
+from .objects import (
+    ZontAnalogInputData,
+    ZontHeatingCircuitData,
+    ZontRadioSensorData,
+)
 
 ANALOG_TRIGGER_DEVICE_CLASSES: dict[int, BinarySensorDeviceClass | None] = {
     3: BinarySensorDeviceClass.DOOR,
@@ -42,6 +56,74 @@ RADIO_TRIGGER_DEVICE_CLASSES = {
 }
 
 
+@dataclass(frozen=True, kw_only=True)
+class ZontHeatingCircuitBinarySensorEntityDescription(BinarySensorEntityDescription):
+    """Describe one heating-circuit binary state."""
+
+    value_fn: Callable[
+        [
+            ZontHeatingCircuitData,
+            ZontHeatingCircuitControlData | None,
+            ZontHeatingCircuitInternalState | None,
+        ],
+        bool | None,
+    ]
+
+
+CONSUMER_HEATING_CIRCUIT_BINARY_SENSOR_DESCRIPTIONS = (
+    ZontHeatingCircuitBinarySensorEntityDescription(
+        key="weather_compensation",
+        translation_key="heating_weather_compensation",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda circuit, control, state: (
+            control.has_weather_compensation if control is not None else None
+        ),
+    ),
+    ZontHeatingCircuitBinarySensorEntityDescription(
+        key="blocked",
+        translation_key="heating_blocked",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda circuit, control, state: (
+            state.is_blocked if state is not None else None
+        ),
+    ),
+    ZontHeatingCircuitBinarySensorEntityDescription(
+        key="sensor_fault",
+        translation_key="heating_sensor_fault",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda circuit, control, state: (
+            state.has_sensor_fault if state is not None else None
+        ),
+    ),
+    ZontHeatingCircuitBinarySensorEntityDescription(
+        key="summer_mode",
+        translation_key="heating_summer_mode",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda circuit, control, state: (
+            state.is_summer_mode if state is not None else None
+        ),
+    ),
+)
+
+HEATING_CIRCUIT_FAULT_DESCRIPTION = ZontHeatingCircuitBinarySensorEntityDescription(
+    key="fault",
+    translation_key="heating_fault",
+    device_class=BinarySensorDeviceClass.PROBLEM,
+    entity_category=EntityCategory.DIAGNOSTIC,
+    value_fn=lambda circuit, control, state: circuit.fault,
+)
+
+HEATING_CIRCUIT_BINARY_SENSOR_DESCRIPTIONS_BY_SUBTYPE = {
+    DHW_CIRCUIT_SUBTYPE: (HEATING_CIRCUIT_FAULT_DESCRIPTION,),
+    CONSUMER_CIRCUIT_SUBTYPE: (
+        *CONSUMER_HEATING_CIRCUIT_BINARY_SENSOR_DESCRIPTIONS,
+        HEATING_CIRCUIT_FAULT_DESCRIPTION,
+    ),
+}
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry[ZontRuntimeData],
@@ -59,7 +141,7 @@ async def async_setup_entry(
 
     @callback
     def async_add_object_entities() -> None:
-        """Add trigger entities for newly discovered objects."""
+        """Add binary sensor entities for newly discovered objects."""
         new_entities: list[BinarySensorEntity] = []
         for obj in entry.runtime_data.coordinator.data.objects.values():
             if isinstance(obj, ZontAnalogInputData):
@@ -74,6 +156,26 @@ async def async_setup_entry(
                         obj.subtype,
                     )
                 )
+                continue
+            if isinstance(obj, ZontHeatingCircuitData):
+                descriptions = (
+                    HEATING_CIRCUIT_BINARY_SENSOR_DESCRIPTIONS_BY_SUBTYPE.get(
+                        obj.subtype,
+                        (),
+                    )
+                )
+                for description in descriptions:
+                    identity = (obj.object_id, description.key)
+                    if identity in known_entities:
+                        continue
+                    known_entities.add(identity)
+                    new_entities.append(
+                        ZontHeatingCircuitBinarySensor(
+                            entry,
+                            obj.object_id,
+                            description,
+                        )
+                    )
                 continue
             if (
                 not isinstance(obj, ZontRadioSensorData)
@@ -152,6 +254,42 @@ class ZontCloudConnectedBinarySensor(ZontCoordinatorEntity, BinarySensorEntity):
         """Return whether the controller is connected to the ZONT cloud."""
         status = self.controller_data.server_status
         return status.cloud_connected if status is not None else None
+
+
+class ZontHeatingCircuitBinarySensor(
+    ZontObjectCoordinatorEntity,
+    BinarySensorEntity,
+):
+    """Represent one binary state of a heating circuit."""
+
+    entity_description: ZontHeatingCircuitBinarySensorEntityDescription
+
+    def __init__(
+        self,
+        entry: ConfigEntry[ZontRuntimeData],
+        object_id: int,
+        description: ZontHeatingCircuitBinarySensorEntityDescription,
+    ) -> None:
+        """Initialize a heating-circuit binary sensor."""
+        self.entity_description = description
+        super().__init__(entry, object_id, description.key, description.key)
+
+    @property
+    def available(self) -> bool:
+        """Return whether the source currently provides this binary state."""
+        return super().available and self.is_on is not None
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return the described consumer heating-circuit state."""
+        obj = self.object_data
+        if not isinstance(obj, ZontHeatingCircuitData):
+            return None
+        return self.entity_description.value_fn(
+            obj,
+            self.coordinator.data.heating_controls.get(self._object_id),
+            self.coordinator.data.heating_states.get(self._object_id),
+        )
 
 
 class ZontAnalogInputTriggeredBinarySensor(

@@ -34,9 +34,11 @@ from .heating_config import (
     ZontConsumerControlMode,
     ZontHeatingCircuitConfiguration,
     ZontHeatingCircuitControlData,
+    ZontHeatingCircuitInternalState,
     ZontHeatingConfigParseError,
     ZontTemperatureSensorConfiguration,
     immutable_heating_controls,
+    immutable_heating_states,
     parse_heating_circuit_configuration,
     parse_heating_circuit_internal_state,
     parse_temperature_sensor_configuration,
@@ -77,6 +79,9 @@ class ZontData:
     objects: Mapping[int, ZontObject] = immutable_objects()
     heating_controls: Mapping[int, ZontHeatingCircuitControlData] = (
         immutable_heating_controls()
+    )
+    heating_states: Mapping[int, ZontHeatingCircuitInternalState] = (
+        immutable_heating_states()
     )
 
 
@@ -203,7 +208,10 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
             server_status = await self._async_refresh_server_status()
             supply_voltage = await self._async_refresh_supply_voltage()
             objects = await self._async_refresh_objects(previous_data.objects)
-            heating_controls = await self._async_refresh_heating_controls(objects)
+            (
+                heating_controls,
+                heating_states,
+            ) = await self._async_refresh_heating_metadata(objects)
         except ZontConnectionError as err:
             raise UpdateFailed("Unable to update ZONT controller data") from err
         except ZontRequestTimeoutError as err:
@@ -220,6 +228,7 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
             ),
             objects=objects,
             heating_controls=heating_controls,
+            heating_states=heating_states,
         )
 
     async def _async_refresh_objects(
@@ -334,6 +343,7 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
             controller=self.data.controller,
             objects=immutable_objects(objects),
             heating_controls=self.data.heating_controls,
+            heating_states=self.data.heating_states,
         )
         if updated == self.data:
             return True
@@ -345,11 +355,14 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
         self.async_update_listeners()
         return True
 
-    async def _async_refresh_heating_controls(
+    async def _async_refresh_heating_metadata(
         self,
         objects: Mapping[int, ZontObject],
-    ) -> Mapping[int, ZontHeatingCircuitControlData]:
-        """Refresh internal metadata used by consumer climate entities."""
+    ) -> tuple[
+        Mapping[int, ZontHeatingCircuitControlData],
+        Mapping[int, ZontHeatingCircuitInternalState],
+    ]:
+        """Refresh control metadata and internal consumer-circuit states."""
         circuit_ids = {
             obj.object_id
             for obj in objects.values()
@@ -357,11 +370,12 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
         }
         if not circuit_ids:
             self._heating_configuration_refresh_needed = False
-            return immutable_heating_controls()
+            return immutable_heating_controls(), immutable_heating_states()
 
         force_configuration = self._heating_configuration_refresh_needed
         refresh_incomplete = False
         controls: dict[int, ZontHeatingCircuitControlData] = {}
+        states: dict[int, ZontHeatingCircuitInternalState] = {}
         for object_id in sorted(circuit_ids):
             configuration = self._heating_configurations.get(object_id)
             if force_configuration or configuration is None:
@@ -407,6 +421,7 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
             else:
                 target_sensor_id = internal_state.target_sensor_id
                 self._heating_target_sensor_ids[object_id] = target_sensor_id
+                states[object_id] = internal_state
                 self._heating_metadata_errors.discard(("state", object_id))
 
             if configuration is None:
@@ -460,7 +475,7 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
             )
 
         self._heating_configuration_refresh_needed = refresh_incomplete
-        return immutable_heating_controls(controls)
+        return immutable_heating_controls(controls), immutable_heating_states(states)
 
     @staticmethod
     def _control_needs_sensor_configuration(

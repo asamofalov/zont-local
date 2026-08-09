@@ -30,12 +30,14 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .coordinator import ZontRuntimeData
 from .entity import ZontCoordinatorEntity, ZontObjectCoordinatorEntity
+from .heating_config import CONSUMER_CIRCUIT_SUBTYPE, ZontConsumerControlMode
 from .objects import (
     ANALOG_BINARY_FIRST_SUBTYPES,
     ZontAnalogInputData,
     ZontDigitalBusAdapterData,
     ZontDigitalBusState,
     ZontDigitalTemperatureSensorData,
+    ZontHeatingCircuitData,
     ZontNtcTemperatureSensorData,
     ZontRadioSensorData,
     ZontTemperatureSensorData,
@@ -53,6 +55,7 @@ CONNECTION_CHANNEL_STATES = (
 )
 
 DIGITAL_BUS_STATES = tuple(state.value for state in ZontDigitalBusState)
+CONSUMER_CONTROL_MODE_STATES = tuple(mode.value for mode in ZontConsumerControlMode)
 
 ANALOG_INPUT_UNITS: dict[int, str | None] = {
     0: UnitOfElectricPotential.VOLT,
@@ -260,6 +263,17 @@ async def async_setup_entry(
                         )
                     )
                 continue
+            if (
+                isinstance(obj, ZontHeatingCircuitData)
+                and obj.subtype == CONSUMER_CIRCUIT_SUBTYPE
+            ):
+                identity = (obj.object_id, "control_mode")
+                if identity not in known_entities:
+                    known_entities.add(identity)
+                    new_entities.append(
+                        ZontHeatingControlModeSensor(entry, obj.object_id)
+                    )
+                continue
             if isinstance(obj, ZontDigitalBusAdapterData) and obj.available:
                 for description in DIGITAL_BUS_SENSOR_DESCRIPTIONS:
                     identity = (obj.object_id, description.key)
@@ -325,6 +339,34 @@ class ZontSupplyVoltageSensor(ZontCoordinatorEntity, SensorEntity):
     def native_value(self) -> float | None:
         """Return the current supply voltage in volts."""
         return self.controller_data.supply_voltage
+
+
+class ZontHeatingControlModeSensor(ZontObjectCoordinatorEntity, SensorEntity):
+    """Represent the configured control mode of a consumer heating circuit."""
+
+    _attr_translation_key = "heating_control_mode"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_options = list(CONSUMER_CONTROL_MODE_STATES)
+
+    def __init__(
+        self,
+        entry: ConfigEntry[ZontRuntimeData],
+        object_id: int,
+    ) -> None:
+        """Initialize a consumer-circuit control mode sensor."""
+        super().__init__(entry, object_id, "control_mode", "control_mode")
+
+    @property
+    def available(self) -> bool:
+        """Return whether the circuit control mode has been resolved."""
+        return super().available and self.native_value is not None
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the configured base control mode."""
+        control = self.coordinator.data.heating_controls.get(self._object_id)
+        return control.control_mode.value if control and control.control_mode else None
 
 
 class ZontDigitalBusSensor(ZontObjectCoordinatorEntity, SensorEntity):
