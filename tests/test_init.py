@@ -31,6 +31,11 @@ from custom_components.zont_ws.coordinator import (
     ZontDataUpdateCoordinator,
     ZontRuntimeData,
 )
+from custom_components.zont_ws.heating_config import (
+    ZontConsumerControlMode,
+    ZontHeatingCircuitControlData,
+    immutable_heating_controls,
+)
 from custom_components.zont_ws.objects import (
     ZontAnalogInputData,
     ZontDigitalBusAdapterData,
@@ -515,7 +520,7 @@ async def test_supported_radio_sensor_is_registered_as_typed_child_device(
     assert sensor.via_device_id == controller.id
 
 
-async def test_dhw_circuit_is_registered_as_child_device(
+async def test_supported_heating_circuits_are_registered_as_child_devices(
     hass: HomeAssistant,
 ) -> None:
     entry = MockConfigEntry(
@@ -565,12 +570,13 @@ async def test_dhw_circuit_is_registered_as_child_device(
     assert circuit.manufacturer is None
     assert circuit.model == "Контур ГВС"
     assert circuit.via_device_id == controller.id
-    assert (
-        registry.async_get_device(
-            identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:20496")}
-        )
-        is None
+    consumer = registry.async_get_device(
+        identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:20496")}
     )
+    assert consumer is not None
+    assert consumer.name == "Радиаторы"
+    assert consumer.model == "Контур потребителя"
+    assert consumer.via_device_id == controller.id
 
 
 async def test_unsupported_radio_subtype_is_not_registered(
@@ -840,6 +846,75 @@ async def test_discovered_dhw_circuit_creates_primary_water_heater_entity(
             f"{SERIAL_NUMBER}_8362_water_heater",
         )
         == "water_heater.gvs"
+    )
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_discovered_consumer_circuit_creates_primary_climate_entity(
+    hass: HomeAssistant,
+) -> None:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=CONFIG_ENTRY_VERSION,
+        unique_id=SERIAL_NUMBER,
+        data={
+            **ENTRY_DATA,
+            CONF_CONTROLLER: CONTROLLER_INFO.as_dict(),
+            CONF_AUTO_TITLE: "ZONT H1V02 PRO (192.0.2.10)",
+        },
+    )
+    entry.add_to_hass(hass)
+
+    def start_with_consumer_circuit(
+        coordinator: ZontDataUpdateCoordinator,
+    ) -> None:
+        coordinator.data = ZontData(
+            controller=ZontControllerData(info=CONTROLLER_INFO),
+            objects=immutable_objects(
+                {
+                    20496: ZontHeatingCircuitData(
+                        object_id=20496,
+                        object_type=16,
+                        name="Радиаторы",
+                        subtype=3,
+                        current_temperature=42.5,
+                        target_temperature=41,
+                    )
+                }
+            ),
+            heating_controls=immutable_heating_controls(
+                {
+                    20496: ZontHeatingCircuitControlData(
+                        control_mode=ZontConsumerControlMode.WATER,
+                        has_weather_compensation=False,
+                        target_sensor_id=4104,
+                        min_temperature=41,
+                        max_temperature=80,
+                    )
+                }
+            ),
+        )
+        coordinator.async_update_listeners()
+
+    with (
+        patch.object(ZontWsClient, "async_start", new=AsyncMock()),
+        patch.object(
+            ZontDataUpdateCoordinator,
+            "async_start",
+            new=start_with_consumer_circuit,
+        ),
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert (
+        er.async_get(hass).async_get_entity_id(
+            "climate",
+            DOMAIN,
+            f"{SERIAL_NUMBER}_20496_climate",
+        )
+        == "climate.radiatory"
     )
 
     assert await hass.config_entries.async_unload(entry.entry_id)

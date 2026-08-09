@@ -153,6 +153,9 @@
     "temperature_out_of_range": {
       "message": "Укажите температуру от {min_temperature} до {max_temperature} °C"
     },
+    "temperature_control_unavailable": {
+      "message": "Управление температурой этого контура недоступно: контроллер не вернул поддерживаемую конфигурацию"
+    },
     "protocol_error": {
       "message": "Контроллер ZONT вернул некорректный ответ"
     }

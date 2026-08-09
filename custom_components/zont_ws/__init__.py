@@ -173,7 +173,7 @@ def _async_sync_object_devices(
         elif isinstance(obj, ZontNtcTemperatureSensorData):
             manufacturer = None
             model = "NTC-термодатчик"
-        elif isinstance(obj, ZontHeatingCircuitData) and obj.subtype == 1:
+        elif isinstance(obj, ZontHeatingCircuitData) and obj.subtype in (1, 3):
             manufacturer = None
             model = heating_circuit_model(obj.subtype)
         elif (

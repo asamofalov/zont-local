@@ -186,6 +186,68 @@ def test_unavailable_heating_circuit_preserves_last_state() -> None:
     assert circuit.target_temperature == 60
 
 
+def test_explicit_off_push_clears_absent_target_temperature() -> None:
+    previous = ZontHeatingCircuitData(
+        object_id=20496,
+        object_type=16,
+        name="Радиаторы",
+        subtype=3,
+        current_temperature=42,
+        target_temperature=45,
+        mode=ZontHeatingCircuitMode.HEAT,
+    )
+
+    circuit = parse_heating_circuit(
+        {"id": 20496, "m": "off"},
+        previous,
+        partial=True,
+    )
+
+    assert circuit.mode is ZontHeatingCircuitMode.OFF
+    assert circuit.target_temperature is None
+
+
+def test_partial_push_without_mode_preserves_target_temperature() -> None:
+    previous = ZontHeatingCircuitData(
+        object_id=20496,
+        object_type=16,
+        name="Радиаторы",
+        subtype=3,
+        current_temperature=42,
+        target_temperature=45,
+        mode=ZontHeatingCircuitMode.HEAT,
+    )
+
+    circuit = parse_heating_circuit(
+        {"id": 20496, "c": 42.5},
+        previous,
+        partial=True,
+    )
+
+    assert circuit.mode is ZontHeatingCircuitMode.HEAT
+    assert circuit.target_temperature == 45
+
+
+def test_explicit_off_push_keeps_explicit_target_temperature() -> None:
+    previous = ZontHeatingCircuitData(
+        object_id=20496,
+        object_type=16,
+        name="Радиаторы",
+        subtype=3,
+        target_temperature=45,
+        mode=ZontHeatingCircuitMode.HEAT,
+    )
+
+    circuit = parse_heating_circuit(
+        {"id": 20496, "m": "off", "s": 20},
+        previous,
+        partial=True,
+    )
+
+    assert circuit.mode is ZontHeatingCircuitMode.OFF
+    assert circuit.target_temperature == 20
+
+
 def test_all_documented_analog_input_subtypes_have_models() -> None:
     assert ANALOG_INPUT_SUBTYPE_NAMES == {
         0: "Аналоговый вход без пресета",

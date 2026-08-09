@@ -30,8 +30,21 @@ from .controller import (
     parse_server_status_response,
     parse_supply_voltage_response,
 )
+from .heating_config import (
+    ZontConsumerControlMode,
+    ZontHeatingCircuitConfiguration,
+    ZontHeatingCircuitControlData,
+    ZontHeatingConfigParseError,
+    ZontTemperatureSensorConfiguration,
+    immutable_heating_controls,
+    parse_heating_circuit_configuration,
+    parse_heating_circuit_internal_state,
+    parse_temperature_sensor_configuration,
+    resolve_heating_circuit_control,
+)
 from .objects import (
     SUPPORTED_OBJECT_TYPES,
+    ZontHeatingCircuitData,
     ZontObject,
     ZontObjectParseError,
     immutable_objects,
@@ -44,6 +57,7 @@ _LOGGER = logging.getLogger(__name__)
 _UPDATE_INTERVAL = timedelta(minutes=1)
 _SOURCE_SERVER_STATUS = "server_status"
 _SOURCE_SUPPLY_VOLTAGE = "supply_voltage"
+_CONFIG_RELOAD_MESSAGE = "CFG_RELOAD_REQ"
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +75,9 @@ class ZontData:
 
     controller: ZontControllerData
     objects: Mapping[int, ZontObject] = immutable_objects()
+    heating_controls: Mapping[int, ZontHeatingCircuitControlData] = (
+        immutable_heating_controls()
+    )
 
 
 @dataclass(slots=True)
@@ -102,6 +119,13 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
         self._unsubscribe_messages: Callable[[], None] | None = None
         self._initial_refresh_task: asyncio.Task[None] | None = None
         self._object_error_types: set[int] = set()
+        self._heating_configurations: dict[int, ZontHeatingCircuitConfiguration] = {}
+        self._heating_target_sensor_ids: dict[int, int | None] = {}
+        self._temperature_sensor_configurations: dict[
+            int, ZontTemperatureSensorConfiguration
+        ] = {}
+        self._heating_configuration_refresh_needed = True
+        self._heating_metadata_errors: set[tuple[str, int]] = set()
         self._shutdown_complete = False
 
     @property
@@ -160,6 +184,7 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
 
         if self._info_refresh_enabled:
             self._info_refresh_needed = True
+        self._heating_configuration_refresh_needed = True
         self._entry.async_create_background_task(
             self.hass,
             self.async_refresh(),
@@ -178,6 +203,7 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
             server_status = await self._async_refresh_server_status()
             supply_voltage = await self._async_refresh_supply_voltage()
             objects = await self._async_refresh_objects(previous_data.objects)
+            heating_controls = await self._async_refresh_heating_controls(objects)
         except ZontConnectionError as err:
             raise UpdateFailed("Unable to update ZONT controller data") from err
         except ZontRequestTimeoutError as err:
@@ -193,6 +219,7 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
                 supply_voltage=supply_voltage,
             ),
             objects=objects,
+            heating_controls=heating_controls,
         )
 
     async def _async_refresh_objects(
@@ -256,6 +283,14 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
     @callback
     def _async_message_received(self, payload: object) -> None:
         """Merge an unsolicited supported object state into the snapshot."""
+        if payload == _CONFIG_RELOAD_MESSAGE:
+            self._heating_configuration_refresh_needed = True
+            self._entry.async_create_background_task(
+                self.hass,
+                self.async_refresh(),
+                f"{DOMAIN} heating configuration refresh",
+            )
+            return
         if not isinstance(payload, Mapping):
             return
         self._async_apply_object_payload(payload, partial=True)
@@ -298,6 +333,7 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
         updated = ZontData(
             controller=self.data.controller,
             objects=immutable_objects(objects),
+            heating_controls=self.data.heating_controls,
         )
         if updated == self.data:
             return True
@@ -308,6 +344,158 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
         self.data = updated
         self.async_update_listeners()
         return True
+
+    async def _async_refresh_heating_controls(
+        self,
+        objects: Mapping[int, ZontObject],
+    ) -> Mapping[int, ZontHeatingCircuitControlData]:
+        """Refresh internal metadata used by consumer climate entities."""
+        circuit_ids = {
+            obj.object_id
+            for obj in objects.values()
+            if isinstance(obj, ZontHeatingCircuitData) and obj.subtype == 3
+        }
+        if not circuit_ids:
+            self._heating_configuration_refresh_needed = False
+            return immutable_heating_controls()
+
+        force_configuration = self._heating_configuration_refresh_needed
+        refresh_incomplete = False
+        controls: dict[int, ZontHeatingCircuitControlData] = {}
+        for object_id in sorted(circuit_ids):
+            configuration = self._heating_configurations.get(object_id)
+            if force_configuration or configuration is None:
+                try:
+                    response = await self._client.async_send_system_command(
+                        f"#Z{object_id}?"
+                    )
+                    refreshed_configuration = parse_heating_circuit_configuration(
+                        response,
+                        object_id,
+                    )
+                    if refreshed_configuration.subtype != 3:
+                        raise ZontHeatingConfigParseError(
+                            "Heating-circuit subtype does not match the state"
+                        )
+                except asyncio.CancelledError:
+                    raise
+                except (ZontConnectionError, ZontRequestTimeoutError):
+                    raise
+                except (ZontProtocolError, ZontHeatingConfigParseError):
+                    refresh_incomplete = True
+                    self._log_heating_metadata_error("configuration", object_id)
+                else:
+                    configuration = refreshed_configuration
+                    self._heating_configurations[object_id] = configuration
+                    self._heating_metadata_errors.discard(("configuration", object_id))
+
+            target_sensor_id = self._heating_target_sensor_ids.get(object_id)
+            try:
+                response = await self._client.async_send_system_command(
+                    f"#Y{object_id}?"
+                )
+                internal_state = parse_heating_circuit_internal_state(
+                    response,
+                    object_id,
+                )
+            except asyncio.CancelledError:
+                raise
+            except (ZontConnectionError, ZontRequestTimeoutError):
+                raise
+            except (ZontProtocolError, ZontHeatingConfigParseError):
+                self._log_heating_metadata_error("state", object_id)
+            else:
+                target_sensor_id = internal_state.target_sensor_id
+                self._heating_target_sensor_ids[object_id] = target_sensor_id
+                self._heating_metadata_errors.discard(("state", object_id))
+
+            if configuration is None:
+                continue
+
+            control = resolve_heating_circuit_control(
+                configuration,
+                target_sensor_id,
+            )
+            sensor_configuration = None
+            if self._control_needs_sensor_configuration(configuration, control):
+                sensor_configuration = self._temperature_sensor_configurations.get(
+                    target_sensor_id
+                )
+                if target_sensor_id is not None and (
+                    force_configuration or sensor_configuration is None
+                ):
+                    try:
+                        response = await self._client.async_send_system_command(
+                            f"#Z{target_sensor_id}?"
+                        )
+                        refreshed_sensor_configuration = (
+                            parse_temperature_sensor_configuration(
+                                response,
+                                target_sensor_id,
+                            )
+                        )
+                    except asyncio.CancelledError:
+                        raise
+                    except (ZontConnectionError, ZontRequestTimeoutError):
+                        raise
+                    except (ZontProtocolError, ZontHeatingConfigParseError):
+                        refresh_incomplete = True
+                        self._log_heating_metadata_error(
+                            "temperature sensor",
+                            target_sensor_id,
+                        )
+                    else:
+                        sensor_configuration = refreshed_sensor_configuration
+                        self._temperature_sensor_configurations[target_sensor_id] = (
+                            sensor_configuration
+                        )
+                        self._heating_metadata_errors.discard(
+                            ("temperature sensor", target_sensor_id)
+                        )
+
+            controls[object_id] = resolve_heating_circuit_control(
+                configuration,
+                target_sensor_id,
+                sensor_configuration,
+            )
+
+        self._heating_configuration_refresh_needed = refresh_incomplete
+        return immutable_heating_controls(controls)
+
+    @staticmethod
+    def _control_needs_sensor_configuration(
+        configuration: ZontHeatingCircuitConfiguration,
+        control: ZontHeatingCircuitControlData,
+    ) -> bool:
+        """Return whether sensor thresholds can refine a supported range."""
+        if not control.can_set_temperature or control.target_sensor_id is None:
+            return False
+        if control.control_mode in (
+            ZontConsumerControlMode.AIR,
+            ZontConsumerControlMode.AIR_PID,
+        ):
+            return True
+        return (
+            control.control_mode is ZontConsumerControlMode.WATER
+            and not configuration.uses_weather_compensated_setpoint
+            and (
+                configuration.water_min_temperature is None
+                or configuration.water_max_temperature is None
+            )
+        )
+
+    def _log_heating_metadata_error(self, source: str, object_id: int) -> None:
+        """Log one warning for a consecutive internal metadata failure."""
+        key = (source, object_id)
+        if key in self._heating_metadata_errors:
+            return
+        self._heating_metadata_errors.add(key)
+        _LOGGER.warning(
+            "Unable to read ZONT heating %s for object %s; "
+            "the integration will retry during the next update",
+            source,
+            object_id,
+        )
 
     def _log_object_error(self, object_type: int) -> None:
         """Log one warning per type for a consecutive protocol error series."""

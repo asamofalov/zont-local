@@ -1,4 +1,4 @@
-"""Water heater entities for ZONT heating circuits."""
+"""Climate entities for ZONT consumer heating circuits."""
 
 from __future__ import annotations
 
@@ -6,9 +6,10 @@ import asyncio
 from math import isfinite
 from typing import Any
 
-from homeassistant.components.water_heater import (
-    WaterHeaterEntity,
-    WaterHeaterEntityFeature,
+from homeassistant.components.climate import (
+    ClimateEntity,
+    ClimateEntityFeature,
+    HVACMode,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
@@ -28,12 +29,15 @@ from .heating import (
     ZontCommandRejectedError,
     async_set_heating_circuit_temperature_and_refresh,
 )
-from .objects import ZontHeatingCircuitData
+from .heating_config import (
+    AIR_MAX_TEMPERATURE,
+    AIR_MIN_TEMPERATURE,
+    CONSUMER_CIRCUIT_SUBTYPE,
+    ZontHeatingCircuitControlData,
+)
+from .objects import ZontHeatingCircuitData, ZontHeatingCircuitMode
 
-MIN_TARGET_TEMPERATURE = 5.0
-MAX_TARGET_TEMPERATURE = 75.0
 TARGET_TEMPERATURE_STEP = 1.0
-DHW_CIRCUIT_SUBTYPE = 1
 
 
 async def async_setup_entry(
@@ -41,22 +45,22 @@ async def async_setup_entry(
     entry: ConfigEntry[ZontRuntimeData],
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Set up ZONT hot water circuits."""
+    """Set up ZONT consumer heating circuits."""
     known_entities: set[int] = set()
 
     @callback
     def async_add_object_entities() -> None:
-        """Add entities for newly discovered hot water circuits."""
-        new_entities: list[WaterHeaterEntity] = []
+        """Add climate entities for newly discovered consumer circuits."""
+        new_entities: list[ClimateEntity] = []
         for obj in entry.runtime_data.coordinator.data.objects.values():
             if (
                 not isinstance(obj, ZontHeatingCircuitData)
-                or obj.subtype != DHW_CIRCUIT_SUBTYPE
+                or obj.subtype != CONSUMER_CIRCUIT_SUBTYPE
                 or obj.object_id in known_entities
             ):
                 continue
             known_entities.add(obj.object_id)
-            new_entities.append(ZontDhwWaterHeater(entry, obj.object_id))
+            new_entities.append(ZontConsumerClimate(entry, obj.object_id))
         if new_entities:
             async_add_entities(new_entities)
 
@@ -66,68 +70,118 @@ async def async_setup_entry(
     async_add_object_entities()
 
 
-class ZontDhwWaterHeater(ZontObjectCoordinatorEntity, WaterHeaterEntity):
-    """Represent one ZONT domestic hot water circuit."""
+class ZontConsumerClimate(ZontObjectCoordinatorEntity, ClimateEntity):
+    """Represent one ZONT consumer heating circuit."""
 
     _attr_name = None
-    _attr_supported_features = WaterHeaterEntityFeature.TARGET_TEMPERATURE
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
-    _attr_min_temp = MIN_TARGET_TEMPERATURE
-    _attr_max_temp = MAX_TARGET_TEMPERATURE
     _attr_target_temperature_step = TARGET_TEMPERATURE_STEP
+    _attr_hvac_modes: list[HVACMode] = []
 
     def __init__(
         self,
         entry: ConfigEntry[ZontRuntimeData],
         object_id: int,
     ) -> None:
-        """Initialize a ZONT hot water entity."""
+        """Initialize a ZONT consumer climate entity."""
         self._client = entry.runtime_data.client
-        super().__init__(entry, object_id, "water_heater", None)
+        super().__init__(entry, object_id, "climate", None)
 
     @property
     def _circuit(self) -> ZontHeatingCircuitData | None:
-        """Return the current hot water circuit snapshot."""
+        """Return the current consumer-circuit snapshot."""
         obj = self.object_data
         return (
             obj
             if isinstance(obj, ZontHeatingCircuitData)
-            and obj.subtype == DHW_CIRCUIT_SUBTYPE
+            and obj.subtype == CONSUMER_CIRCUIT_SUBTYPE
             else None
         )
 
     @property
+    def _control(self) -> ZontHeatingCircuitControlData | None:
+        """Return the latest resolved control metadata."""
+        return self.coordinator.data.heating_controls.get(self._object_id)
+
+    @property
     def available(self) -> bool:
-        """Return whether the hot water circuit is available."""
+        """Return whether the consumer circuit is available."""
         return super().available and self._circuit is not None
 
     @property
+    def supported_features(self) -> ClimateEntityFeature:
+        """Expose target control only after a safe range is known."""
+        control = self._control
+        if control is not None and control.can_set_temperature:
+            return ClimateEntityFeature.TARGET_TEMPERATURE
+        return ClimateEntityFeature(0)
+
+    @property
     def current_temperature(self) -> float | None:
-        """Return the current hot water temperature."""
+        """Return the current circuit temperature."""
         circuit = self._circuit
         return circuit.current_temperature if circuit is not None else None
 
     @property
     def target_temperature(self) -> float | None:
-        """Return the target hot water temperature."""
+        """Return the target circuit temperature."""
         circuit = self._circuit
         return circuit.target_temperature if circuit is not None else None
 
+    @property
+    def min_temp(self) -> float:
+        """Return the resolved minimum setpoint."""
+        control = self._control
+        return (
+            control.min_temperature
+            if control is not None and control.min_temperature is not None
+            else AIR_MIN_TEMPERATURE
+        )
+
+    @property
+    def max_temp(self) -> float:
+        """Return the resolved maximum setpoint."""
+        control = self._control
+        return (
+            control.max_temperature
+            if control is not None and control.max_temperature is not None
+            else AIR_MAX_TEMPERATURE
+        )
+
+    @property
+    def hvac_mode(self) -> HVACMode | None:
+        """Return the observed controller mode without offering mode control."""
+        circuit = self._circuit
+        if circuit is None or circuit.mode is None:
+            return None
+        return {
+            ZontHeatingCircuitMode.HEAT: HVACMode.HEAT,
+            ZontHeatingCircuitMode.COOL: HVACMode.COOL,
+            ZontHeatingCircuitMode.OFF: HVACMode.OFF,
+        }[circuit.mode]
+
     async def async_set_temperature(self, **kwargs: Any) -> None:
-        """Set the hot water target temperature."""
+        """Set the consumer-circuit target temperature."""
+        control = self._control
+        if control is None or not control.can_set_temperature:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="temperature_control_unavailable",
+            )
+
         temperature = kwargs.get(ATTR_TEMPERATURE)
         if (
             not isinstance(temperature, int | float)
             or isinstance(temperature, bool)
             or not isfinite(temperature)
-            or not MIN_TARGET_TEMPERATURE <= temperature <= MAX_TARGET_TEMPERATURE
+            or not self.min_temp <= temperature <= self.max_temp
         ):
             raise ServiceValidationError(
                 translation_domain=DOMAIN,
                 translation_key="temperature_out_of_range",
                 translation_placeholders={
-                    "min_temperature": str(MIN_TARGET_TEMPERATURE),
-                    "max_temperature": str(MAX_TARGET_TEMPERATURE),
+                    "min_temperature": str(self.min_temp),
+                    "max_temperature": str(self.max_temp),
                 },
             )
 

@@ -16,6 +16,7 @@ EVENT_MESSAGE = f"{DOMAIN}_event"
 PLATFORMS: tuple[Platform, ...] = (
     Platform.BINARY_SENSOR,
     Platform.BUTTON,
+    Platform.CLIMATE,
     Platform.SENSOR,
     Platform.WATER_HEATER,
 )

@@ -503,6 +503,13 @@ def parse_heating_circuit(
         previous.mode if previous is not None else None,
         partial,
     )
+    if (
+        partial
+        and "m" in payload
+        and "s" not in payload
+        and mode is ZontHeatingCircuitMode.OFF
+    ):
+        target_temperature = None
     mode_id = _optional_non_negative_int(
         payload,
         "m_id",
