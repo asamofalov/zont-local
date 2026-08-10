@@ -19,6 +19,7 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
+    BooleanSelector,
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
@@ -38,10 +39,13 @@ from .client import (
     async_open_temporary_request_session,
 )
 from .const import (
+    CONF_AUTO_IMPORT_NEW_OBJECTS,
     CONF_AUTO_TITLE,
     CONF_CONTROLLER,
     CONF_DHW_ON_TEMPERATURE,
+    CONF_EXCLUDED_OBJECT_IDS,
     CONF_HEATING_OFF_MODE_ID,
+    CONF_IMPORTED_OBJECT_IDS,
     CONFIG_ENTRY_VERSION,
     DEFAULT_SCAN_INTERVAL,
     DHW_DEFAULT_ON_TEMPERATURE,
@@ -68,15 +72,27 @@ from .heating_modes import (
     eligible_off_modes,
     relevant_heating_circuit_ids,
 )
+from .object_discovery import (
+    ZontObjectDiscoveryError,
+    async_discover_importable_objects_from_requests,
+)
+from .object_import import (
+    ZontImportableObject,
+    importable_object_descriptors,
+    object_import_configuration,
+)
+from .objects import ZontObject
 
 _LOGGER = logging.getLogger(__name__)
 
 ERROR_CANNOT_CONNECT = "cannot_connect"
+ERROR_CANNOT_READ_DEVICES = "cannot_read_devices"
 ERROR_CANNOT_IDENTIFY = "cannot_identify"
 ERROR_CANNOT_READ_MODES = "cannot_read_modes"
 ERROR_DIFFERENT_CONTROLLER = "different_controller"
 ERROR_INVALID_AUTH = "invalid_auth"
 ERROR_INVALID_DHW_ON_TEMPERATURE = "invalid_dhw_on_temperature"
+ERROR_INVALID_DEVICE_SELECTION = "invalid_device_selection"
 ERROR_INVALID_HOST = "invalid_host"
 ERROR_INVALID_OFF_MODE = "invalid_off_mode"
 ERROR_INVALID_SCAN_INTERVAL = "invalid_scan_interval"
@@ -92,8 +108,10 @@ class ZontWsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         """Initialize pending multi-step configuration data."""
         self._pending_data: dict[str, Any] | None = None
+        self._pending_options: dict[str, Any] | None = None
         self._pending_title: str | None = None
         self._off_modes: tuple[ZontHeatingModeConfiguration, ...] = ()
+        self._objects: dict[int, ZontObject] = {}
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -101,9 +119,13 @@ class ZontWsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Handle the initial configuration step."""
         errors: dict[str, str] = {}
         if user_input is not None:
-            normalized, info, off_modes, error = await self._async_validate_user(
-                user_input
-            )
+            (
+                normalized,
+                info,
+                off_modes,
+                objects,
+                error,
+            ) = await self._async_validate_user(user_input)
             if error is None:
                 assert info is not None
                 await self.async_set_unique_id(info.serial_number)
@@ -119,6 +141,7 @@ class ZontWsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         CONF_AUTO_TITLE: title,
                     }
                     self._off_modes = off_modes
+                    self._objects = dict(objects)
                     return await self.async_step_heating_mode()
             else:
                 errors["base"] = error
@@ -151,19 +174,57 @@ class ZontWsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 elif mode_id not in {mode.object_id for mode in self._off_modes}:
                     errors["base"] = ERROR_INVALID_OFF_MODE
                 else:
-                    return self.async_create_entry(
-                        title=self._pending_title,
-                        data=self._pending_data,
-                        options={
-                            CONF_HEATING_OFF_MODE_ID: mode_id,
-                            CONF_DHW_ON_TEMPERATURE: temperature,
-                            CONF_SCAN_INTERVAL: scan_interval,
-                        },
-                    )
+                    self._pending_options = {
+                        CONF_HEATING_OFF_MODE_ID: mode_id,
+                        CONF_DHW_ON_TEMPERATURE: temperature,
+                        CONF_SCAN_INTERVAL: scan_interval,
+                    }
+                    return await self.async_step_devices()
 
         return self.async_show_form(
             step_id="heating_mode",
             data_schema=_heating_mode_schema(self._off_modes),
+            errors=errors,
+        )
+
+    async def async_step_devices(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Select which discovered ZONT objects are exposed in Home Assistant."""
+        if (
+            self._pending_data is None
+            or self._pending_options is None
+            or self._pending_title is None
+        ):
+            return self.async_abort(reason=ERROR_UNKNOWN)
+
+        descriptors = importable_object_descriptors(self._objects)
+        valid_ids = frozenset(descriptor.object_id for descriptor in descriptors)
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            selected_ids = _validate_selected_object_ids(user_input, valid_ids)
+            auto_import = user_input.get(CONF_AUTO_IMPORT_NEW_OBJECTS)
+            if selected_ids is None or type(auto_import) is not bool:
+                errors["base"] = ERROR_INVALID_DEVICE_SELECTION
+            else:
+                return self.async_create_entry(
+                    title=self._pending_title,
+                    data=self._pending_data,
+                    options={
+                        **self._pending_options,
+                        CONF_IMPORTED_OBJECT_IDS: sorted(selected_ids),
+                        CONF_EXCLUDED_OBJECT_IDS: sorted(valid_ids - selected_ids),
+                        CONF_AUTO_IMPORT_NEW_OBJECTS: auto_import,
+                    },
+                )
+
+        return self.async_show_form(
+            step_id="devices",
+            data_schema=_devices_schema(
+                descriptors,
+                valid_ids,
+                auto_import_new=True,
+            ),
             errors=errors,
         )
 
@@ -296,34 +357,41 @@ class ZontWsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         dict[str, str],
         ZontControllerInfo | None,
         tuple[ZontHeatingModeConfiguration, ...],
+        dict[int, ZontObject],
         str | None,
     ]:
         """Validate initial setup and discover modes on one connection."""
         normalized, normalization_error = _normalize_connection_data(user_input)
         if normalization_error is not None:
-            return {}, None, (), normalization_error
+            return {}, None, (), {}, normalization_error
 
         try:
-            info, discovery = await _async_identify_and_discover_heating_modes(
+            info, discovery, objects = await _async_identify_and_discover_configuration(
                 self.hass, normalized
             )
         except ZontAuthenticationError:
-            return {}, None, (), ERROR_INVALID_AUTH
+            return {}, None, (), {}, ERROR_INVALID_AUTH
         except ZontIdentificationError:
-            return {}, None, (), ERROR_CANNOT_IDENTIFY
+            return {}, None, (), {}, ERROR_CANNOT_IDENTIFY
         except ZontConnectionError:
-            return {}, None, (), ERROR_CANNOT_CONNECT
+            return {}, None, (), {}, ERROR_CANNOT_CONNECT
+        except ZontObjectDiscoveryError:
+            _LOGGER.debug(
+                "Unable to discover ZONT objects during initial setup",
+                exc_info=True,
+            )
+            return {}, None, (), {}, ERROR_CANNOT_READ_DEVICES
         except ZontProtocolError:
             _LOGGER.debug(
                 "Unable to discover ZONT heating modes during initial setup",
                 exc_info=True,
             )
-            return {}, None, (), ERROR_CANNOT_READ_MODES
+            return {}, None, (), {}, ERROR_CANNOT_READ_MODES
         except Exception:
             _LOGGER.exception("Unexpected error while configuring ZONT")
-            return {}, None, (), ERROR_UNKNOWN
+            return {}, None, (), {}, ERROR_UNKNOWN
 
-        return normalized, info, discovery.eligible_off_modes, None
+        return normalized, info, discovery.eligible_off_modes, dict(objects), None
 
     @staticmethod
     @callback
@@ -340,11 +408,23 @@ class ZontWsOptionsFlow(config_entries.OptionsFlowWithReload):
         self._off_modes: tuple[ZontHeatingModeConfiguration, ...] = ()
         self._off_modes_error: str | None = None
         self._off_modes_loaded = False
+        self._objects: dict[int, ZontObject] = {}
+        self._objects_error: str | None = None
+        self._objects_loaded = False
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Select the current controller-wide off mode."""
+        """Show sections of changeable integration settings."""
+        return self.async_show_menu(
+            step_id="init",
+            menu_options=("general", "devices"),
+        )
+
+    async def async_step_general(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Change controller-wide heating and polling settings."""
         if not self._off_modes_loaded:
             self._off_modes, self._off_modes_error = await _async_get_entry_off_modes(
                 self.hass, self.config_entry
@@ -354,7 +434,7 @@ class ZontWsOptionsFlow(config_entries.OptionsFlowWithReload):
         error = self._off_modes_error
         if error is not None or not off_modes:
             return self.async_show_form(
-                step_id="init",
+                step_id="general",
                 data_schema=vol.Schema({}),
                 errors={"base": error or ERROR_NO_OFF_MODE},
             )
@@ -374,6 +454,7 @@ class ZontWsOptionsFlow(config_entries.OptionsFlowWithReload):
                 elif mode_id in {mode.object_id for mode in off_modes}:
                     return self.async_create_entry(
                         data={
+                            **self.config_entry.options,
                             CONF_HEATING_OFF_MODE_ID: mode_id,
                             CONF_DHW_ON_TEMPERATURE: temperature,
                             CONF_SCAN_INTERVAL: scan_interval,
@@ -391,7 +472,7 @@ class ZontWsOptionsFlow(config_entries.OptionsFlowWithReload):
             self.config_entry.options.get(CONF_SCAN_INTERVAL)
         )
         return self.async_show_form(
-            step_id="init",
+            step_id="general",
             data_schema=_heating_mode_schema(
                 off_modes,
                 current_mode_id if type(current_mode_id) is int else None,
@@ -401,6 +482,70 @@ class ZontWsOptionsFlow(config_entries.OptionsFlowWithReload):
                     else DHW_DEFAULT_ON_TEMPERATURE
                 ),
                 current_scan_interval,
+            ),
+            errors=errors,
+        )
+
+    async def async_step_devices(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Change which ZONT objects are exposed in Home Assistant."""
+        if not self._objects_loaded:
+            self._objects, self._objects_error = await _async_get_entry_objects(
+                self.hass, self.config_entry
+            )
+            self._objects_loaded = True
+        if self._objects_error is not None:
+            return self.async_show_form(
+                step_id="devices",
+                data_schema=vol.Schema({}),
+                errors={"base": self._objects_error},
+            )
+
+        configuration = object_import_configuration(self.config_entry.options)
+        descriptors = list(importable_object_descriptors(self._objects))
+        discovered_ids = {descriptor.object_id for descriptor in descriptors}
+        for object_id in sorted(configuration.imported_ids - discovered_ids):
+            descriptors.append(
+                ZontImportableObject(
+                    object_id=object_id,
+                    name="Название неизвестно",
+                    device_type="Недоступное устройство",
+                    manufacturer=None,
+                    model="Недоступное устройство",
+                )
+            )
+        descriptors.sort(key=lambda descriptor: descriptor.sort_key)
+        valid_ids = frozenset(descriptor.object_id for descriptor in descriptors)
+        selected_ids = frozenset(
+            object_id for object_id in valid_ids if configuration.imports(object_id)
+        )
+
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            submitted_ids = _validate_selected_object_ids(user_input, valid_ids)
+            auto_import = user_input.get(CONF_AUTO_IMPORT_NEW_OBJECTS)
+            if submitted_ids is None or type(auto_import) is not bool:
+                errors["base"] = ERROR_INVALID_DEVICE_SELECTION
+            else:
+                previous_excluded = configuration.excluded_ids
+                return self.async_create_entry(
+                    data={
+                        **self.config_entry.options,
+                        CONF_IMPORTED_OBJECT_IDS: sorted(submitted_ids),
+                        CONF_EXCLUDED_OBJECT_IDS: sorted(
+                            (previous_excluded | valid_ids) - submitted_ids
+                        ),
+                        CONF_AUTO_IMPORT_NEW_OBJECTS: auto_import,
+                    }
+                )
+
+        return self.async_show_form(
+            step_id="devices",
+            data_schema=_devices_schema(
+                tuple(descriptors),
+                selected_ids,
+                auto_import_new=configuration.auto_import_new,
             ),
             errors=errors,
         )
@@ -431,11 +576,11 @@ def _normalize_connection_data(
     }, None
 
 
-async def _async_identify_and_discover_heating_modes(
+async def _async_identify_and_discover_configuration(
     hass: HomeAssistant,
     data: dict[str, str],
-) -> tuple[ZontControllerInfo, ZontHeatingModeDiscovery]:
-    """Identify a controller and discover its modes on one connection."""
+) -> tuple[ZontControllerInfo, ZontHeatingModeDiscovery, dict[int, ZontObject]]:
+    """Identify a controller, heating modes and objects on one connection."""
     async with async_open_temporary_request_session(
         async_get_clientsession(hass),
         controller_websocket_url(data[CONF_HOST]),
@@ -446,7 +591,8 @@ async def _async_identify_and_discover_heating_modes(
     ) as requests:
         info = await async_identify_controller_from_requests(requests)
         discovery = await async_discover_heating_modes_from_requests(requests)
-    return info, discovery
+        objects = await async_discover_importable_objects_from_requests(requests)
+    return info, discovery, dict(objects)
 
 
 async def _async_discover_off_modes(
@@ -474,6 +620,34 @@ async def _async_discover_off_modes(
         _LOGGER.exception("Unexpected error while discovering ZONT heating modes")
         return (), ERROR_UNKNOWN
     return discovery.eligible_off_modes, None
+
+
+async def _async_discover_objects(
+    hass: HomeAssistant,
+    data: dict[str, str],
+) -> tuple[dict[int, ZontObject], str | None]:
+    """Discover importable objects using one bounded temporary connection."""
+    try:
+        async with async_open_temporary_request_session(
+            async_get_clientsession(hass),
+            controller_websocket_url(data[CONF_HOST]),
+            ZontCredentials(
+                username=data[CONF_USERNAME],
+                password=data[CONF_PASSWORD],
+            ),
+        ) as requests:
+            objects = await async_discover_importable_objects_from_requests(requests)
+    except ZontAuthenticationError:
+        return {}, ERROR_INVALID_AUTH
+    except ZontConnectionError:
+        return {}, ERROR_CANNOT_CONNECT
+    except ZontProtocolError:
+        _LOGGER.debug("Unable to discover ZONT objects", exc_info=True)
+        return {}, ERROR_CANNOT_READ_DEVICES
+    except Exception:
+        _LOGGER.exception("Unexpected error while discovering ZONT objects")
+        return {}, ERROR_UNKNOWN
+    return dict(objects), None
 
 
 async def _async_get_entry_off_modes(
@@ -509,6 +683,41 @@ async def _async_get_entry_off_modes(
         data.heating_states,
         data.heating_modes,
     ), None
+
+
+async def _async_get_entry_objects(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+) -> tuple[dict[int, ZontObject], str | None]:
+    """Return current objects without competing with a loaded entry connection."""
+    if entry.state is not ConfigEntryState.LOADED:
+        return await _async_discover_objects(
+            hass,
+            {
+                CONF_HOST: entry.data[CONF_HOST],
+                CONF_USERNAME: entry.data[CONF_USERNAME],
+                CONF_PASSWORD: entry.data[CONF_PASSWORD],
+            },
+        )
+
+    runtime_data = cast(ZontRuntimeData, entry.runtime_data)
+    coordinator = runtime_data.coordinator
+    cached_objects = dict(coordinator.data.objects)
+    if not runtime_data.client.is_connected:
+        return (cached_objects, None) if cached_objects else ({}, ERROR_CANNOT_CONNECT)
+
+    try:
+        await coordinator.async_request_refresh()
+    except Exception:
+        _LOGGER.debug(
+            "Unable to refresh ZONT objects for the options flow",
+            exc_info=True,
+        )
+    if coordinator.last_update_success:
+        return dict(coordinator.data.objects), None
+    if cached_objects:
+        return cached_objects, None
+    return {}, ERROR_CANNOT_CONNECT
 
 
 def _heating_mode_data_is_complete(data: ZontData) -> bool:
@@ -570,6 +779,66 @@ def _heating_mode_schema(
             ),
         }
     )
+
+
+def _devices_schema(
+    descriptors: tuple[ZontImportableObject, ...],
+    selected_ids: frozenset[int],
+    *,
+    auto_import_new: bool,
+) -> vol.Schema:
+    """Return selectors for child-device exposure settings."""
+    options = [
+        SelectOptionDict(
+            value=str(descriptor.object_id),
+            label=descriptor.selector_label,
+        )
+        for descriptor in descriptors
+    ]
+    return vol.Schema(
+        {
+            vol.Required(
+                CONF_IMPORTED_OBJECT_IDS,
+                default=[
+                    str(descriptor.object_id)
+                    for descriptor in descriptors
+                    if descriptor.object_id in selected_ids
+                ],
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=options,
+                    multiple=True,
+                    custom_value=False,
+                )
+            ),
+            vol.Required(
+                CONF_AUTO_IMPORT_NEW_OBJECTS,
+                default=auto_import_new,
+            ): BooleanSelector(),
+        }
+    )
+
+
+def _validate_selected_object_ids(
+    user_input: dict[str, Any],
+    valid_ids: frozenset[int],
+) -> frozenset[int] | None:
+    """Return a validated object selection from a multiple select field."""
+    values = user_input.get(CONF_IMPORTED_OBJECT_IDS)
+    if not isinstance(values, list | tuple):
+        return None
+    selected_ids: set[int] = set()
+    try:
+        for value in values:
+            if isinstance(value, bool):
+                return None
+            object_id = int(value)
+            if str(object_id) != str(value) or object_id not in valid_ids:
+                return None
+            selected_ids.add(object_id)
+    except (TypeError, ValueError):
+        return None
+    return frozenset(selected_ids)
 
 
 def _validate_dhw_on_temperature(user_input: dict[str, Any]) -> float | None:

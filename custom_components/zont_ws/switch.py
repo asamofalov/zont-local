@@ -20,6 +20,7 @@ from .const import DOMAIN
 from .coordinator import ZontRuntimeData
 from .entity import ZontObjectCoordinatorEntity
 from .heating import ZontCommandRejectedError, ZontCommandStateError
+from .object_import import object_import_configuration
 from .objects import ZontRelayData
 from .relay import (
     ZontRelayConfiguration,
@@ -35,13 +36,18 @@ async def async_setup_entry(
 ) -> None:
     """Set up ZONT relay switches."""
     known_entities: set[int] = set()
+    import_configuration = object_import_configuration(entry.options)
 
     @callback
     def async_add_object_entities() -> None:
         """Add switches for newly discovered relays."""
         new_entities: list[SwitchEntity] = []
         for obj in entry.runtime_data.coordinator.data.objects.values():
-            if not isinstance(obj, ZontRelayData) or obj.object_id in known_entities:
+            if (
+                not import_configuration.imports(obj.object_id)
+                or not isinstance(obj, ZontRelayData)
+                or obj.object_id in known_entities
+            ):
                 continue
             known_entities.add(obj.object_id)
             new_entities.append(ZontRelaySwitch(entry, obj.object_id))

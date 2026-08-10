@@ -30,6 +30,7 @@ from .heating_config import (
     ZontHeatingCircuitInternalState,
 )
 from .mixer import ZontMixerInternalState
+from .object_import import object_import_configuration
 from .objects import (
     ZontAnalogInputData,
     ZontHeatingCircuitData,
@@ -175,12 +176,15 @@ async def async_setup_entry(
     )
 
     known_entities: set[tuple[int, str]] = set()
+    import_configuration = object_import_configuration(entry.options)
 
     @callback
     def async_add_object_entities() -> None:
         """Add binary sensor entities for newly discovered objects."""
         new_entities: list[BinarySensorEntity] = []
         for obj in entry.runtime_data.coordinator.data.objects.values():
+            if not import_configuration.imports(obj.object_id):
+                continue
             if isinstance(obj, ZontAnalogInputData):
                 identity = (obj.object_id, "analog_triggered")
                 if identity in known_entities:

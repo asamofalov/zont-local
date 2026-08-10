@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from custom_components.zont_ws import (
+    _async_cleanup_excluded_object_devices,
     _async_sync_object_devices,
     async_migrate_entry,
     async_setup_entry,
@@ -18,8 +19,11 @@ from custom_components.zont_ws.client import (
     ZontWsClient,
 )
 from custom_components.zont_ws.const import (
+    CONF_AUTO_IMPORT_NEW_OBJECTS,
     CONF_AUTO_TITLE,
     CONF_CONTROLLER,
+    CONF_EXCLUDED_OBJECT_IDS,
+    CONF_IMPORTED_OBJECT_IDS,
     CONFIG_ENTRY_VERSION,
     DOMAIN,
     connection_signal,
@@ -234,6 +238,107 @@ async def test_digital_bus_adapter_is_registered_as_child_device(
     assert adapter is not None
     assert adapter.name == "Новый Navien"
     assert adapter.name_by_user == "Мой котёл"
+
+
+async def test_only_selected_child_devices_are_registered(
+    hass: HomeAssistant,
+) -> None:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=SERIAL_NUMBER,
+        data=ENTRY_DATA,
+        options={
+            CONF_IMPORTED_OBJECT_IDS: [4097],
+            CONF_EXCLUDED_OBJECT_IDS: [8196],
+            CONF_AUTO_IMPORT_NEW_OBJECTS: True,
+        },
+    )
+    entry.add_to_hass(hass)
+    registry = dr.async_get(hass)
+    controller = registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, SERIAL_NUMBER)},
+        name="ZONT H1V02 PRO",
+    )
+    coordinator = MagicMock(spec=ZontDataUpdateCoordinator)
+    coordinator.data = ZontData(
+        controller=ZontControllerData(info=CONTROLLER_INFO),
+        objects=immutable_objects(
+            {
+                4097: ZontDigitalBusAdapterData(4097, 6, "Navien"),
+                8196: ZontDigitalTemperatureSensorData(8196, 1, "Улица"),
+            }
+        ),
+    )
+    entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontWsClient), coordinator)
+
+    _async_sync_object_devices(hass, entry, controller.id)
+
+    assert registry.async_get_device(
+        identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:4097")}
+    )
+    assert not registry.async_get_device(
+        identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:8196")}
+    )
+
+
+async def test_excluded_devices_and_entities_are_removed_from_registries(
+    hass: HomeAssistant,
+) -> None:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=SERIAL_NUMBER,
+        data=ENTRY_DATA,
+        options={
+            CONF_IMPORTED_OBJECT_IDS: [4097],
+            CONF_EXCLUDED_OBJECT_IDS: [8196],
+            CONF_AUTO_IMPORT_NEW_OBJECTS: True,
+        },
+    )
+    entry.add_to_hass(hass)
+    device_registry = dr.async_get(hass)
+    controller = device_registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, SERIAL_NUMBER)},
+        name="ZONT H1V02 PRO",
+    )
+    selected = device_registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:4097")},
+        name="Navien",
+        via_device_id=controller.id,
+    )
+    excluded = device_registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:8196")},
+        name="Улица",
+        via_device_id=controller.id,
+    )
+    entity_registry = er.async_get(hass)
+    selected_entity = entity_registry.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        f"{SERIAL_NUMBER}_4097_temperature",
+        config_entry=entry,
+        device_id=selected.id,
+        original_name="Температура",
+    )
+    excluded_entity = entity_registry.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        f"{SERIAL_NUMBER}_8196_temperature",
+        config_entry=entry,
+        device_id=excluded.id,
+        original_name="Температура",
+    )
+
+    _async_cleanup_excluded_object_devices(hass, entry, SERIAL_NUMBER)
+
+    assert device_registry.async_get(controller.id) is not None
+    assert device_registry.async_get(selected.id) is not None
+    assert device_registry.async_get(excluded.id) is None
+    assert entity_registry.async_get(selected_entity.entity_id) is not None
+    assert entity_registry.async_get(excluded_entity.entity_id) is None
 
 
 async def test_analog_input_is_registered_as_typed_child_device(

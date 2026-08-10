@@ -42,6 +42,7 @@ from .heating import (
 )
 from .heating_config import DHW_CIRCUIT_SUBTYPE
 from .heating_modes import validated_off_mode_id
+from .object_import import object_import_configuration
 from .objects import ZontHeatingCircuitData, ZontHeatingCircuitMode
 
 MIN_TARGET_TEMPERATURE = DHW_MIN_TARGET_TEMPERATURE
@@ -56,6 +57,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up ZONT hot water circuits."""
     known_entities: set[int] = set()
+    import_configuration = object_import_configuration(entry.options)
 
     @callback
     def async_add_object_entities() -> None:
@@ -63,7 +65,8 @@ async def async_setup_entry(
         new_entities: list[WaterHeaterEntity] = []
         for obj in entry.runtime_data.coordinator.data.objects.values():
             if (
-                not isinstance(obj, ZontHeatingCircuitData)
+                not import_configuration.imports(obj.object_id)
+                or not isinstance(obj, ZontHeatingCircuitData)
                 or obj.subtype != DHW_CIRCUIT_SUBTYPE
                 or obj.object_id in known_entities
             ):

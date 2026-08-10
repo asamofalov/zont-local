@@ -9,6 +9,9 @@ CONF_CONTROLLER = "controller"
 CONF_AUTO_TITLE = "auto_title"
 CONF_HEATING_OFF_MODE_ID = "heating_off_mode_id"
 CONF_DHW_ON_TEMPERATURE = "dhw_on_temperature"
+CONF_IMPORTED_OBJECT_IDS = "imported_object_ids"
+CONF_EXCLUDED_OBJECT_IDS = "excluded_object_ids"
+CONF_AUTO_IMPORT_NEW_OBJECTS = "auto_import_new_objects"
 
 DHW_MIN_TARGET_TEMPERATURE = 5.0
 DHW_MAX_TARGET_TEMPERATURE = 75.0
