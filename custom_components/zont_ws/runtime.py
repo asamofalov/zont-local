@@ -6,24 +6,26 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from .client import ZontWsClient
 from .object_platform import ZontObjectEntityManager
+from .protocol import ZontClient
 
 if TYPE_CHECKING:
+    from .connection import ZontConnectionManager
     from .coordinator import ZontDataUpdateCoordinator
-    from .object_export import ZontTemperatureExportManager
+    from .export import ZontTemperatureExportManager
 
 
 @dataclass(slots=True)
 class ZontRuntimeData:
     """Collect resources and mutable settings for one config entry."""
 
-    client: ZontWsClient
+    client: ZontClient
     coordinator: ZontDataUpdateCoordinator
     export_manager: ZontTemperatureExportManager | None = None
     object_entities: ZontObjectEntityManager = field(
         default_factory=ZontObjectEntityManager
     )
+    connection: ZontConnectionManager | None = None
     options: dict[str, Any] = field(default_factory=dict)
     connection_settings: tuple[str, str, str] | None = None
     controller_device_id: str | None = None
@@ -41,4 +43,7 @@ class ZontRuntimeData:
                 try:
                     await self.coordinator.async_shutdown()
                 finally:
-                    await self.client.async_stop()
+                    if self.connection is not None:
+                        await self.connection.async_shutdown()
+                    else:
+                        await self.client.async_stop()

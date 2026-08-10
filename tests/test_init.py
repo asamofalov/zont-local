@@ -6,19 +6,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from custom_components.zont_ws import (
-    _async_cleanup_excluded_object_devices,
     _async_entry_updated,
-    _async_sync_object_devices,
     async_migrate_entry,
     async_setup_entry,
     async_unload_entry,
 )
-from custom_components.zont_ws.client import (
-    ZontAuthenticationError,
-    ZontConnectionError,
-    ZontProtocolError,
-    ZontWsClient,
-)
+from custom_components.zont_ws.connection import ZontConnectionManager
 from custom_components.zont_ws.const import (
     CONF_AUTO_IMPORT_NEW_OBJECTS,
     CONF_AUTO_TITLE,
@@ -30,20 +23,29 @@ from custom_components.zont_ws.const import (
     DOMAIN,
     connection_signal,
 )
-from custom_components.zont_ws.controller import ZontControllerInfo
 from custom_components.zont_ws.coordinator import (
-    ZontControllerData,
-    ZontData,
     ZontDataUpdateCoordinator,
 )
-from custom_components.zont_ws.heating_config import (
+from custom_components.zont_ws.data import ZontControllerData, ZontData
+from custom_components.zont_ws.device import (
+    async_cleanup_excluded_object_devices,
+    async_sync_object_devices,
+)
+from custom_components.zont_ws.protocol import (
+    ZontAuthenticationError,
+    ZontClient,
+    ZontConnectionError,
+    ZontProtocolError,
+)
+from custom_components.zont_ws.protocol.controller import ZontControllerInfo
+from custom_components.zont_ws.protocol.heating_config import (
     ZontConsumerControlMode,
     ZontHeatingCircuitControlData,
     ZontHeatingCircuitInternalState,
     immutable_heating_controls,
     immutable_heating_states,
 )
-from custom_components.zont_ws.objects import (
+from custom_components.zont_ws.protocol.objects import (
     ZontAnalogInputData,
     ZontDigitalBusAdapterData,
     ZontDigitalBusState,
@@ -123,7 +125,7 @@ async def test_setup_stores_runtime_data(hass: HomeAssistant) -> None:
     entry.add_to_hass(hass)
 
     with (
-        patch.object(ZontWsClient, "async_start", new=AsyncMock()),
+        patch.object(ZontConnectionManager, "async_start", new=AsyncMock()),
         patch.object(ZontDataUpdateCoordinator, "async_start") as start_coordinator,
         patch.object(
             hass.config_entries,
@@ -134,7 +136,7 @@ async def test_setup_stores_runtime_data(hass: HomeAssistant) -> None:
         assert await async_setup_entry(hass, entry)
 
     assert isinstance(entry.runtime_data, ZontRuntimeData)
-    assert isinstance(entry.runtime_data.client, ZontWsClient)
+    assert isinstance(entry.runtime_data.client, ZontClient)
     assert isinstance(entry.runtime_data.coordinator, ZontDataUpdateCoordinator)
     assert entry.runtime_data.client._url == "ws://192.0.2.10/ws"
     start_coordinator.assert_called_once_with()
@@ -168,7 +170,7 @@ async def test_new_entities_use_device_prefix_and_stable_suffixes(
     entry.add_to_hass(hass)
 
     with (
-        patch.object(ZontWsClient, "async_start", new=AsyncMock()),
+        patch.object(ZontConnectionManager, "async_start", new=AsyncMock()),
         patch.object(ZontDataUpdateCoordinator, "async_start"),
     ):
         assert await hass.config_entries.async_setup(entry.entry_id)
@@ -220,9 +222,9 @@ async def test_digital_bus_adapter_is_registered_as_child_device(
         controller=ZontControllerData(info=CONTROLLER_INFO),
         objects=immutable_objects({4097: ZontDigitalBusAdapterData(4097, 6, "Navien")}),
     )
-    entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontWsClient), coordinator)
+    entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontClient), coordinator)
 
-    _async_sync_object_devices(hass, entry, controller.id)
+    async_sync_object_devices(hass, entry, controller.id)
 
     adapter = registry.async_get_device(
         identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:4097")}
@@ -240,7 +242,7 @@ async def test_digital_bus_adapter_is_registered_as_child_device(
             {4097: ZontDigitalBusAdapterData(4097, 6, "Новый Navien")}
         ),
     )
-    _async_sync_object_devices(hass, entry, controller.id)
+    async_sync_object_devices(hass, entry, controller.id)
 
     adapter = registry.async_get(adapter.id)
     assert adapter is not None
@@ -278,9 +280,9 @@ async def test_only_selected_child_devices_are_registered(
             }
         ),
     )
-    entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontWsClient), coordinator)
+    entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontClient), coordinator)
 
-    _async_sync_object_devices(hass, entry, controller.id)
+    async_sync_object_devices(hass, entry, controller.id)
 
     assert registry.async_get_device(
         identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:4097")}
@@ -340,7 +342,7 @@ async def test_excluded_devices_and_entities_are_removed_from_registries(
         original_name="Температура",
     )
 
-    _async_cleanup_excluded_object_devices(hass, entry, SERIAL_NUMBER)
+    async_cleanup_excluded_object_devices(hass, entry, SERIAL_NUMBER)
 
     assert device_registry.async_get(controller.id) is not None
     assert device_registry.async_get(selected.id) is not None
@@ -381,9 +383,9 @@ async def test_analog_input_is_registered_as_typed_child_device(
             }
         ),
     )
-    entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontWsClient), coordinator)
+    entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontClient), coordinator)
 
-    _async_sync_object_devices(hass, entry, controller.id)
+    async_sync_object_devices(hass, entry, controller.id)
 
     analog_input = registry.async_get_device(
         identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:20550")}
@@ -424,9 +426,9 @@ async def test_unknown_analog_subtype_has_fallback_device_model(
             }
         ),
     )
-    entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontWsClient), coordinator)
+    entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontClient), coordinator)
 
-    _async_sync_object_devices(hass, entry, controller.id)
+    async_sync_object_devices(hass, entry, controller.id)
 
     analog_input = registry.async_get_device(
         identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:20550")}
@@ -469,7 +471,7 @@ async def test_discovered_adapter_creates_prefixed_entities(
         coordinator.async_update_listeners()
 
     with (
-        patch.object(ZontWsClient, "async_start", new=AsyncMock()),
+        patch.object(ZontConnectionManager, "async_start", new=AsyncMock()),
         patch.object(
             ZontDataUpdateCoordinator,
             "async_start",
@@ -554,7 +556,7 @@ async def test_live_import_change_keeps_unaffected_entity_available(
         coordinator.async_update_listeners()
 
     with (
-        patch.object(ZontWsClient, "async_start", new=AsyncMock()),
+        patch.object(ZontConnectionManager, "async_start", new=AsyncMock()),
         patch.object(
             ZontDataUpdateCoordinator,
             "async_start",
@@ -631,9 +633,9 @@ async def test_temperature_sensor_is_registered_as_child_device(
             }
         ),
     )
-    entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontWsClient), coordinator)
+    entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontClient), coordinator)
 
-    _async_sync_object_devices(hass, entry, controller.id)
+    async_sync_object_devices(hass, entry, controller.id)
 
     sensor = registry.async_get_device(
         identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:4107")}
@@ -674,9 +676,9 @@ async def test_ntc_sensor_is_registered_as_child_device(
             }
         ),
     )
-    entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontWsClient), coordinator)
+    entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontClient), coordinator)
 
-    _async_sync_object_devices(hass, entry, controller.id)
+    async_sync_object_devices(hass, entry, controller.id)
 
     sensor = registry.async_get_device(
         identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:20487")}
@@ -719,9 +721,9 @@ async def test_supported_radio_sensor_is_registered_as_typed_child_device(
             }
         ),
     )
-    entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontWsClient), coordinator)
+    entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontClient), coordinator)
 
-    _async_sync_object_devices(hass, entry, controller.id)
+    async_sync_object_devices(hass, entry, controller.id)
 
     sensor = registry.async_get_device(
         identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:12001")}
@@ -771,9 +773,9 @@ async def test_supported_heating_circuits_are_registered_as_child_devices(
             }
         ),
     )
-    entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontWsClient), coordinator)
+    entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontClient), coordinator)
 
-    _async_sync_object_devices(hass, entry, controller.id)
+    async_sync_object_devices(hass, entry, controller.id)
 
     circuit = registry.async_get_device(
         identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:8362")}
@@ -812,9 +814,9 @@ async def test_pump_is_registered_as_child_device(hass: HomeAssistant) -> None:
             {9044: ZontPumpData(9044, 17, "Насос Радиаторы", running=True)}
         ),
     )
-    entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontWsClient), coordinator)
+    entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontClient), coordinator)
 
-    _async_sync_object_devices(hass, entry, controller.id)
+    async_sync_object_devices(hass, entry, controller.id)
 
     pump = registry.async_get_device(
         identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:9044")}
@@ -853,9 +855,9 @@ async def test_mixer_is_registered_as_child_device(hass: HomeAssistant) -> None:
             }
         ),
     )
-    entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontWsClient), coordinator)
+    entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontClient), coordinator)
 
-    _async_sync_object_devices(hass, entry, controller.id)
+    async_sync_object_devices(hass, entry, controller.id)
 
     mixer = registry.async_get_device(
         identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:9078")}
@@ -887,9 +889,9 @@ async def test_relay_is_registered_as_child_device(hass: HomeAssistant) -> None:
             {20488: ZontRelayData(20488, 14, "Реле", output_active=True)}
         ),
     )
-    entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontWsClient), coordinator)
+    entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontClient), coordinator)
 
-    _async_sync_object_devices(hass, entry, controller.id)
+    async_sync_object_devices(hass, entry, controller.id)
 
     relay = registry.async_get_device(
         identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:20488")}
@@ -930,9 +932,9 @@ async def test_unsupported_radio_subtype_is_not_registered(
             }
         ),
     )
-    entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontWsClient), coordinator)
+    entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontClient), coordinator)
 
-    _async_sync_object_devices(hass, entry, controller.id)
+    async_sync_object_devices(hass, entry, controller.id)
 
     assert (
         registry.async_get_device(
@@ -976,7 +978,7 @@ async def test_discovered_temperature_sensor_creates_prefixed_entity(
         coordinator.async_update_listeners()
 
     with (
-        patch.object(ZontWsClient, "async_start", new=AsyncMock()),
+        patch.object(ZontConnectionManager, "async_start", new=AsyncMock()),
         patch.object(
             ZontDataUpdateCoordinator,
             "async_start",
@@ -1030,7 +1032,7 @@ async def test_discovered_ntc_sensor_creates_prefixed_entity(
         coordinator.async_update_listeners()
 
     with (
-        patch.object(ZontWsClient, "async_start", new=AsyncMock()),
+        patch.object(ZontConnectionManager, "async_start", new=AsyncMock()),
         patch.object(
             ZontDataUpdateCoordinator,
             "async_start",
@@ -1088,7 +1090,7 @@ async def test_discovered_radio_sensor_creates_prefixed_entities(
         coordinator.async_update_listeners()
 
     with (
-        patch.object(ZontWsClient, "async_start", new=AsyncMock()),
+        patch.object(ZontConnectionManager, "async_start", new=AsyncMock()),
         patch.object(
             ZontDataUpdateCoordinator,
             "async_start",
@@ -1152,7 +1154,7 @@ async def test_discovered_dhw_circuit_creates_water_heater_and_fault_entities(
         coordinator.async_update_listeners()
 
     with (
-        patch.object(ZontWsClient, "async_start", new=AsyncMock()),
+        patch.object(ZontConnectionManager, "async_start", new=AsyncMock()),
         patch.object(
             ZontDataUpdateCoordinator,
             "async_start",
@@ -1243,7 +1245,7 @@ async def test_discovered_consumer_circuit_creates_primary_and_diagnostic_entiti
         coordinator.async_update_listeners()
 
     with (
-        patch.object(ZontWsClient, "async_start", new=AsyncMock()),
+        patch.object(ZontConnectionManager, "async_start", new=AsyncMock()),
         patch.object(
             ZontDataUpdateCoordinator,
             "async_start",
@@ -1323,7 +1325,7 @@ async def test_discovered_analog_input_creates_prefixed_entities(
         coordinator.async_update_listeners()
 
     with (
-        patch.object(ZontWsClient, "async_start", new=AsyncMock()),
+        patch.object(ZontConnectionManager, "async_start", new=AsyncMock()),
         patch.object(
             ZontDataUpdateCoordinator,
             "async_start",
@@ -1377,7 +1379,7 @@ async def test_registered_entity_id_is_preserved(hass: HomeAssistant) -> None:
     )
 
     with (
-        patch.object(ZontWsClient, "async_start", new=AsyncMock()),
+        patch.object(ZontConnectionManager, "async_start", new=AsyncMock()),
         patch.object(ZontDataUpdateCoordinator, "async_start"),
     ):
         assert await hass.config_entries.async_setup(entry.entry_id)
@@ -1416,17 +1418,17 @@ async def test_setup_refreshes_controller_information(hass: HomeAssistant) -> No
     )
     entry.add_to_hass(hass)
 
-    async def async_start(client: ZontWsClient, entry: MockConfigEntry) -> None:
-        client._is_connected = True
+    async def async_start(manager: ZontConnectionManager) -> None:
+        manager._client._is_connected = True
 
     with (
-        patch.object(ZontWsClient, "async_start", new=async_start),
+        patch.object(ZontConnectionManager, "async_start", new=async_start),
         patch(
-            "custom_components.zont_ws.coordinator.async_refresh_controller_info",
+            "custom_components.zont_ws.updater.async_refresh_controller_info",
             new=AsyncMock(return_value=CONTROLLER_INFO),
         ) as refresh,
         patch.object(
-            ZontWsClient,
+            ZontClient,
             "async_send_system_command",
             new=AsyncMock(side_effect=["#S224:1 0 1 0", "#S6:123 0"]),
         ),
@@ -1463,17 +1465,17 @@ async def test_failed_information_refresh_is_disabled_until_restart(
     )
     entry.add_to_hass(hass)
 
-    async def async_start(client: ZontWsClient, entry: MockConfigEntry) -> None:
-        client._is_connected = True
+    async def async_start(manager: ZontConnectionManager) -> None:
+        manager._client._is_connected = True
 
     with (
-        patch.object(ZontWsClient, "async_start", new=async_start),
+        patch.object(ZontConnectionManager, "async_start", new=async_start),
         patch(
-            "custom_components.zont_ws.coordinator.async_refresh_controller_info",
+            "custom_components.zont_ws.updater.async_refresh_controller_info",
             new=AsyncMock(side_effect=ZontProtocolError),
         ) as refresh,
         patch.object(
-            ZontWsClient,
+            ZontClient,
             "async_send_system_command",
             new=AsyncMock(
                 side_effect=[
@@ -1516,7 +1518,7 @@ async def test_setup_maps_client_errors(
 
     with (
         patch.object(
-            ZontWsClient,
+            ZontConnectionManager,
             "async_start",
             new=AsyncMock(side_effect=client_error),
         ),
@@ -1558,7 +1560,7 @@ async def test_options_update_is_applied_without_reload(
     object_entities = MagicMock()
     object_entities.async_reconcile = AsyncMock()
     entry.runtime_data = ZontRuntimeData(
-        MagicMock(spec=ZontWsClient),
+        MagicMock(spec=ZontClient),
         coordinator,
         export_manager,
         object_entities=object_entities,
@@ -1592,7 +1594,7 @@ async def test_connection_update_still_reloads_entry(
     export_manager = MagicMock()
     export_manager.async_reconfigure = AsyncMock()
     entry.runtime_data = ZontRuntimeData(
-        MagicMock(spec=ZontWsClient),
+        MagicMock(spec=ZontClient),
         coordinator,
         export_manager,
         options={},

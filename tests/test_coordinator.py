@@ -7,33 +7,32 @@ from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
-from custom_components.zont_ws.client import ZontProtocolError, ZontWsClient
 from custom_components.zont_ws.const import (
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     MAX_SCAN_INTERVAL,
     MIN_SCAN_INTERVAL,
 )
-from custom_components.zont_ws.controller import (
+from custom_components.zont_ws.coordinator import (
+    ZontDataUpdateCoordinator,
+)
+from custom_components.zont_ws.data import ZontControllerData, ZontData
+from custom_components.zont_ws.protocol import ZontClient, ZontProtocolError
+from custom_components.zont_ws.protocol.controller import (
     COMMAND_SERVER_INFO,
     COMMAND_SUPPLY_VOLTAGE,
     ZontCommunicationChannel,
 )
-from custom_components.zont_ws.coordinator import (
-    ZontControllerData,
-    ZontData,
-    ZontDataUpdateCoordinator,
-)
-from custom_components.zont_ws.heating_config import (
+from custom_components.zont_ws.protocol.heating_config import (
     ZontConsumerControlMode,
     ZontHeatingCircuitInternalState,
     immutable_heating_states,
 )
-from custom_components.zont_ws.mixer import (
+from custom_components.zont_ws.protocol.mixer import (
     ZontMixerInternalState,
     immutable_mixer_states,
 )
-from custom_components.zont_ws.objects import (
+from custom_components.zont_ws.protocol.objects import (
     OBJECT_TYPE_RELAY,
     ZontAnalogInputData,
     ZontDigitalBusAdapterData,
@@ -49,7 +48,7 @@ from custom_components.zont_ws.objects import (
     ZontRelayData,
     immutable_objects,
 )
-from custom_components.zont_ws.relay import (
+from custom_components.zont_ws.protocol.relay import (
     ZontRelayConfiguration,
     ZontRelayInternalState,
     immutable_relay_configurations,
@@ -96,7 +95,7 @@ def _coordinator(
             {CONF_SCAN_INTERVAL: scan_interval} if scan_interval is not None else {}
         ),
     )
-    client = MagicMock(spec=ZontWsClient)
+    client = MagicMock(spec=ZontClient)
     client.is_connected = True
     client.async_send_system_command = AsyncMock()
     client.async_get_object_ids = _ObjectIdsMock()
@@ -1041,22 +1040,22 @@ async def test_invalid_consumer_configuration_does_not_block_other_circuit(
     assert 9171 not in coordinator.data.heating_controls
     assert coordinator.data.heating_controls[20496].can_set_temperature
     assert set(coordinator.data.heating_states) == {9171, 20496}
-    assert coordinator._heating_metadata.refresh_needed
+    assert coordinator._updater.heating_metadata.refresh_needed
 
 
 async def test_configuration_reload_message_requests_immediate_refresh(
     hass: HomeAssistant,
 ) -> None:
     coordinator, _ = _coordinator(hass)
-    coordinator._heating_metadata = MagicMock()
-    coordinator._relay_metadata = MagicMock()
+    coordinator._updater.heating_metadata = MagicMock()
+    coordinator._updater.relay_metadata = MagicMock()
     coordinator.async_refresh = AsyncMock()
 
     coordinator._async_message_received("CFG_RELOAD_REQ")
     await hass.async_block_till_done()
 
-    coordinator._heating_metadata.mark_stale.assert_called_once_with()
-    coordinator._relay_metadata.mark_stale.assert_called_once_with()
+    coordinator._updater.heating_metadata.mark_stale.assert_called_once_with()
+    coordinator._updater.relay_metadata.mark_stale.assert_called_once_with()
     coordinator.async_refresh.assert_awaited_once_with()
 
 
@@ -1360,7 +1359,7 @@ async def test_invalid_relay_configuration_does_not_hide_relay_state(
     assert isinstance(coordinator.data.objects[20488], ZontRelayData)
     assert 20488 not in coordinator.data.relay_configurations
     assert coordinator.data.relay_states[20488].has_failed
-    assert coordinator._relay_metadata.refresh_needed
+    assert coordinator._updater.relay_metadata.refresh_needed
 
 
 async def test_invalid_relay_state_does_not_hide_configuration(
@@ -1388,7 +1387,7 @@ async def test_invalid_relay_state_does_not_hide_configuration(
         ZontRelayConfiguration(20488, 0)
     )
     assert 20488 not in coordinator.data.relay_states
-    assert not coordinator._relay_metadata.refresh_needed
+    assert not coordinator._updater.relay_metadata.refresh_needed
 
 
 async def test_relay_push_preserves_configuration_and_diagnostics(

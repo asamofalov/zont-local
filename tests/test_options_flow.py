@@ -5,8 +5,6 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from custom_components.zont_ws import options_flow as zont_options_flow
-from custom_components.zont_ws.client import ZontWsClient
 from custom_components.zont_ws.const import (
     CONF_AUTO_IMPORT_NEW_OBJECTS,
     CONF_AUTO_TITLE,
@@ -24,18 +22,22 @@ from custom_components.zont_ws.const import (
     MAX_SCAN_INTERVAL,
     MIN_SCAN_INTERVAL,
 )
-from custom_components.zont_ws.controller import ZontControllerInfo
-from custom_components.zont_ws.coordinator import ZontControllerData, ZontData
-from custom_components.zont_ws.flow_helpers import (
+from custom_components.zont_ws.data import ZontControllerData, ZontData
+from custom_components.zont_ws.flows import discovery as zont_flow_discovery
+from custom_components.zont_ws.flows import export as zont_export_flow
+from custom_components.zont_ws.flows import options as zont_options_flow
+from custom_components.zont_ws.flows.schemas import (
     _validate_dhw_on_temperature,
     _validate_scan_interval,
 )
-from custom_components.zont_ws.heating_config import (
+from custom_components.zont_ws.protocol import ZontClient
+from custom_components.zont_ws.protocol.controller import ZontControllerInfo
+from custom_components.zont_ws.protocol.heating_config import (
     ZontHeatingCircuitInternalState,
     ZontHeatingModeConfiguration,
 )
-from custom_components.zont_ws.heating_modes import ZontHeatingModeDiscovery
-from custom_components.zont_ws.objects import (
+from custom_components.zont_ws.protocol.heating_modes import ZontHeatingModeDiscovery
+from custom_components.zont_ws.protocol.objects import (
     ZontDigitalTemperatureSensorData,
     ZontHeatingCircuitData,
 )
@@ -93,7 +95,8 @@ OFF_MODE_DISCOVERY = ZontHeatingModeDiscovery(
 def _mock_mode_discovery(monkeypatch, discovery=OFF_MODE_DISCOVERY) -> AsyncMock:
     mock = AsyncMock(return_value=discovery)
     monkeypatch.setattr(
-        "custom_components.zont_ws.options_flow.async_discover_heating_modes",
+        zont_flow_discovery,
+        "async_discover_heating_modes",
         mock,
     )
     return mock
@@ -216,7 +219,7 @@ async def test_loaded_device_options_reuse_coordinator_connection(
 ) -> None:
     temporary_discovery = AsyncMock()
     monkeypatch.setattr(
-        zont_options_flow,
+        zont_flow_discovery,
         "_async_discover_objects",
         temporary_discovery,
     )
@@ -228,7 +231,7 @@ async def test_loaded_device_options_reuse_coordinator_connection(
         options={CONF_HEATING_OFF_MODE_ID: OFF_MODE_ID},
     )
     entry.add_to_hass(hass)
-    client = MagicMock(spec=ZontWsClient)
+    client = MagicMock(spec=ZontClient)
     client.is_connected = True
     coordinator = MagicMock()
     coordinator.data = ZontData(
@@ -292,7 +295,7 @@ async def test_loaded_options_flow_reuses_coordinator_data(
         options={CONF_HEATING_OFF_MODE_ID: OFF_MODE_ID},
     )
     entry.add_to_hass(hass)
-    client = MagicMock(spec=ZontWsClient)
+    client = MagicMock(spec=ZontClient)
     client.is_connected = True
     coordinator = MagicMock()
     coordinator.data = ZontData(
@@ -331,7 +334,7 @@ def _loaded_export_entry(
         options=options or {CONF_HEATING_OFF_MODE_ID: OFF_MODE_ID},
     )
     entry.add_to_hass(hass)
-    client = MagicMock(spec=ZontWsClient)
+    client = MagicMock(spec=ZontClient)
     client.is_connected = True
     client.async_get_object_state = AsyncMock()
     client.async_send_command = AsyncMock()
@@ -473,7 +476,7 @@ def test_removing_export_keeps_old_target_excluded() -> None:
         ],
     }
 
-    updated = zont_options_flow._options_with_export_bindings(options, ())
+    updated = zont_export_flow._options_with_export_bindings(options, ())
 
     assert updated[CONF_TEMPERATURE_EXPORTS] == []
     assert updated[CONF_IMPORTED_OBJECT_IDS] == []

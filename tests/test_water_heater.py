@@ -6,10 +6,6 @@ from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from custom_components.zont_ws.client import (
-    ZontConnectionError,
-    ZontWsClient,
-)
 from custom_components.zont_ws.const import (
     CONF_DHW_ON_TEMPERATURE,
     CONF_HEATING_OFF_MODE_ID,
@@ -17,29 +13,32 @@ from custom_components.zont_ws.const import (
     DOMAIN,
 )
 from custom_components.zont_ws.coordinator import (
-    ZontControllerData,
-    ZontData,
     ZontDataUpdateCoordinator,
 )
-from custom_components.zont_ws.heating_config import (
+from custom_components.zont_ws.data import ZontControllerData, ZontData
+from custom_components.zont_ws.entities.heating.water_heater import (
+    MAX_TARGET_TEMPERATURE,
+    MIN_TARGET_TEMPERATURE,
+    TARGET_TEMPERATURE_STEP,
+    ZontDhwWaterHeater,
+)
+from custom_components.zont_ws.protocol import (
+    ZontClient,
+    ZontConnectionError,
+)
+from custom_components.zont_ws.protocol.heating_config import (
     ZontHeatingCircuitInternalState,
     ZontHeatingModeConfiguration,
     immutable_heating_modes,
     immutable_heating_states,
 )
-from custom_components.zont_ws.objects import (
+from custom_components.zont_ws.protocol.objects import (
     ZontHeatingCircuitData,
     ZontHeatingCircuitMode,
     immutable_objects,
 )
 from custom_components.zont_ws.runtime import ZontRuntimeData
-from custom_components.zont_ws.water_heater import (
-    MAX_TARGET_TEMPERATURE,
-    MIN_TARGET_TEMPERATURE,
-    TARGET_TEMPERATURE_STEP,
-    ZontDhwWaterHeater,
-    async_setup_entry,
-)
+from custom_components.zont_ws.water_heater import async_setup_entry
 from homeassistant.components.water_heater import (
     STATE_OFF,
     STATE_ON,
@@ -70,7 +69,7 @@ def _entry(
         data={},
         options=options,
     )
-    client = MagicMock(spec=ZontWsClient)
+    client = MagicMock(spec=ZontClient)
     client.async_send_command = AsyncMock(return_value={"id": 8362, "cmdres": 0})
     coordinator = MagicMock(spec=ZontDataUpdateCoordinator)
     coordinator.last_update_success = True

@@ -14,11 +14,8 @@ from custom_components.zont_ws.const import (
     CONF_IMPORTED_OBJECT_IDS,
     DOMAIN,
 )
-from custom_components.zont_ws.coordinator import (
-    ZontControllerData,
-    ZontData,
-)
-from custom_components.zont_ws.objects import (
+from custom_components.zont_ws.data import ZontControllerData, ZontData
+from custom_components.zont_ws.protocol.objects import (
     ZontDigitalTemperatureSensorData,
     ZontHeatingCircuitData,
     ZontPumpData,

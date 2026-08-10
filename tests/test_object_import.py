@@ -16,7 +16,7 @@ from custom_components.zont_ws.object_import import (
     importable_object_descriptor,
     object_import_configuration,
 )
-from custom_components.zont_ws.objects import (
+from custom_components.zont_ws.protocol.objects import (
     ZontAnalogInputData,
     ZontDigitalBusAdapterData,
     ZontDigitalTemperatureSensorData,

@@ -7,14 +7,10 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
-from .coordinator import (
-    ZontControllerData,
-    ZontDataUpdateCoordinator,
-)
-from .objects import (
-    ZontObject,
-    object_device_identifier,
-)
+from .coordinator import ZontDataUpdateCoordinator
+from .data import ZontControllerData
+from .object_descriptions import object_device_identifier
+from .protocol.objects import ZontObject
 from .runtime import ZontRuntimeData
 
 

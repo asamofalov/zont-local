@@ -5,27 +5,52 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
-from custom_components.zont_ws.client import ZontWsClient
 from custom_components.zont_ws.const import DOMAIN
-from custom_components.zont_ws.controller import (
+from custom_components.zont_ws.coordinator import (
+    ZontDataUpdateCoordinator,
+)
+from custom_components.zont_ws.data import ZontControllerData, ZontData
+from custom_components.zont_ws.entities.analog_input import (
+    ANALOG_INPUT_UNITS,
+    ZontAnalogInputValueSensor,
+)
+from custom_components.zont_ws.entities.controller import (
+    CONNECTION_CHANNEL_STATES,
+    ZontConnectionChannelSensor,
+    ZontSupplyVoltageSensor,
+)
+from custom_components.zont_ws.entities.digital_bus import (
+    DIGITAL_BUS_SENSOR_DESCRIPTIONS,
+    ZontDigitalBusSensor,
+)
+from custom_components.zont_ws.entities.heating.diagnostics import (
+    CONSUMER_CONTROL_MODE_STATES,
+    ZontHeatingControlModeSensor,
+)
+from custom_components.zont_ws.entities.mixer import ZontMixerStateSensor
+from custom_components.zont_ws.entities.radio import (
+    RADIO_SENSOR_DESCRIPTIONS,
+    ZontRadioSensor,
+)
+from custom_components.zont_ws.entities.temperature import (
+    ZontDigitalTemperatureSensor,
+    ZontNtcTemperatureSensor,
+)
+from custom_components.zont_ws.protocol import ZontClient
+from custom_components.zont_ws.protocol.controller import (
     ZontCommunicationChannel,
     ZontServerStatus,
 )
-from custom_components.zont_ws.coordinator import (
-    ZontControllerData,
-    ZontData,
-    ZontDataUpdateCoordinator,
-)
-from custom_components.zont_ws.heating_config import (
+from custom_components.zont_ws.protocol.heating_config import (
     ZontConsumerControlMode,
     ZontHeatingCircuitControlData,
     immutable_heating_controls,
 )
-from custom_components.zont_ws.mixer import (
+from custom_components.zont_ws.protocol.mixer import (
     ZontMixerInternalState,
     immutable_mixer_states,
 )
-from custom_components.zont_ws.objects import (
+from custom_components.zont_ws.protocol.objects import (
     ZontAnalogInputData,
     ZontDigitalBusAdapterData,
     ZontDigitalBusState,
@@ -39,23 +64,7 @@ from custom_components.zont_ws.objects import (
     immutable_objects,
 )
 from custom_components.zont_ws.runtime import ZontRuntimeData
-from custom_components.zont_ws.sensor import (
-    ANALOG_INPUT_UNITS,
-    CONNECTION_CHANNEL_STATES,
-    CONSUMER_CONTROL_MODE_STATES,
-    DIGITAL_BUS_SENSOR_DESCRIPTIONS,
-    RADIO_SENSOR_DESCRIPTIONS,
-    ZontAnalogInputValueSensor,
-    ZontConnectionChannelSensor,
-    ZontDigitalBusSensor,
-    ZontDigitalTemperatureSensor,
-    ZontHeatingControlModeSensor,
-    ZontMixerStateSensor,
-    ZontNtcTemperatureSensor,
-    ZontRadioSensor,
-    ZontSupplyVoltageSensor,
-    async_setup_entry,
-)
+from custom_components.zont_ws.sensor import async_setup_entry
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 from homeassistant.const import (
     PERCENTAGE,
@@ -81,7 +90,7 @@ def _entry(
         unique_id="ABCDEF123456",
         data={},
     )
-    client = MagicMock(spec=ZontWsClient)
+    client = MagicMock(spec=ZontClient)
     coordinator = MagicMock(spec=ZontDataUpdateCoordinator)
     coordinator.last_update_success = True
     coordinator.data = ZontData(

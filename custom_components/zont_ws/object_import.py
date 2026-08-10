@@ -11,9 +11,14 @@ from .const import (
     CONF_EXCLUDED_OBJECT_IDS,
     CONF_IMPORTED_OBJECT_IDS,
 )
-from .object_export import temperature_export_target_ids
-from .objects import (
+from .export import temperature_export_target_ids
+from .object_descriptions import (
     SUPPORTED_RADIO_SENSOR_SUBTYPES,
+    analog_input_model,
+    heating_circuit_model,
+    radio_sensor_model,
+)
+from .protocol.objects import (
     ZontAnalogInputData,
     ZontDigitalBusAdapterData,
     ZontDigitalTemperatureSensorData,
@@ -24,9 +29,6 @@ from .objects import (
     ZontPumpData,
     ZontRadioSensorData,
     ZontRelayData,
-    analog_input_model,
-    heating_circuit_model,
-    radio_sensor_model,
 )
 
 

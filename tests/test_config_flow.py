@@ -7,12 +7,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 from custom_components.zont_ws import config_flow as zont_config_flow
-from custom_components.zont_ws.client import (
-    ZontAuthenticationError,
-    ZontConnectionError,
-    ZontCredentials,
-    ZontWsClient,
-)
 from custom_components.zont_ws.const import (
     CONF_AUTO_IMPORT_NEW_OBJECTS,
     CONF_AUTO_TITLE,
@@ -25,16 +19,22 @@ from custom_components.zont_ws.const import (
     DHW_DEFAULT_ON_TEMPERATURE,
     DOMAIN,
 )
-from custom_components.zont_ws.controller import (
+from custom_components.zont_ws.protocol import (
+    ZontAuthenticationError,
+    ZontClient,
+    ZontConnectionError,
+    ZontCredentials,
+)
+from custom_components.zont_ws.protocol.controller import (
     ZontControllerInfo,
     ZontIdentificationError,
 )
-from custom_components.zont_ws.heating_config import (
+from custom_components.zont_ws.protocol.heating_config import (
     ZontHeatingCircuitInternalState,
     ZontHeatingModeConfiguration,
 )
-from custom_components.zont_ws.heating_modes import ZontHeatingModeDiscovery
-from custom_components.zont_ws.objects import (
+from custom_components.zont_ws.protocol.heating_modes import ZontHeatingModeDiscovery
+from custom_components.zont_ws.protocol.objects import (
     ZontHeatingCircuitData,
 )
 from homeassistant import config_entries, data_entry_flow
@@ -132,7 +132,7 @@ async def test_initial_discovery_uses_one_authenticated_connection(
     )
     monkeypatch.setattr(
         zont_config_flow,
-        "async_discover_importable_objects_from_requests",
+        "async_discover_objects_from_requests",
         discover_objects,
     )
 
@@ -159,7 +159,7 @@ async def test_initial_discovery_uses_one_authenticated_connection(
 
 
 async def test_user_flow_success(hass: HomeAssistant, monkeypatch) -> None:
-    monkeypatch.setattr(ZontWsClient, "async_start", AsyncMock())
+    monkeypatch.setattr(ZontClient, "async_connect", AsyncMock())
     discover = _mock_initial_discovery(monkeypatch)
 
     result = await hass.config_entries.flow.async_init(
@@ -249,7 +249,7 @@ async def test_user_flow_requires_an_all_off_mode(
 async def test_initial_flow_allows_empty_device_selection(
     hass: HomeAssistant, monkeypatch
 ) -> None:
-    monkeypatch.setattr(ZontWsClient, "async_start", AsyncMock())
+    monkeypatch.setattr(ZontClient, "async_connect", AsyncMock())
     _mock_initial_discovery(monkeypatch)
 
     result = await hass.config_entries.flow.async_init(
@@ -292,7 +292,7 @@ async def test_user_flow_rejects_invalid_host(
 
 
 async def test_user_flow_normalizes_ipv6(hass: HomeAssistant, monkeypatch) -> None:
-    monkeypatch.setattr(ZontWsClient, "async_start", AsyncMock())
+    monkeypatch.setattr(ZontClient, "async_connect", AsyncMock())
     discover = _mock_initial_discovery(monkeypatch)
 
     result = await hass.config_entries.flow.async_init(

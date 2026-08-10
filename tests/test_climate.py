@@ -6,24 +6,23 @@ from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from custom_components.zont_ws.client import (
+from custom_components.zont_ws.climate import async_setup_entry
+from custom_components.zont_ws.const import CONF_HEATING_OFF_MODE_ID, DOMAIN
+from custom_components.zont_ws.coordinator import (
+    ZontDataUpdateCoordinator,
+)
+from custom_components.zont_ws.data import ZontControllerData, ZontData
+from custom_components.zont_ws.entities.heating.climate import (
+    TARGET_TEMPERATURE_STEP,
+    ZontConsumerClimate,
+)
+from custom_components.zont_ws.protocol import (
+    ZontClient,
     ZontCommandTimeoutError,
     ZontConnectionError,
     ZontProtocolError,
-    ZontWsClient,
 )
-from custom_components.zont_ws.climate import (
-    TARGET_TEMPERATURE_STEP,
-    ZontConsumerClimate,
-    async_setup_entry,
-)
-from custom_components.zont_ws.const import CONF_HEATING_OFF_MODE_ID, DOMAIN
-from custom_components.zont_ws.coordinator import (
-    ZontControllerData,
-    ZontData,
-    ZontDataUpdateCoordinator,
-)
-from custom_components.zont_ws.heating_config import (
+from custom_components.zont_ws.protocol.heating_config import (
     ZontConsumerControlMode,
     ZontHeatingCircuitControlData,
     ZontHeatingCircuitInternalState,
@@ -32,7 +31,7 @@ from custom_components.zont_ws.heating_config import (
     immutable_heating_modes,
     immutable_heating_states,
 )
-from custom_components.zont_ws.objects import (
+from custom_components.zont_ws.protocol.objects import (
     ZontHeatingCircuitData,
     ZontHeatingCircuitMode,
     immutable_objects,
@@ -61,7 +60,7 @@ def _entry(
             {CONF_HEATING_OFF_MODE_ID: off_mode_id} if off_mode_id is not None else {}
         ),
     )
-    client = MagicMock(spec=ZontWsClient)
+    client = MagicMock(spec=ZontClient)
     client.async_send_command = AsyncMock(
         side_effect=lambda object_id, command: {"id": object_id, "cmdres": 0}
     )

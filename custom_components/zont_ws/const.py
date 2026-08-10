@@ -41,12 +41,6 @@ PLATFORMS: tuple[Platform, ...] = (
     Platform.WATER_HEATER,
 )
 
-CONNECTION_TIMEOUT = 5.0
-COMMAND_TIMEOUT = 10.0
-CONTROLLER_INFO_TIMEOUT = 3.0
-WS_HEARTBEAT = 30.0
-RECONNECT_DELAYS: tuple[float, ...] = (1, 2, 4, 8, 16, 30)
-
 
 def connection_signal(entry_id: str) -> str:
     """Return the dispatcher signal for a config entry connection state."""

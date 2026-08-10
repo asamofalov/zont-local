@@ -5,10 +5,10 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from custom_components.zont_ws.client import ZontWsClient
 from custom_components.zont_ws.coordinator import ZontDataUpdateCoordinator
-from custom_components.zont_ws.object_export import ZontTemperatureExportManager
+from custom_components.zont_ws.export import ZontTemperatureExportManager
 from custom_components.zont_ws.object_platform import ZontObjectEntityManager
+from custom_components.zont_ws.protocol import ZontClient
 from custom_components.zont_ws.runtime import ZontRuntimeData
 
 
@@ -20,7 +20,7 @@ def _shutdown_mock(spec: type, name: str, calls: list[str]) -> MagicMock:
 
 async def test_shutdown_releases_resources_in_dependency_order() -> None:
     calls: list[str] = []
-    client = MagicMock(spec=ZontWsClient)
+    client = MagicMock(spec=ZontClient)
     client.async_stop = AsyncMock(side_effect=lambda: calls.append("client"))
     coordinator = _shutdown_mock(ZontDataUpdateCoordinator, "coordinator", calls)
     export_manager = _shutdown_mock(
@@ -47,7 +47,7 @@ async def test_shutdown_releases_resources_in_dependency_order() -> None:
 
 async def test_shutdown_continues_after_an_earlier_resource_fails() -> None:
     calls: list[str] = []
-    client = MagicMock(spec=ZontWsClient)
+    client = MagicMock(spec=ZontClient)
     client.async_stop = AsyncMock(side_effect=lambda: calls.append("client"))
     coordinator = _shutdown_mock(ZontDataUpdateCoordinator, "coordinator", calls)
     export_manager = _shutdown_mock(

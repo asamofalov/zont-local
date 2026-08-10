@@ -5,43 +5,52 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
-from custom_components.zont_ws.binary_sensor import (
-    HEATING_CIRCUIT_BINARY_SENSOR_DESCRIPTIONS_BY_SUBTYPE,
-    HEATING_CIRCUIT_FAULT_DESCRIPTION,
-    MIXER_BINARY_SENSOR_DESCRIPTIONS,
+from custom_components.zont_ws.binary_sensor import async_setup_entry
+from custom_components.zont_ws.const import DOMAIN, connection_signal
+from custom_components.zont_ws.coordinator import (
+    ZontDataUpdateCoordinator,
+)
+from custom_components.zont_ws.data import ZontControllerData, ZontData
+from custom_components.zont_ws.entities.analog_input import (
     ZontAnalogInputTriggeredBinarySensor,
+)
+from custom_components.zont_ws.entities.controller import (
     ZontCloudConnectedBinarySensor,
     ZontConnectedBinarySensor,
-    ZontHeatingCircuitBinarySensor,
-    ZontMixerBinarySensor,
-    ZontPumpRunningBinarySensor,
-    ZontRadioTriggeredBinarySensor,
-    ZontRelayFailedBinarySensor,
-    async_setup_entry,
 )
-from custom_components.zont_ws.client import ZontWsClient
-from custom_components.zont_ws.const import DOMAIN, connection_signal
-from custom_components.zont_ws.controller import (
+from custom_components.zont_ws.entities.heating.diagnostics import (
+    HEATING_CIRCUIT_BINARY_SENSOR_DESCRIPTIONS_BY_SUBTYPE,
+    HEATING_CIRCUIT_FAULT_DESCRIPTION,
+    ZontHeatingCircuitBinarySensor,
+)
+from custom_components.zont_ws.entities.mixer import (
+    MIXER_BINARY_SENSOR_DESCRIPTIONS,
+    ZontMixerBinarySensor,
+)
+from custom_components.zont_ws.entities.pump import ZontPumpRunningBinarySensor
+from custom_components.zont_ws.entities.radio import (
+    ZontRadioTriggeredBinarySensor,
+)
+from custom_components.zont_ws.entities.relay import (
+    ZontRelayFailedBinarySensor,
+)
+from custom_components.zont_ws.protocol import ZontClient
+from custom_components.zont_ws.protocol.controller import (
     ZontCommunicationChannel,
     ZontServerStatus,
 )
-from custom_components.zont_ws.coordinator import (
-    ZontControllerData,
-    ZontData,
-    ZontDataUpdateCoordinator,
-)
-from custom_components.zont_ws.heating_config import (
+from custom_components.zont_ws.protocol.heating_config import (
     ZontConsumerControlMode,
     ZontHeatingCircuitControlData,
     ZontHeatingCircuitInternalState,
     immutable_heating_controls,
     immutable_heating_states,
 )
-from custom_components.zont_ws.mixer import (
+from custom_components.zont_ws.protocol.mixer import (
     ZontMixerInternalState,
     immutable_mixer_states,
 )
-from custom_components.zont_ws.objects import (
+from custom_components.zont_ws.protocol.objects import (
     ZontAnalogInputData,
     ZontHeatingCircuitData,
     ZontMixerData,
@@ -52,7 +61,7 @@ from custom_components.zont_ws.objects import (
     ZontRelayData,
     immutable_objects,
 )
-from custom_components.zont_ws.relay import (
+from custom_components.zont_ws.protocol.relay import (
     ZontRelayInternalState,
     immutable_relay_states,
 )
@@ -70,7 +79,7 @@ def _object_entry(obj: ZontObject) -> MockConfigEntry:
         unique_id="ABCDEF123456",
         data={},
     )
-    client = MagicMock(spec=ZontWsClient)
+    client = MagicMock(spec=ZontClient)
     coordinator = MagicMock(spec=ZontDataUpdateCoordinator)
     coordinator.last_update_success = True
     coordinator.data = ZontData(
@@ -142,7 +151,7 @@ async def test_connection_state_updates(hass: HomeAssistant) -> None:
         unique_id="ABCDEF123456",
         data={},
     )
-    client = MagicMock(spec=ZontWsClient)
+    client = MagicMock(spec=ZontClient)
     client.is_connected = True
     coordinator = MagicMock(spec=ZontDataUpdateCoordinator)
     entry.runtime_data = ZontRuntimeData(client, coordinator)
@@ -172,7 +181,7 @@ async def test_cloud_connection_uses_shared_snapshot(hass: HomeAssistant) -> Non
         unique_id="ABCDEF123456",
         data={},
     )
-    client = MagicMock(spec=ZontWsClient)
+    client = MagicMock(spec=ZontClient)
     coordinator = MagicMock(spec=ZontDataUpdateCoordinator)
     coordinator.last_update_success = True
     coordinator.data = ZontData(

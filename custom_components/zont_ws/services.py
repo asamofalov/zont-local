@@ -16,13 +16,13 @@ from homeassistant.core import (
 )
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 
-from .client import (
+from .const import DOMAIN, SERVICE_SEND_BULK, SERVICE_SEND_COMMAND
+from .protocol import (
+    ZontClient,
     ZontCommandTimeoutError,
     ZontConnectionError,
     ZontProtocolError,
-    ZontWsClient,
 )
-from .const import DOMAIN, SERVICE_SEND_BULK, SERVICE_SEND_COMMAND
 from .runtime import ZontRuntimeData
 
 _LOGGER = logging.getLogger(__name__)
@@ -98,7 +98,7 @@ def async_setup_services(hass: HomeAssistant) -> None:
     )
 
 
-def _get_loaded_client(hass: HomeAssistant) -> ZontWsClient:
+def _get_loaded_client(hass: HomeAssistant) -> ZontClient:
     """Return the singleton loaded client or raise a translated error."""
     entries = hass.config_entries.async_entries(DOMAIN)
     if not entries:
@@ -119,7 +119,7 @@ def _get_loaded_client(hass: HomeAssistant) -> ZontWsClient:
 
 
 async def _async_send(
-    client: ZontWsClient,
+    client: ZontClient,
     command_id: int,
     command: str,
 ) -> dict[str, Any]:

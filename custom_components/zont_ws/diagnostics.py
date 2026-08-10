@@ -9,7 +9,7 @@ from homeassistant.const import CONF_HOST
 from homeassistant.core import HomeAssistant
 
 from .const import CONF_CONTROLLER
-from .controller import ZontControllerInfo
+from .protocol.controller import ZontControllerInfo
 from .runtime import ZontRuntimeData
 
 

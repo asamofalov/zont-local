@@ -4,19 +4,18 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from custom_components.zont_ws.client import ZontWsClient
 from custom_components.zont_ws.const import CONF_CONTROLLER, DOMAIN
-from custom_components.zont_ws.controller import (
+from custom_components.zont_ws.coordinator import (
+    ZontDataUpdateCoordinator,
+)
+from custom_components.zont_ws.data import ZontControllerData, ZontData
+from custom_components.zont_ws.diagnostics import async_get_config_entry_diagnostics
+from custom_components.zont_ws.protocol import ZontClient
+from custom_components.zont_ws.protocol.controller import (
     ZontCommunicationChannel,
     ZontControllerInfo,
     ZontServerStatus,
 )
-from custom_components.zont_ws.coordinator import (
-    ZontControllerData,
-    ZontData,
-    ZontDataUpdateCoordinator,
-)
-from custom_components.zont_ws.diagnostics import async_get_config_entry_diagnostics
 from custom_components.zont_ws.runtime import ZontRuntimeData
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
@@ -38,7 +37,7 @@ async def test_diagnostics_exclude_credentials(hass: HomeAssistant) -> None:
             ).as_dict(),
         },
     )
-    client = MagicMock(spec=ZontWsClient)
+    client = MagicMock(spec=ZontClient)
     client.is_connected = True
     client.last_error = None
     client.reconnect_count = 2

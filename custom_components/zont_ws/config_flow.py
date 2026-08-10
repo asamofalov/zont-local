@@ -23,13 +23,6 @@ from homeassistant.helpers.selector import (
     TextSelectorType,
 )
 
-from .client import (
-    ZontAuthenticationError,
-    ZontConnectionError,
-    ZontCredentials,
-    ZontProtocolError,
-    async_open_temporary_request_session,
-)
 from .const import (
     CONF_AUTO_IMPORT_NEW_OBJECTS,
     CONF_AUTO_TITLE,
@@ -41,15 +34,7 @@ from .const import (
     CONFIG_ENTRY_VERSION,
     DOMAIN,
 )
-from .controller import (
-    ZontControllerInfo,
-    ZontIdentificationError,
-    async_identify_controller,
-    async_identify_controller_from_requests,
-    controller_entry_title,
-    controller_websocket_url,
-)
-from .flow_helpers import (
+from .flows.schemas import (
     ERROR_CANNOT_CONNECT,
     ERROR_CANNOT_IDENTIFY,
     ERROR_CANNOT_READ_DEVICES,
@@ -69,17 +54,32 @@ from .flow_helpers import (
     _validate_scan_interval,
     _validate_selected_object_ids,
 )
-from .heating_config import ZontHeatingModeConfiguration
-from .heating_modes import (
+from .object_import import importable_object_descriptors
+from .presentation import controller_entry_title
+from .protocol import (
+    ZontAuthenticationError,
+    ZontConnectionError,
+    ZontCredentials,
+    ZontProtocolError,
+    async_open_temporary_request_session,
+)
+from .protocol.controller import (
+    ZontControllerInfo,
+    ZontIdentificationError,
+    async_identify_controller,
+    async_identify_controller_from_requests,
+    controller_websocket_url,
+)
+from .protocol.discovery import (
+    ZontObjectDiscoveryError,
+    async_discover_objects_from_requests,
+)
+from .protocol.heating_config import ZontHeatingModeConfiguration
+from .protocol.heating_modes import (
     ZontHeatingModeDiscovery,
     async_discover_heating_modes_from_requests,
 )
-from .object_discovery import (
-    ZontObjectDiscoveryError,
-    async_discover_importable_objects_from_requests,
-)
-from .object_import import importable_object_descriptors
-from .objects import ZontObject
+from .protocol.objects import ZontObject
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -393,7 +393,7 @@ class ZontWsConfigFlow(
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> config_entries.OptionsFlow:
         """Create the options flow for controller behavior."""
-        from .options_flow import ZontWsOptionsFlow
+        from .flows.options import ZontWsOptionsFlow
 
         return ZontWsOptionsFlow()
 
@@ -438,7 +438,7 @@ async def _async_identify_and_discover_configuration(
     ) as requests:
         info = await async_identify_controller_from_requests(requests)
         discovery = await async_discover_heating_modes_from_requests(requests)
-        objects = await async_discover_importable_objects_from_requests(requests)
+        objects = await async_discover_objects_from_requests(requests)
     return info, discovery, dict(objects)
 
 
