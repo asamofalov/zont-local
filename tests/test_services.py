@@ -11,7 +11,7 @@ from custom_components.zont_ws.const import (
     SERVICE_SEND_BULK,
     SERVICE_SEND_COMMAND,
 )
-from custom_components.zont_ws.coordinator import ZontRuntimeData
+from custom_components.zont_ws.runtime import ZontRuntimeData
 from custom_components.zont_ws.services import async_setup_services
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME

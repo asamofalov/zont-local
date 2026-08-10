@@ -17,7 +17,6 @@ from custom_components.zont_ws.const import (
 from custom_components.zont_ws.coordinator import (
     ZontControllerData,
     ZontData,
-    ZontRuntimeData,
 )
 from custom_components.zont_ws.objects import (
     ZontDigitalTemperatureSensorData,
@@ -26,6 +25,7 @@ from custom_components.zont_ws.objects import (
     ZontRelayData,
     immutable_objects,
 )
+from custom_components.zont_ws.runtime import ZontRuntimeData
 from custom_components.zont_ws.sensor import async_setup_entry as setup_sensor
 from custom_components.zont_ws.switch import async_setup_entry as setup_switch
 from custom_components.zont_ws.water_heater import (

@@ -23,7 +23,7 @@ from .client import (
     ZontWsClient,
 )
 from .const import DOMAIN, SERVICE_SEND_BULK, SERVICE_SEND_COMMAND
-from .coordinator import ZontRuntimeData
+from .runtime import ZontRuntimeData
 
 _LOGGER = logging.getLogger(__name__)
 

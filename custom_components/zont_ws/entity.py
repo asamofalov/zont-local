@@ -10,12 +10,12 @@ from .const import DOMAIN
 from .coordinator import (
     ZontControllerData,
     ZontDataUpdateCoordinator,
-    ZontRuntimeData,
 )
 from .objects import (
     ZontObject,
     object_device_identifier,
 )
+from .runtime import ZontRuntimeData
 
 
 class ZontEntityMixin:

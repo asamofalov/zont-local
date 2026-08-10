@@ -25,7 +25,6 @@ from .client import (
     ZontProtocolError,
 )
 from .const import CONF_HEATING_OFF_MODE_ID, DOMAIN
-from .coordinator import ZontRuntimeData
 from .entity import ZontObjectCoordinatorEntity
 from .heating import (
     ZontCommandRejectedError,
@@ -46,6 +45,7 @@ from .heating_modes import (
 from .object_import import object_import_configuration
 from .object_platform import ZontObjectEntityReconciler
 from .objects import ZontHeatingCircuitData, ZontHeatingCircuitMode
+from .runtime import ZontRuntimeData
 
 TARGET_TEMPERATURE_STEP = 1.0
 

@@ -162,11 +162,6 @@ def object_import_configuration(
     )
 
 
-def object_is_imported(options: Mapping[str, Any], object_id: int) -> bool:
-    """Return whether an object is selected for Home Assistant exposure."""
-    return object_import_configuration(options).imports(object_id)
-
-
 def _valid_object_id_set(value: Any) -> frozenset[int] | None:
     """Return valid non-negative object IDs or None for malformed storage."""
     if not isinstance(value, list | tuple) or any(

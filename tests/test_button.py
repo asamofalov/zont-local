@@ -8,7 +8,7 @@ import pytest
 from custom_components.zont_ws.button import ZontRestartButton
 from custom_components.zont_ws.client import ZontConnectionError, ZontWsClient
 from custom_components.zont_ws.const import DOMAIN, connection_signal
-from custom_components.zont_ws.coordinator import ZontRuntimeData
+from custom_components.zont_ws.runtime import ZontRuntimeData
 from homeassistant.components.button import ButtonDeviceClass
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant

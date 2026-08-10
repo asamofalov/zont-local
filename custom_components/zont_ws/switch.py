@@ -19,7 +19,6 @@ from .client import (
     ZontProtocolError,
 )
 from .const import DOMAIN
-from .coordinator import ZontRuntimeData
 from .entity import ZontObjectCoordinatorEntity
 from .heating import ZontCommandRejectedError, ZontCommandStateError
 from .object_import import object_import_configuration
@@ -30,6 +29,7 @@ from .relay import (
     async_set_relay_state_and_confirm,
     relay_logical_state,
 )
+from .runtime import ZontRuntimeData
 
 
 async def async_setup_entry(

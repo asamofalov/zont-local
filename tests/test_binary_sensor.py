@@ -29,7 +29,6 @@ from custom_components.zont_ws.coordinator import (
     ZontControllerData,
     ZontData,
     ZontDataUpdateCoordinator,
-    ZontRuntimeData,
 )
 from custom_components.zont_ws.heating_config import (
     ZontConsumerControlMode,
@@ -57,6 +56,7 @@ from custom_components.zont_ws.relay import (
     ZontRelayInternalState,
     immutable_relay_states,
 )
+from custom_components.zont_ws.runtime import ZontRuntimeData
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send

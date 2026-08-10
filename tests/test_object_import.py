@@ -15,7 +15,6 @@ from custom_components.zont_ws.const import (
 from custom_components.zont_ws.object_import import (
     importable_object_descriptor,
     object_import_configuration,
-    object_is_imported,
 )
 from custom_components.zont_ws.objects import (
     ZontAnalogInputData,
@@ -89,9 +88,11 @@ def test_explicit_selection_distinguishes_new_and_excluded_objects() -> None:
         CONF_AUTO_IMPORT_NEW_OBJECTS: True,
     }
 
-    assert object_is_imported(options, 1)
-    assert not object_is_imported(options, 2)
-    assert object_is_imported(options, 3)
+    configuration = object_import_configuration(options)
+
+    assert configuration.imports(1)
+    assert not configuration.imports(2)
+    assert configuration.imports(3)
 
 
 def test_auto_import_can_be_disabled() -> None:
@@ -101,8 +102,10 @@ def test_auto_import_can_be_disabled() -> None:
         CONF_AUTO_IMPORT_NEW_OBJECTS: False,
     }
 
-    assert object_is_imported(options, 1)
-    assert not object_is_imported(options, 2)
+    configuration = object_import_configuration(options)
+
+    assert configuration.imports(1)
+    assert not configuration.imports(2)
 
 
 def test_export_target_is_never_imported_as_a_zont_device() -> None:

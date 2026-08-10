@@ -35,7 +35,6 @@ from custom_components.zont_ws.coordinator import (
     ZontControllerData,
     ZontData,
     ZontDataUpdateCoordinator,
-    ZontRuntimeData,
 )
 from custom_components.zont_ws.heating_config import (
     ZontConsumerControlMode,
@@ -58,6 +57,7 @@ from custom_components.zont_ws.objects import (
     ZontRelayData,
     immutable_objects,
 )
+from custom_components.zont_ws.runtime import ZontRuntimeData
 from homeassistant.config_entries import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.const import (
     CONF_HOST,
@@ -1527,11 +1527,9 @@ async def test_setup_maps_client_errors(
 
 async def test_unload_stops_client(hass: HomeAssistant) -> None:
     entry = MockConfigEntry(domain=DOMAIN, data=ENTRY_DATA)
-    client = MagicMock(spec=ZontWsClient)
-    client.async_stop = AsyncMock()
-    coordinator = MagicMock(spec=ZontDataUpdateCoordinator)
-    coordinator.async_shutdown = AsyncMock()
-    entry.runtime_data = ZontRuntimeData(client, coordinator)
+    runtime_data = MagicMock(spec=ZontRuntimeData)
+    runtime_data.async_shutdown = AsyncMock()
+    entry.runtime_data = runtime_data
 
     with patch.object(
         hass.config_entries,
@@ -1540,8 +1538,7 @@ async def test_unload_stops_client(hass: HomeAssistant) -> None:
     ):
         assert await async_unload_entry(hass, entry)
 
-    client.async_stop.assert_awaited_once()
-    coordinator.async_shutdown.assert_awaited_once()
+    runtime_data.async_shutdown.assert_awaited_once_with()
 
 
 async def test_options_update_is_applied_without_reload(

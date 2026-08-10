@@ -133,16 +133,6 @@ async def _async_open_websocket(
         raise ZontConnectionError("Unable to open the WebSocket") from err
 
 
-async def async_validate_connection(
-    session: ClientSession,
-    url: str,
-    credentials: ZontCredentials,
-) -> None:
-    """Validate a URL and credentials without starting background work."""
-    ws = await _async_open_websocket(session, url, credentials)
-    await _async_close_websocket(ws)
-
-
 class ZontTemporaryRequestSession:
     """Run serialized requests on a short-lived authenticated connection."""
 
@@ -410,70 +400,83 @@ class ZontWsClient:
                 ws = self._ws
                 if ws is None:
                     try:
-                        ws = await _async_open_websocket(
-                            self._session, self._url, self._credentials
-                        )
+                        ws = await self._async_open_replacement_connection()
                     except asyncio.CancelledError:
                         raise
                     except ZontAuthenticationError:
                         self._record_error("authentication")
                         self._request_reauthentication()
                         return
-                    except ZontProtocolError:
-                        self._record_error("protocol")
+
+                    if ws is None:
+                        if self._stop.is_set():
+                            return
                         await self._async_wait_before_reconnect(reconnect_index)
-                        reconnect_index = min(
-                            reconnect_index + 1, len(RECONNECT_DELAYS) - 1
-                        )
-                        continue
-                    except ZontConnectionError:
-                        self._record_error("connection")
-                        await self._async_wait_before_reconnect(reconnect_index)
-                        reconnect_index = min(
-                            reconnect_index + 1, len(RECONNECT_DELAYS) - 1
-                        )
+                        reconnect_index = self._next_reconnect_index(reconnect_index)
                         continue
 
-                    if self._stop.is_set():
-                        await _async_close_websocket(ws)
-                        return
-
-                    self._ws = ws
-                    self._reconnect_count += 1
                     reconnect_index = 0
-                    self._set_connected(True)
-                    if self._outage_logged:
-                        _LOGGER.info("ZONT WebSocket connection restored")
-                        self._outage_logged = False
 
-                try:
-                    await self._async_reader_loop(ws)
-                except asyncio.CancelledError:
-                    raise
-                except ZontProtocolError:
-                    self._record_error("protocol")
-                except ZontConnectionError:
-                    self._record_error("connection")
-                finally:
-                    if self._ws is ws:
-                        self._ws = None
-                    self._set_connected(False)
-                    self._fail_pending(
-                        ZontConnectionError("The ZONT connection was lost")
-                    )
-                    await _async_close_websocket(ws)
+                await self._async_run_connection(ws)
 
                 if not self._stop.is_set():
                     await self._async_wait_before_reconnect(reconnect_index)
-                    reconnect_index = min(
-                        reconnect_index + 1, len(RECONNECT_DELAYS) - 1
-                    )
+                    reconnect_index = self._next_reconnect_index(reconnect_index)
         finally:
             ws = self._ws
             self._ws = None
             self._set_connected(False)
             self._fail_pending(ZontConnectionError("The ZONT connection was closed"))
             await _async_close_websocket(ws)
+
+    async def _async_open_replacement_connection(
+        self,
+    ) -> ClientWebSocketResponse | None:
+        """Open a replacement connection or record a recoverable failure."""
+        try:
+            ws = await _async_open_websocket(
+                self._session, self._url, self._credentials
+            )
+        except ZontProtocolError:
+            self._record_error("protocol")
+            return None
+        except ZontConnectionError:
+            self._record_error("connection")
+            return None
+
+        if self._stop.is_set():
+            await _async_close_websocket(ws)
+            return None
+
+        self._ws = ws
+        self._reconnect_count += 1
+        self._set_connected(True)
+        if self._outage_logged:
+            _LOGGER.info("ZONT WebSocket connection restored")
+            self._outage_logged = False
+        return ws
+
+    async def _async_run_connection(self, ws: ClientWebSocketResponse) -> None:
+        """Read one connection until it fails, then release its resources."""
+        try:
+            await self._async_reader_loop(ws)
+        except asyncio.CancelledError:
+            raise
+        except ZontProtocolError:
+            self._record_error("protocol")
+        except ZontConnectionError:
+            self._record_error("connection")
+        finally:
+            if self._ws is ws:
+                self._ws = None
+            self._set_connected(False)
+            self._fail_pending(ZontConnectionError("The ZONT connection was lost"))
+            await _async_close_websocket(ws)
+
+    @staticmethod
+    def _next_reconnect_index(index: int) -> int:
+        """Return the next capped reconnect delay index."""
+        return min(index + 1, len(RECONNECT_DELAYS) - 1)
 
     async def _async_reader_loop(self, ws: ClientWebSocketResponse) -> None:
         """Read and classify messages from one WebSocket."""
@@ -624,20 +627,13 @@ class ZontWsClient:
             )
             self._pending_commands[command_id] = future
             try:
-                try:
-                    await self._async_send_payload(
-                        ws, {"id": command_id, "cmd": command}
-                    )
-                    async with asyncio.timeout(response_timeout):
-                        return await future
-                except asyncio.CancelledError:
-                    await self._async_invalidate_connection(ws)
-                    raise
-                except TimeoutError as err:
-                    await self._async_invalidate_connection(ws)
-                    raise ZontCommandTimeoutError(
-                        f"No response for command {command_id}"
-                    ) from err
+                return await self._async_send_and_wait(
+                    ws,
+                    {"id": command_id, "cmd": command},
+                    future,
+                    response_timeout,
+                    ZontCommandTimeoutError(f"No response for command {command_id}"),
+                )
             finally:
                 if self._pending_commands.get(command_id) is future:
                     self._pending_commands.pop(command_id, None)
@@ -667,25 +663,19 @@ class ZontWsClient:
             )
             self._pending_named_command = future
             try:
-                try:
-                    await self._async_send_payload(
-                        ws,
-                        {
-                            "name": normalized_name,
-                            "type": object_type,
-                            "cmd": command,
-                        },
-                    )
-                    async with asyncio.timeout(response_timeout):
-                        return await future
-                except asyncio.CancelledError:
-                    await self._async_invalidate_connection(ws)
-                    raise
-                except TimeoutError as err:
-                    await self._async_invalidate_connection(ws)
-                    raise ZontCommandTimeoutError(
+                return await self._async_send_and_wait(
+                    ws,
+                    {
+                        "name": normalized_name,
+                        "type": object_type,
+                        "cmd": command,
+                    },
+                    future,
+                    response_timeout,
+                    ZontCommandTimeoutError(
                         f"No response for named command {normalized_name!r}"
-                    ) from err
+                    ),
+                )
             finally:
                 if self._pending_named_command is future:
                     self._pending_named_command = None
@@ -708,18 +698,15 @@ class ZontWsClient:
             )
             self._pending_ids = future
             try:
-                try:
-                    await self._async_send_payload(ws, {"req_ids": object_type})
-                    async with asyncio.timeout(response_timeout):
-                        return await future
-                except asyncio.CancelledError:
-                    await self._async_invalidate_connection(ws)
-                    raise
-                except TimeoutError as err:
-                    await self._async_invalidate_connection(ws)
-                    raise ZontRequestTimeoutError(
+                return await self._async_send_and_wait(
+                    ws,
+                    {"req_ids": object_type},
+                    future,
+                    response_timeout,
+                    ZontRequestTimeoutError(
                         f"No object ID response for type {object_type}"
-                    ) from err
+                    ),
+                )
             finally:
                 if self._pending_ids is future:
                     self._pending_ids = None
@@ -742,20 +729,15 @@ class ZontWsClient:
             )
             self._pending_states[object_id] = future
             try:
-                try:
-                    await self._async_send_payload(
-                        ws, {"id": object_id, "req_state": 0}
-                    )
-                    async with asyncio.timeout(response_timeout):
-                        return await future
-                except asyncio.CancelledError:
-                    await self._async_invalidate_connection(ws)
-                    raise
-                except TimeoutError as err:
-                    await self._async_invalidate_connection(ws)
-                    raise ZontRequestTimeoutError(
+                return await self._async_send_and_wait(
+                    ws,
+                    {"id": object_id, "req_state": 0},
+                    future,
+                    response_timeout,
+                    ZontRequestTimeoutError(
                         f"No state response for object {object_id}"
-                    ) from err
+                    ),
+                )
             finally:
                 if self._pending_states.get(object_id) is future:
                     self._pending_states.pop(object_id, None)
@@ -776,18 +758,13 @@ class ZontWsClient:
             future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
             self._pending_scmd = future
             try:
-                try:
-                    await self._async_send_payload(ws, {"scmd": command})
-                    async with asyncio.timeout(response_timeout):
-                        return await future
-                except asyncio.CancelledError:
-                    await self._async_invalidate_connection(ws)
-                    raise
-                except TimeoutError as err:
-                    await self._async_invalidate_connection(ws)
-                    raise ZontRequestTimeoutError(
-                        "No response for system command"
-                    ) from err
+                return await self._async_send_and_wait(
+                    ws,
+                    {"scmd": command},
+                    future,
+                    response_timeout,
+                    ZontRequestTimeoutError("No response for system command"),
+                )
             finally:
                 if self._pending_scmd is future:
                     self._pending_scmd = None
@@ -840,6 +817,26 @@ class ZontWsClient:
         except (ClientError, OSError) as err:
             await self._async_invalidate_connection(ws)
             raise ZontConnectionError("Unable to send the request") from err
+
+    async def _async_send_and_wait[T](
+        self,
+        ws: ClientWebSocketResponse,
+        payload: Mapping[str, Any],
+        future: asyncio.Future[T],
+        response_timeout: float,
+        timeout_error: ZontRequestTimeoutError,
+    ) -> T:
+        """Send a request and invalidate its connection on cancellation or timeout."""
+        try:
+            await self._async_send_payload(ws, payload)
+            async with asyncio.timeout(response_timeout):
+                return await future
+        except asyncio.CancelledError:
+            await self._async_invalidate_connection(ws)
+            raise
+        except TimeoutError as err:
+            await self._async_invalidate_connection(ws)
+            raise timeout_error from err
 
     async def _async_invalidate_connection(self, ws: ClientWebSocketResponse) -> None:
         """Close a broken connection and wake the supervisor."""

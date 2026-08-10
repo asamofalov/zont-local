@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 from custom_components.zont_ws import config_flow as zont_config_flow
@@ -19,26 +19,15 @@ from custom_components.zont_ws.const import (
     CONF_CONTROLLER,
     CONF_DHW_ON_TEMPERATURE,
     CONF_EXCLUDED_OBJECT_IDS,
-    CONF_EXPORT_SOURCE,
-    CONF_EXPORT_TARGET_ID,
-    CONF_EXPORT_TARGET_NAME,
     CONF_HEATING_OFF_MODE_ID,
     CONF_IMPORTED_OBJECT_IDS,
-    CONF_TEMPERATURE_EXPORTS,
     DEFAULT_SCAN_INTERVAL,
     DHW_DEFAULT_ON_TEMPERATURE,
     DOMAIN,
-    MAX_SCAN_INTERVAL,
-    MIN_SCAN_INTERVAL,
 )
 from custom_components.zont_ws.controller import (
     ZontControllerInfo,
     ZontIdentificationError,
-)
-from custom_components.zont_ws.coordinator import (
-    ZontControllerData,
-    ZontData,
-    ZontRuntimeData,
 )
 from custom_components.zont_ws.heating_config import (
     ZontHeatingCircuitInternalState,
@@ -46,20 +35,14 @@ from custom_components.zont_ws.heating_config import (
 )
 from custom_components.zont_ws.heating_modes import ZontHeatingModeDiscovery
 from custom_components.zont_ws.objects import (
-    ZontDigitalTemperatureSensorData,
     ZontHeatingCircuitData,
 )
 from homeassistant import config_entries, data_entry_flow
-from homeassistant.components.sensor import SensorDeviceClass
-from homeassistant.config_entries import ConfigEntryState, ConfigFlowResult
 from homeassistant.const import (
-    ATTR_DEVICE_CLASS,
-    ATTR_UNIT_OF_MEASUREMENT,
     CONF_HOST,
     CONF_PASSWORD,
     CONF_SCAN_INTERVAL,
     CONF_USERNAME,
-    UnitOfTemperature,
 )
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -110,15 +93,6 @@ OFF_MODE_DISCOVERY = ZontHeatingModeDiscovery(
         )
     },
 )
-
-
-def _mock_mode_discovery(monkeypatch, discovery=OFF_MODE_DISCOVERY) -> AsyncMock:
-    mock = AsyncMock(return_value=discovery)
-    monkeypatch.setattr(
-        "custom_components.zont_ws.config_flow.async_discover_heating_modes",
-        mock,
-    )
-    return mock
 
 
 def _mock_initial_discovery(monkeypatch, discovery=OFF_MODE_DISCOVERY) -> AsyncMock:
@@ -272,126 +246,6 @@ async def test_user_flow_requires_an_all_off_mode(
     assert result["reason"] == "no_off_mode"
 
 
-async def test_options_flow_updates_off_mode(hass: HomeAssistant, monkeypatch) -> None:
-    second_mode = ZontHeatingModeConfiguration(
-        20505,
-        "Отъезд",
-        {8362: 0, 20496: 0},
-    )
-    discovery = ZontHeatingModeDiscovery(
-        circuits=OFF_MODE_DISCOVERY.circuits,
-        states={
-            circuit_id: ZontHeatingCircuitInternalState(
-                state.object_id,
-                state.target_sensor_id,
-                state.status_register,
-                (OFF_MODE_ID, second_mode.object_id),
-            )
-            for circuit_id, state in OFF_MODE_DISCOVERY.states.items()
-        },
-        modes={**OFF_MODE_DISCOVERY.modes, second_mode.object_id: second_mode},
-    )
-    discover = _mock_mode_discovery(monkeypatch, discovery)
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title=AUTO_TITLE,
-        unique_id=SERIAL_NUMBER,
-        data=ENTRY_DATA,
-        options={CONF_HEATING_OFF_MODE_ID: OFF_MODE_ID},
-    )
-    entry.add_to_hass(hass)
-
-    result = await hass.config_entries.options.async_init(entry.entry_id)
-    assert result["type"] is data_entry_flow.FlowResultType.MENU
-
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"next_step_id": "general"}
-    )
-    assert result["type"] is data_entry_flow.FlowResultType.FORM
-    assert result["step_id"] == "general"
-
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"],
-        {
-            CONF_HEATING_OFF_MODE_ID: str(second_mode.object_id),
-            CONF_DHW_ON_TEMPERATURE: 55,
-            CONF_SCAN_INTERVAL: MAX_SCAN_INTERVAL,
-        },
-    )
-
-    assert result["type"] is data_entry_flow.FlowResultType.CREATE_ENTRY
-    assert entry.options == {
-        CONF_HEATING_OFF_MODE_ID: second_mode.object_id,
-        CONF_DHW_ON_TEMPERATURE: 55.0,
-        CONF_SCAN_INTERVAL: MAX_SCAN_INTERVAL,
-    }
-    discover.assert_awaited_once()
-
-
-async def test_options_flow_updates_imported_devices(
-    hass: HomeAssistant, monkeypatch
-) -> None:
-    discover_objects = AsyncMock(return_value=(dict(OFF_MODE_DISCOVERY.circuits), None))
-    monkeypatch.setattr(
-        zont_config_flow,
-        "_async_get_entry_objects",
-        discover_objects,
-    )
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title=AUTO_TITLE,
-        unique_id=SERIAL_NUMBER,
-        data=ENTRY_DATA,
-        options={
-            CONF_HEATING_OFF_MODE_ID: OFF_MODE_ID,
-            CONF_DHW_ON_TEMPERATURE: 55.0,
-            CONF_SCAN_INTERVAL: DEFAULT_SCAN_INTERVAL,
-        },
-    )
-    entry.add_to_hass(hass)
-
-    result = await hass.config_entries.options.async_init(entry.entry_id)
-    assert result["type"] is data_entry_flow.FlowResultType.MENU
-
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"next_step_id": "devices"}
-    )
-
-    assert result["type"] is data_entry_flow.FlowResultType.FORM
-    assert result["step_id"] == "devices"
-    selectors = {
-        marker.schema: selector
-        for marker, selector in result["data_schema"].schema.items()
-    }
-    labels = [
-        option["label"]
-        for option in selectors[CONF_IMPORTED_OBJECT_IDS].config["options"]
-    ]
-    assert labels == [
-        "Контур ГВС - ГВС (ID 8362)",
-        "Контур потребителя - Радиаторы (ID 20496)",
-    ]
-
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"],
-        {
-            CONF_IMPORTED_OBJECT_IDS: ["8362"],
-            CONF_AUTO_IMPORT_NEW_OBJECTS: False,
-        },
-    )
-
-    assert result["type"] is data_entry_flow.FlowResultType.CREATE_ENTRY
-    assert entry.options == {
-        CONF_HEATING_OFF_MODE_ID: OFF_MODE_ID,
-        CONF_DHW_ON_TEMPERATURE: 55.0,
-        CONF_SCAN_INTERVAL: DEFAULT_SCAN_INTERVAL,
-        CONF_IMPORTED_OBJECT_IDS: [8362],
-        CONF_EXCLUDED_OBJECT_IDS: [20496],
-        CONF_AUTO_IMPORT_NEW_OBJECTS: False,
-    }
-    discover_objects.assert_awaited_once_with(hass, entry)
-
-
 async def test_initial_flow_allows_empty_device_selection(
     hass: HomeAssistant, monkeypatch
 ) -> None:
@@ -417,300 +271,6 @@ async def test_initial_flow_allows_empty_device_selection(
     assert result["options"][CONF_IMPORTED_OBJECT_IDS] == []
     assert result["options"][CONF_EXCLUDED_OBJECT_IDS] == [8362, 20496]
     assert result["options"][CONF_AUTO_IMPORT_NEW_OBJECTS] is False
-
-
-async def test_loaded_device_options_reuse_coordinator_connection(
-    hass: HomeAssistant, monkeypatch
-) -> None:
-    temporary_discovery = AsyncMock()
-    monkeypatch.setattr(
-        zont_config_flow,
-        "_async_discover_objects",
-        temporary_discovery,
-    )
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title=AUTO_TITLE,
-        unique_id=SERIAL_NUMBER,
-        data=ENTRY_DATA,
-        options={CONF_HEATING_OFF_MODE_ID: OFF_MODE_ID},
-    )
-    entry.add_to_hass(hass)
-    client = MagicMock(spec=ZontWsClient)
-    client.is_connected = True
-    client.async_stop = AsyncMock()
-    coordinator = MagicMock()
-    coordinator.data = ZontData(
-        controller=ZontControllerData(info=CONTROLLER_INFO),
-        objects=OFF_MODE_DISCOVERY.circuits,
-    )
-    coordinator.last_update_success = True
-    coordinator.async_request_refresh = AsyncMock()
-    coordinator.async_shutdown = AsyncMock()
-    entry.runtime_data = ZontRuntimeData(client, coordinator)
-    entry.mock_state(hass, ConfigEntryState.LOADED)
-
-    result = await hass.config_entries.options.async_init(entry.entry_id)
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"next_step_id": "devices"}
-    )
-
-    assert result["type"] is data_entry_flow.FlowResultType.FORM
-    assert result["step_id"] == "devices"
-    coordinator.async_request_refresh.assert_awaited_once()
-    temporary_discovery.assert_not_awaited()
-
-
-@pytest.mark.parametrize("temperature", [4.9, 75.1, float("nan"), True, "invalid"])
-def test_dhw_on_temperature_validation_rejects_invalid_values(
-    temperature: object,
-) -> None:
-    assert (
-        zont_config_flow._validate_dhw_on_temperature(
-            {CONF_DHW_ON_TEMPERATURE: temperature}
-        )
-        is None
-    )
-
-
-@pytest.mark.parametrize(
-    "interval",
-    [
-        MIN_SCAN_INTERVAL - 1,
-        MAX_SCAN_INTERVAL + 1,
-        10.5,
-        float("nan"),
-        True,
-        "60",
-    ],
-)
-def test_scan_interval_validation_rejects_invalid_values(interval: object) -> None:
-    assert (
-        zont_config_flow._validate_scan_interval({CONF_SCAN_INTERVAL: interval}) is None
-    )
-
-
-@pytest.mark.parametrize("interval", [MIN_SCAN_INTERVAL, 60.0, MAX_SCAN_INTERVAL])
-def test_scan_interval_validation_accepts_integer_seconds(
-    interval: int | float,
-) -> None:
-    assert zont_config_flow._validate_scan_interval(
-        {CONF_SCAN_INTERVAL: interval}
-    ) == int(interval)
-
-
-async def test_loaded_options_flow_reuses_coordinator_data(
-    hass: HomeAssistant, monkeypatch
-) -> None:
-    """The options flow must not open a second controller connection."""
-    discover = _mock_mode_discovery(monkeypatch)
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title=AUTO_TITLE,
-        unique_id=SERIAL_NUMBER,
-        data=ENTRY_DATA,
-        options={CONF_HEATING_OFF_MODE_ID: OFF_MODE_ID},
-    )
-    entry.add_to_hass(hass)
-    client = MagicMock(spec=ZontWsClient)
-    client.is_connected = True
-    coordinator = MagicMock()
-    coordinator.data = ZontData(
-        controller=ZontControllerData(info=CONTROLLER_INFO),
-        objects=OFF_MODE_DISCOVERY.circuits,
-        heating_states=OFF_MODE_DISCOVERY.states,
-        heating_modes=OFF_MODE_DISCOVERY.modes,
-    )
-    coordinator.async_request_refresh = AsyncMock()
-    entry.runtime_data = ZontRuntimeData(client, coordinator)
-    entry.mock_state(hass, ConfigEntryState.LOADED)
-
-    result = await hass.config_entries.options.async_init(entry.entry_id)
-
-    assert result["type"] is data_entry_flow.FlowResultType.MENU
-
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"next_step_id": "general"}
-    )
-
-    assert result["type"] is data_entry_flow.FlowResultType.FORM
-    assert result["step_id"] == "general"
-    assert result["errors"] == {}
-    discover.assert_not_awaited()
-    coordinator.async_request_refresh.assert_not_awaited()
-
-
-def _loaded_export_entry(
-    hass: HomeAssistant,
-    *,
-    objects: dict[int, ZontDigitalTemperatureSensorData],
-    options: dict | None = None,
-) -> tuple[MockConfigEntry, MagicMock, MagicMock]:
-    """Create a loaded config entry backed by one mocked runtime connection."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title=AUTO_TITLE,
-        unique_id=SERIAL_NUMBER,
-        data=ENTRY_DATA,
-        options=options or {CONF_HEATING_OFF_MODE_ID: OFF_MODE_ID},
-    )
-    entry.add_to_hass(hass)
-    client = MagicMock(spec=ZontWsClient)
-    client.is_connected = True
-    client.async_get_object_state = AsyncMock()
-    client.async_send_command = AsyncMock()
-    client.async_send_named_command = AsyncMock()
-    coordinator = MagicMock()
-    coordinator.data = ZontData(
-        controller=ZontControllerData(info=CONTROLLER_INFO),
-        objects=objects,
-    )
-    coordinator.last_update_success = True
-    coordinator.async_request_refresh = AsyncMock()
-    entry.runtime_data = ZontRuntimeData(client, coordinator)
-    entry.mock_state(hass, ConfigEntryState.LOADED)
-    return entry, client, coordinator
-
-
-async def _open_export_options(
-    hass: HomeAssistant,
-    entry: MockConfigEntry,
-    step_id: str,
-) -> ConfigFlowResult:
-    """Open one temperature-export branch of the options flow."""
-    result = await hass.config_entries.options.async_init(entry.entry_id)
-    assert result["type"] is data_entry_flow.FlowResultType.MENU
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"next_step_id": "exports"}
-    )
-    assert result["type"] is data_entry_flow.FlowResultType.MENU
-    return await hass.config_entries.options.async_configure(
-        result["flow_id"], {"next_step_id": step_id}
-    )
-
-
-async def test_options_flow_links_existing_temperature_sensor(
-    hass: HomeAssistant,
-) -> None:
-    target = ZontDigitalTemperatureSensorData(4110, 1, "Т Кабинет", temperature=23)
-    options = {
-        CONF_HEATING_OFF_MODE_ID: OFF_MODE_ID,
-        CONF_IMPORTED_OBJECT_IDS: [4110],
-        CONF_EXCLUDED_OBJECT_IDS: [],
-        CONF_AUTO_IMPORT_NEW_OBJECTS: True,
-    }
-    entry, client, coordinator = _loaded_export_entry(
-        hass,
-        objects={target.object_id: target},
-        options=options,
-    )
-    hass.states.async_set(
-        "sensor.office_temperature",
-        "24.14",
-        {
-            ATTR_DEVICE_CLASS: SensorDeviceClass.TEMPERATURE,
-            ATTR_UNIT_OF_MEASUREMENT: UnitOfTemperature.CELSIUS,
-        },
-    )
-    client.async_get_object_state.return_value = {
-        "id": target.object_id,
-        "type": 1,
-        "name": target.name,
-    }
-    client.async_send_command.return_value = {
-        "id": target.object_id,
-        "cmdres": 0,
-    }
-
-    result = await _open_export_options(hass, entry, "export_link")
-    assert result["type"] is data_entry_flow.FlowResultType.FORM
-    assert result["step_id"] == "export_link"
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"],
-        {"entity_id": "sensor.office_temperature", "target_id": "4110"},
-    )
-    assert result["step_id"] == "export_link_confirm"
-    result = await hass.config_entries.options.async_configure(result["flow_id"], {})
-
-    assert result["type"] is data_entry_flow.FlowResultType.CREATE_ENTRY
-    assert entry.options[CONF_TEMPERATURE_EXPORTS] == [
-        {
-            CONF_EXPORT_SOURCE: "sensor.office_temperature",
-            CONF_EXPORT_TARGET_ID: 4110,
-            CONF_EXPORT_TARGET_NAME: "Т Кабинет",
-        }
-    ]
-    assert entry.options[CONF_IMPORTED_OBJECT_IDS] == []
-    assert entry.options[CONF_EXCLUDED_OBJECT_IDS] == [4110]
-    client.async_get_object_state.assert_awaited_once_with(4110)
-    client.async_send_command.assert_awaited_once_with(4110, "1 24.1")
-    coordinator.async_request_refresh.assert_awaited_once()
-
-
-async def test_options_flow_creates_named_temperature_sensor(
-    hass: HomeAssistant,
-) -> None:
-    entry, client, coordinator = _loaded_export_entry(hass, objects={})
-    hass.states.async_set(
-        "sensor.bedroom_temperature",
-        "21.05",
-        {
-            ATTR_DEVICE_CLASS: SensorDeviceClass.TEMPERATURE,
-            ATTR_UNIT_OF_MEASUREMENT: UnitOfTemperature.CELSIUS,
-        },
-    )
-    client.async_send_named_command.return_value = {"id": 4111, "cmdres": 0}
-    client.async_get_object_state.return_value = {
-        "id": 4111,
-        "type": 1,
-        "name": "HA - Спальня",
-    }
-
-    result = await _open_export_options(hass, entry, "export_create_source")
-    assert result["step_id"] == "export_create_source"
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"entity_id": "sensor.bedroom_temperature"}
-    )
-    assert result["step_id"] == "export_create"
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"name": "HA - Спальня"}
-    )
-
-    assert result["type"] is data_entry_flow.FlowResultType.CREATE_ENTRY
-    assert entry.options[CONF_TEMPERATURE_EXPORTS] == [
-        {
-            CONF_EXPORT_SOURCE: "sensor.bedroom_temperature",
-            CONF_EXPORT_TARGET_ID: 4111,
-            CONF_EXPORT_TARGET_NAME: "HA - Спальня",
-        }
-    ]
-    assert entry.options[CONF_EXCLUDED_OBJECT_IDS] == [4111]
-    client.async_send_named_command.assert_awaited_once_with(
-        "HA - Спальня", 1, "1 21.1"
-    )
-    client.async_get_object_state.assert_awaited_once_with(4111)
-    coordinator.async_request_refresh.assert_awaited_once()
-
-
-def test_removing_export_keeps_old_target_excluded() -> None:
-    options = {
-        CONF_IMPORTED_OBJECT_IDS: [4110],
-        CONF_EXCLUDED_OBJECT_IDS: [],
-        CONF_AUTO_IMPORT_NEW_OBJECTS: True,
-        CONF_TEMPERATURE_EXPORTS: [
-            {
-                CONF_EXPORT_SOURCE: "sensor.office_temperature",
-                CONF_EXPORT_TARGET_ID: 4110,
-                CONF_EXPORT_TARGET_NAME: "Т Кабинет",
-            }
-        ],
-    }
-
-    updated = zont_config_flow._options_with_export_bindings(options, ())
-
-    assert updated[CONF_TEMPERATURE_EXPORTS] == []
-    assert updated[CONF_IMPORTED_OBJECT_IDS] == []
-    assert updated[CONF_EXCLUDED_OBJECT_IDS] == [4110]
 
 
 @pytest.mark.parametrize(

@@ -18,7 +18,6 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import connection_signal
-from .coordinator import ZontRuntimeData
 from .entity import (
     ZontCoordinatorEntity,
     ZontEntityMixin,
@@ -42,6 +41,7 @@ from .objects import (
     ZontRelayData,
 )
 from .relay import ZontRelayInternalState
+from .runtime import ZontRuntimeData
 
 ANALOG_TRIGGER_DEVICE_CLASSES: dict[int, BinarySensorDeviceClass | None] = {
     3: BinarySensorDeviceClass.DOOR,

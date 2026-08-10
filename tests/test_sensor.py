@@ -15,7 +15,6 @@ from custom_components.zont_ws.coordinator import (
     ZontControllerData,
     ZontData,
     ZontDataUpdateCoordinator,
-    ZontRuntimeData,
 )
 from custom_components.zont_ws.heating_config import (
     ZontConsumerControlMode,
@@ -39,6 +38,7 @@ from custom_components.zont_ws.objects import (
     ZontRadioSensorData,
     immutable_objects,
 )
+from custom_components.zont_ws.runtime import ZontRuntimeData
 from custom_components.zont_ws.sensor import (
     ANALOG_INPUT_UNITS,
     CONNECTION_CHANNEL_STATES,

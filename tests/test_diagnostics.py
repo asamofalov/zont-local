@@ -15,9 +15,9 @@ from custom_components.zont_ws.coordinator import (
     ZontControllerData,
     ZontData,
     ZontDataUpdateCoordinator,
-    ZontRuntimeData,
 )
 from custom_components.zont_ws.diagnostics import async_get_config_entry_diagnostics
+from custom_components.zont_ws.runtime import ZontRuntimeData
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry

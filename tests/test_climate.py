@@ -22,7 +22,6 @@ from custom_components.zont_ws.coordinator import (
     ZontControllerData,
     ZontData,
     ZontDataUpdateCoordinator,
-    ZontRuntimeData,
 )
 from custom_components.zont_ws.heating_config import (
     ZontConsumerControlMode,
@@ -38,6 +37,7 @@ from custom_components.zont_ws.objects import (
     ZontHeatingCircuitMode,
     immutable_objects,
 )
+from custom_components.zont_ws.runtime import ZontRuntimeData
 from homeassistant.components.climate import ClimateEntityFeature, HVACMode
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.core import HomeAssistant

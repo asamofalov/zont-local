@@ -29,7 +29,6 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .coordinator import ZontRuntimeData
 from .entity import ZontCoordinatorEntity, ZontObjectCoordinatorEntity
 from .heating_config import CONSUMER_CIRCUIT_SUBTYPE, ZontConsumerControlMode
 from .mixer import ZontMixerInternalState
@@ -48,6 +47,7 @@ from .objects import (
     ZontRadioSensorData,
     ZontTemperatureSensorData,
 )
+from .runtime import ZontRuntimeData
 
 CONNECTION_CHANNEL_STATES = (
     "none",

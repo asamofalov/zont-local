@@ -20,7 +20,6 @@ from custom_components.zont_ws.coordinator import (
     ZontControllerData,
     ZontData,
     ZontDataUpdateCoordinator,
-    ZontRuntimeData,
 )
 from custom_components.zont_ws.heating_config import (
     ZontHeatingCircuitInternalState,
@@ -33,6 +32,7 @@ from custom_components.zont_ws.objects import (
     ZontHeatingCircuitMode,
     immutable_objects,
 )
+from custom_components.zont_ws.runtime import ZontRuntimeData
 from custom_components.zont_ws.water_heater import (
     MAX_TARGET_TEMPERATURE,
     MIN_TARGET_TEMPERATURE,

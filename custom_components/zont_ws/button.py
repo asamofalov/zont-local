@@ -15,8 +15,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .client import ZontConnectionError, ZontProtocolError
 from .const import DOMAIN, connection_signal
 from .controller import async_restart_controller
-from .coordinator import ZontRuntimeData
 from .entity import ZontEntityMixin
+from .runtime import ZontRuntimeData
 
 
 async def async_setup_entry(

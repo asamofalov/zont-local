@@ -16,7 +16,6 @@ from custom_components.zont_ws.coordinator import (
     ZontControllerData,
     ZontData,
     ZontDataUpdateCoordinator,
-    ZontRuntimeData,
 )
 from custom_components.zont_ws.heating import (
     ZontCommandRejectedError,
@@ -27,6 +26,7 @@ from custom_components.zont_ws.relay import (
     ZontRelayConfiguration,
     immutable_relay_configurations,
 )
+from custom_components.zont_ws.runtime import ZontRuntimeData
 from custom_components.zont_ws.switch import (
     ZontRelaySwitch,
     async_setup_entry,

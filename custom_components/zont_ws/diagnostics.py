@@ -10,7 +10,7 @@ from homeassistant.core import HomeAssistant
 
 from .const import CONF_CONTROLLER
 from .controller import ZontControllerInfo
-from .coordinator import ZontRuntimeData
+from .runtime import ZontRuntimeData
 
 
 async def async_get_config_entry_diagnostics(

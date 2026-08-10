@@ -33,7 +33,6 @@ from .const import (
     DHW_MIN_TARGET_TEMPERATURE,
     DOMAIN,
 )
-from .coordinator import ZontRuntimeData
 from .entity import ZontObjectCoordinatorEntity
 from .heating import (
     ZontCommandRejectedError,
@@ -47,6 +46,7 @@ from .heating_modes import validated_off_mode_id
 from .object_import import object_import_configuration
 from .object_platform import ZontObjectEntityReconciler
 from .objects import ZontHeatingCircuitData, ZontHeatingCircuitMode
+from .runtime import ZontRuntimeData
 
 MIN_TARGET_TEMPERATURE = DHW_MIN_TARGET_TEMPERATURE
 MAX_TARGET_TEMPERATURE = DHW_MAX_TARGET_TEMPERATURE

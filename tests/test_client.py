@@ -6,6 +6,7 @@ import asyncio
 import json
 from collections import deque
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 from aiohttp import ClientError, WSMsgType
@@ -19,7 +20,6 @@ from custom_components.zont_ws.client import (
     ZontWsClient,
     async_open_temporary_request_session,
     async_request_system_commands,
-    async_validate_connection,
 )
 from custom_components.zont_ws.const import DOMAIN, EVENT_MESSAGE
 from custom_components.zont_ws.controller import async_refresh_controller_info
@@ -122,49 +122,53 @@ def auth_socket(status: int = 200) -> FakeWebSocket:
 
 
 @pytest.mark.asyncio
-async def test_validate_connection_closes_socket() -> None:
+async def test_temporary_session_closes_socket() -> None:
     ws = auth_socket()
-    await async_validate_connection(
+    async with async_open_temporary_request_session(
         FakeSession([ws]),  # type: ignore[arg-type]
         "ws://controller/ws",
         ZontCredentials("user", "password"),
-    )
+    ):
+        pass
     assert ws.closed
     assert ws.sent == [{"user": "user", "pass": "password"}]
 
 
 @pytest.mark.asyncio
-async def test_validate_connection_rejects_auth_and_closes() -> None:
+async def test_temporary_session_rejects_auth_and_closes() -> None:
     ws = auth_socket(403)
     with pytest.raises(ZontAuthenticationError):
-        await async_validate_connection(
+        async with async_open_temporary_request_session(
             FakeSession([ws]),  # type: ignore[arg-type]
             "ws://controller/ws",
             ZontCredentials("user", "bad"),
-        )
+        ):
+            pass
     assert ws.closed
 
 
 @pytest.mark.asyncio
-async def test_validate_connection_rejects_non_object_auth() -> None:
+async def test_temporary_session_rejects_non_object_auth() -> None:
     ws = FakeWebSocket([FakeMessage(WSMsgType.TEXT, "[]")])
     with pytest.raises(ZontProtocolError):
-        await async_validate_connection(
+        async with async_open_temporary_request_session(
             FakeSession([ws]),  # type: ignore[arg-type]
             "ws://controller/ws",
             ZontCredentials("user", "password"),
-        )
+        ):
+            pass
     assert ws.closed
 
 
 @pytest.mark.asyncio
-async def test_validate_connection_wraps_network_failure() -> None:
+async def test_temporary_session_wraps_network_failure() -> None:
     with pytest.raises(ZontConnectionError):
-        await async_validate_connection(
+        async with async_open_temporary_request_session(
             FakeSession([ClientError("offline")]),  # type: ignore[arg-type]
             "ws://controller/ws",
             ZontCredentials("user", "password"),
-        )
+        ):
+            pass
 
 
 @pytest.mark.asyncio
@@ -246,11 +250,12 @@ async def test_connection_timeout_covers_websocket_open(
     monkeypatch.setattr("custom_components.zont_ws.client.CONNECTION_TIMEOUT", 0.01)
 
     with pytest.raises(ZontConnectionError) as raised:
-        await async_validate_connection(
+        async with async_open_temporary_request_session(
             session,  # type: ignore[arg-type]
             "ws://controller/ws",
             ZontCredentials("user", "password"),
-        )
+        ):
+            pass
 
     assert isinstance(raised.value.__cause__, TimeoutError)
     assert session.cancelled
@@ -264,11 +269,12 @@ async def test_connection_timeout_covers_authentication_response(
     monkeypatch.setattr("custom_components.zont_ws.client.CONNECTION_TIMEOUT", 0.01)
 
     with pytest.raises(ZontConnectionError) as raised:
-        await async_validate_connection(
+        async with async_open_temporary_request_session(
             FakeSession([ws]),  # type: ignore[arg-type]
             "ws://controller/ws",
             ZontCredentials("user", "password"),
-        )
+        ):
+            pass
 
     assert isinstance(raised.value.__cause__, TimeoutError)
     assert ws.closed
@@ -383,6 +389,71 @@ async def test_client_reconnects_after_initial_setup(
 
     assert client.is_connected
     assert client.reconnect_count == 1
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_client_retries_a_recoverable_reconnect_failure(
+    fake_hass: Any,
+    auth_error_callback: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_ws = auth_socket()
+    replacement_ws = auth_socket()
+    monkeypatch.setattr("custom_components.zont_ws.client.RECONNECT_DELAYS", (0,))
+    client = ZontWsClient(
+        fake_hass,
+        FakeSession([first_ws, ClientError("offline"), replacement_ws]),  # type: ignore[arg-type]
+        "ws://controller/ws",
+        ZontCredentials("user", "password"),
+        "entry",
+        "device",
+        auth_error_callback,
+    )
+
+    await async_start_client(client)
+    await first_ws.close()
+    for _ in range(30):
+        if client.reconnect_count == 1:
+            break
+        await asyncio.sleep(0)
+
+    assert client.is_connected
+    assert client.last_error is None
+    assert client.reconnect_count == 1
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_reconnect_authentication_failure_requests_reauthentication(
+    fake_hass: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_ws = auth_socket()
+    rejected_ws = auth_socket(401)
+    reauthenticate = MagicMock()
+    monkeypatch.setattr("custom_components.zont_ws.client.RECONNECT_DELAYS", (0,))
+    client = ZontWsClient(
+        fake_hass,
+        FakeSession([first_ws, rejected_ws]),  # type: ignore[arg-type]
+        "ws://controller/ws",
+        ZontCredentials("user", "password"),
+        "entry",
+        "device",
+        reauthenticate,
+    )
+
+    await async_start_client(client)
+    await first_ws.close()
+    for _ in range(20):
+        if reauthenticate.called:
+            break
+        await asyncio.sleep(0)
+
+    assert not client.is_connected
+    assert client.last_error == "authentication"
+    assert rejected_ws.closed
+    reauthenticate.assert_called_once_with()
     await client.async_stop()
 
 

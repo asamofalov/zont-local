@@ -1041,22 +1041,22 @@ async def test_invalid_consumer_configuration_does_not_block_other_circuit(
     assert 9171 not in coordinator.data.heating_controls
     assert coordinator.data.heating_controls[20496].can_set_temperature
     assert set(coordinator.data.heating_states) == {9171, 20496}
-    assert coordinator._heating_configuration_refresh_needed
+    assert coordinator._heating_metadata.refresh_needed
 
 
 async def test_configuration_reload_message_requests_immediate_refresh(
     hass: HomeAssistant,
 ) -> None:
     coordinator, _ = _coordinator(hass)
-    coordinator._heating_configuration_refresh_needed = False
-    coordinator._relay_configuration_refresh_needed = False
+    coordinator._heating_metadata = MagicMock()
+    coordinator._relay_metadata = MagicMock()
     coordinator.async_refresh = AsyncMock()
 
     coordinator._async_message_received("CFG_RELOAD_REQ")
     await hass.async_block_till_done()
 
-    assert coordinator._heating_configuration_refresh_needed
-    assert coordinator._relay_configuration_refresh_needed
+    coordinator._heating_metadata.mark_stale.assert_called_once_with()
+    coordinator._relay_metadata.mark_stale.assert_called_once_with()
     coordinator.async_refresh.assert_awaited_once_with()
 
 
@@ -1360,7 +1360,7 @@ async def test_invalid_relay_configuration_does_not_hide_relay_state(
     assert isinstance(coordinator.data.objects[20488], ZontRelayData)
     assert 20488 not in coordinator.data.relay_configurations
     assert coordinator.data.relay_states[20488].has_failed
-    assert coordinator._relay_configuration_refresh_needed
+    assert coordinator._relay_metadata.refresh_needed
 
 
 async def test_invalid_relay_state_does_not_hide_configuration(
@@ -1388,7 +1388,7 @@ async def test_invalid_relay_state_does_not_hide_configuration(
         ZontRelayConfiguration(20488, 0)
     )
     assert 20488 not in coordinator.data.relay_states
-    assert not coordinator._relay_configuration_refresh_needed
+    assert not coordinator._relay_metadata.refresh_needed
 
 
 async def test_relay_push_preserves_configuration_and_diagnostics(
