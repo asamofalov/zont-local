@@ -410,6 +410,9 @@
     "heating_preset_mode_unavailable": {
       "message": "Режим «{preset_mode}» недоступен для этого контура"
     },
+    "heating_operation_mode_unavailable": {
+      "message": "Режим ГВС «{operation_mode}» недоступен для этого контура"
+    },
     "heating_off_mode_unavailable": {
       "message": "Настроенный режим отключения недоступен для этого контура"
     },

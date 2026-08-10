@@ -17,6 +17,7 @@ from custom_components.zont_ws.coordinator import (
 )
 from custom_components.zont_ws.data import ZontControllerData, ZontData
 from custom_components.zont_ws.entities.heating.water_heater import (
+    MANUAL_OPERATION,
     MAX_TARGET_TEMPERATURE,
     MIN_TARGET_TEMPERATURE,
     TARGET_TEMPERATURE_STEP,
@@ -24,7 +25,9 @@ from custom_components.zont_ws.entities.heating.water_heater import (
 )
 from custom_components.zont_ws.protocol import (
     ZontClient,
+    ZontCommandTimeoutError,
     ZontConnectionError,
+    ZontProtocolError,
 )
 from custom_components.zont_ws.protocol.heating_config import (
     ZontHeatingCircuitInternalState,
@@ -135,6 +138,7 @@ def test_water_heater_exposes_only_target_temperature() -> None:
     assert entity.target_temperature == 60
     assert entity.current_operation == STATE_ON
     assert entity.state == STATE_ON
+    assert entity.operation_list is None
     assert entity.supported_features is WaterHeaterEntityFeature.TARGET_TEMPERATURE
     assert entity.temperature_unit is UnitOfTemperature.CELSIUS
     assert entity.min_temp == MIN_TARGET_TEMPERATURE
@@ -177,8 +181,11 @@ def test_water_heater_exposes_on_off_for_validated_binding() -> None:
     entity = ZontDhwWaterHeater(entry, 8362)
 
     assert entity.supported_features == (
-        WaterHeaterEntityFeature.TARGET_TEMPERATURE | WaterHeaterEntityFeature.ON_OFF
+        WaterHeaterEntityFeature.TARGET_TEMPERATURE
+        | WaterHeaterEntityFeature.ON_OFF
+        | WaterHeaterEntityFeature.OPERATION_MODE
     )
+    assert entity.operation_list == ["Выключен", MANUAL_OPERATION]
 
 
 def test_water_heater_hides_on_off_for_invalid_binding() -> None:
@@ -193,6 +200,93 @@ def test_water_heater_hides_on_off_for_invalid_binding() -> None:
     entity = ZontDhwWaterHeater(entry, 8362)
 
     assert entity.supported_features is WaterHeaterEntityFeature.TARGET_TEMPERATURE
+
+
+def test_water_heater_exposes_applicable_named_operations() -> None:
+    """Expose named modes independently of the standard on/off binding."""
+    entry, _, _ = _entry(
+        {8362: _circuit(mode_id=20503)},
+        modes={
+            20501: ZontHeatingModeConfiguration(20501, "Комфорт", {8362: 3330}),
+            20502: ZontHeatingModeConfiguration(20502, "Другой", {9171: 2980}),
+            20503: ZontHeatingModeConfiguration(20503, "Лето", {8362: 3330}),
+            20504: ZontHeatingModeConfiguration(20504, "Выключен", {8362: 0}),
+        },
+        states={8362: _state(20503, 20502, 20501, 20504)},
+    )
+    entity = ZontDhwWaterHeater(entry, 8362)
+
+    assert entity.operation_list == [
+        "Лето",
+        "Комфорт",
+        "Выключен",
+        MANUAL_OPERATION,
+    ]
+    assert entity.current_operation == "Лето"
+    assert entity.state == "Лето"
+    assert entity.supported_features == (
+        WaterHeaterEntityFeature.TARGET_TEMPERATURE
+        | WaterHeaterEntityFeature.OPERATION_MODE
+    )
+
+
+@pytest.mark.parametrize(
+    ("circuit", "expected"),
+    [
+        (
+            _circuit(
+                mode=ZontHeatingCircuitMode.OFF,
+                mode_id=20504,
+                target_temperature=None,
+            ),
+            "Выключен",
+        ),
+        (_circuit(mode_id=0), MANUAL_OPERATION),
+        (
+            _circuit(
+                mode=ZontHeatingCircuitMode.OFF,
+                mode_id=0,
+                target_temperature=None,
+            ),
+            STATE_OFF,
+        ),
+        (_circuit(mode_id=29999), STATE_ON),
+    ],
+)
+def test_water_heater_maps_named_manual_and_fallback_operations(
+    circuit: ZontHeatingCircuitData,
+    expected: str,
+) -> None:
+    """Prefer confirmed names and safely fall back for stale metadata."""
+    entry, _, _ = _entry(
+        {8362: circuit},
+        modes={
+            20501: ZontHeatingModeConfiguration(20501, "Комфорт", {8362: 3330}),
+            20504: ZontHeatingModeConfiguration(20504, "Выключен", {8362: 0}),
+        },
+        states={8362: _state(20501, 20504)},
+    )
+
+    assert ZontDhwWaterHeater(entry, 8362).current_operation == expected
+
+
+def test_water_heater_disambiguates_manual_operation_name() -> None:
+    """Keep the local manual operation distinct from a controller mode."""
+    entry, _, _ = _entry(
+        {8362: _circuit(mode_id=20501)},
+        modes={
+            20501: ZontHeatingModeConfiguration(
+                20501,
+                MANUAL_OPERATION,
+                {8362: 3330},
+            )
+        },
+        states={8362: _state(20501)},
+    )
+    entity = ZontDhwWaterHeater(entry, 8362)
+
+    assert entity.operation_list == ["Ручной режим (20501)", MANUAL_OPERATION]
+    assert entity.current_operation == "Ручной режим (20501)"
 
 
 def test_water_heater_tracks_object_availability() -> None:
@@ -231,6 +325,249 @@ async def test_setup_adds_only_dhw_circuits(hass: HomeAssistant) -> None:
     assert async_add_entities.call_count == 1
 
 
+@pytest.mark.parametrize(
+    ("selected", "initial_mode_id", "expected_mode"),
+    [
+        ("Комфорт", 0, ZontHeatingCircuitMode.HEAT),
+        ("Выключен", 20501, ZontHeatingCircuitMode.OFF),
+    ],
+)
+async def test_set_operation_applies_named_mode_and_confirms_state(
+    selected: str,
+    initial_mode_id: int,
+    expected_mode: ZontHeatingCircuitMode,
+) -> None:
+    """Apply active and zero-target modes only to the selected DHW circuit."""
+    modes = {
+        20501: ZontHeatingModeConfiguration(20501, "Комфорт", {8362: 3330}),
+        20504: ZontHeatingModeConfiguration(20504, "Выключен", {8362: 0}),
+    }
+    entry, client, coordinator = _entry(
+        {8362: _circuit(mode_id=initial_mode_id)},
+        modes=modes,
+        states={8362: _state(20501, 20504)},
+    )
+    entity = ZontDhwWaterHeater(entry, 8362)
+
+    async def refresh_object(object_id: int) -> bool:
+        mode_id = int(client.async_send_command.await_args.args[1])
+        mode = modes[mode_id]
+        _set_circuit(
+            coordinator,
+            _circuit(
+                mode=(
+                    ZontHeatingCircuitMode.OFF
+                    if mode.circuit_targets[object_id] == 0
+                    else ZontHeatingCircuitMode.HEAT
+                ),
+                mode_id=mode_id,
+                target_temperature=(
+                    None if mode.circuit_targets[object_id] == 0 else 60
+                ),
+            ),
+        )
+        return True
+
+    coordinator.async_refresh_object.side_effect = refresh_object
+
+    await entity.async_set_operation_mode(selected)
+
+    expected_mode_id = 20504 if selected == "Выключен" else 20501
+    client.async_send_command.assert_awaited_once_with(8362, str(expected_mode_id))
+    coordinator.async_refresh_object.assert_awaited_once_with(8362)
+    assert entity.current_operation == selected
+    assert coordinator.data.objects[8362].mode is expected_mode
+
+
+async def test_set_manual_operation_reuses_current_target_and_confirms_mode_id() -> (
+    None
+):
+    """Clear a named mode by writing its current target as a manual setpoint."""
+    entry, client, coordinator = _entry(
+        {8362: _circuit(mode_id=20501, target_temperature=58)},
+        modes={20501: ZontHeatingModeConfiguration(20501, "Комфорт", {8362: 3310})},
+        states={8362: _state(20501)},
+    )
+    entity = ZontDhwWaterHeater(entry, 8362)
+
+    async def refresh_object(object_id: int) -> bool:
+        _set_circuit(
+            coordinator,
+            _circuit(mode_id=0, target_temperature=58),
+        )
+        return True
+
+    coordinator.async_refresh_object.side_effect = refresh_object
+
+    await entity.async_set_operation_mode(MANUAL_OPERATION)
+
+    client.async_send_command.assert_awaited_once_with(8362, 3310)
+    coordinator.async_refresh_object.assert_awaited_once_with(8362)
+    assert entity.current_operation == MANUAL_OPERATION
+
+
+async def test_set_manual_operation_from_off_uses_configured_temperature() -> None:
+    """Use the restart-safe target when no active temperature was observed."""
+    entry, client, coordinator = _entry(
+        {
+            8362: _circuit(
+                mode=ZontHeatingCircuitMode.OFF,
+                mode_id=20504,
+                target_temperature=None,
+            )
+        },
+        dhw_on_temperature=55,
+        modes={20504: _off_mode()},
+        states={8362: _state(20504)},
+    )
+    entity = ZontDhwWaterHeater(entry, 8362)
+
+    async def refresh_object(object_id: int) -> bool:
+        _set_circuit(
+            coordinator,
+            _circuit(mode_id=0, target_temperature=55),
+        )
+        return True
+
+    coordinator.async_refresh_object.side_effect = refresh_object
+
+    await entity.async_set_operation_mode(MANUAL_OPERATION)
+
+    client.async_send_command.assert_awaited_once_with(8362, 3280)
+    assert entity.current_operation == MANUAL_OPERATION
+
+
+@pytest.mark.parametrize(
+    ("operation", "mode_id"),
+    [("Комфорт", 20501), (MANUAL_OPERATION, 0)],
+)
+async def test_set_current_operation_is_noop(operation: str, mode_id: int) -> None:
+    """Avoid a command when the requested operation is already active."""
+    entry, client, coordinator = _entry(
+        {8362: _circuit(mode_id=mode_id)},
+        modes={20501: ZontHeatingModeConfiguration(20501, "Комфорт", {8362: 3330})},
+        states={8362: _state(20501)},
+    )
+    entity = ZontDhwWaterHeater(entry, 8362)
+
+    await entity.async_set_operation_mode(operation)
+
+    client.async_send_command.assert_not_awaited()
+    coordinator.async_refresh_object.assert_not_awaited()
+
+
+async def test_set_unknown_operation_is_rejected() -> None:
+    """Reject stale or unknown operation names without sending a command."""
+    entry, client, coordinator = _entry(
+        {8362: _circuit()},
+        modes={20501: ZontHeatingModeConfiguration(20501, "Комфорт", {8362: 3330})},
+        states={8362: _state(20501)},
+    )
+    entity = ZontDhwWaterHeater(entry, 8362)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await entity.async_set_operation_mode("Несуществующий")
+
+    assert raised.value.translation_key == "heating_operation_mode_unavailable"
+    assert raised.value.translation_placeholders == {"operation_mode": "Несуществующий"}
+    client.async_send_command.assert_not_awaited()
+    coordinator.async_refresh_object.assert_not_awaited()
+
+
+async def test_set_operation_requires_confirmed_named_state() -> None:
+    """Reject an accepted mode when m_id does not change."""
+    entry, _, coordinator = _entry(
+        {8362: _circuit(mode_id=0)},
+        modes={20501: ZontHeatingModeConfiguration(20501, "Комфорт", {8362: 3330})},
+        states={8362: _state(20501)},
+    )
+    entity = ZontDhwWaterHeater(entry, 8362)
+
+    with pytest.raises(HomeAssistantError) as raised:
+        await entity.async_set_operation_mode("Комфорт")
+
+    assert raised.value.translation_key == "heating_state_not_confirmed"
+    coordinator.async_refresh_object.assert_awaited_once_with(8362)
+
+
+async def test_set_manual_operation_requires_confirmed_manual_state() -> None:
+    """Require a manual temperature command to clear the named m_id."""
+    entry, _, coordinator = _entry(
+        {8362: _circuit(mode_id=20501)},
+        modes={20501: ZontHeatingModeConfiguration(20501, "Комфорт", {8362: 3330})},
+        states={8362: _state(20501)},
+    )
+    entity = ZontDhwWaterHeater(entry, 8362)
+
+    with pytest.raises(HomeAssistantError) as raised:
+        await entity.async_set_operation_mode(MANUAL_OPERATION)
+
+    assert raised.value.translation_key == "heating_state_not_confirmed"
+    coordinator.async_refresh_object.assert_awaited_once_with(8362)
+
+
+async def test_rejected_operation_command_is_translated() -> None:
+    """Translate a controller rejection from the operation-mode path."""
+    entry, client, coordinator = _entry(
+        {8362: _circuit(mode_id=0)},
+        modes={20501: ZontHeatingModeConfiguration(20501, "Комфорт", {8362: 3330})},
+        states={8362: _state(20501)},
+    )
+    client.async_send_command.return_value = {"id": 8362, "cmdres": 2}
+    entity = ZontDhwWaterHeater(entry, 8362)
+
+    with pytest.raises(HomeAssistantError) as raised:
+        await entity.async_set_operation_mode("Комфорт")
+
+    assert raised.value.translation_key == "command_rejected"
+    coordinator.async_refresh_object.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("error", "translation_key"),
+    [
+        (ZontConnectionError("offline"), "controller_offline"),
+        (ZontCommandTimeoutError("timeout"), "command_timeout"),
+        (ZontProtocolError("invalid response"), "protocol_error"),
+    ],
+)
+async def test_operation_protocol_errors_are_translated(
+    error: Exception,
+    translation_key: str,
+) -> None:
+    """Translate operation transport and protocol failures for Home Assistant."""
+    entry, client, coordinator = _entry(
+        {8362: _circuit(mode_id=0)},
+        modes={20501: ZontHeatingModeConfiguration(20501, "Комфорт", {8362: 3330})},
+        states={8362: _state(20501)},
+    )
+    client.async_send_command.side_effect = error
+    entity = ZontDhwWaterHeater(entry, 8362)
+
+    with pytest.raises(HomeAssistantError) as raised:
+        await entity.async_set_operation_mode("Комфорт")
+
+    assert raised.value.translation_key == translation_key
+    coordinator.async_refresh_object.assert_not_awaited()
+
+
+async def test_operation_follows_coordinator_snapshot() -> None:
+    """Reflect push-style operation changes without recreating the entity."""
+    entry, _, coordinator = _entry(
+        {8362: _circuit(mode_id=20501)},
+        modes={
+            20501: ZontHeatingModeConfiguration(20501, "Комфорт", {8362: 3330}),
+            20503: ZontHeatingModeConfiguration(20503, "Лето", {8362: 3330}),
+        },
+        states={8362: _state(20501, 20503)},
+    )
+    entity = ZontDhwWaterHeater(entry, 8362)
+
+    assert entity.current_operation == "Комфорт"
+    _set_circuit(coordinator, _circuit(mode_id=20503))
+    assert entity.current_operation == "Лето"
+
+
 async def test_turn_off_and_on_restore_session_target() -> None:
     off_mode = _off_mode()
     entry, client, coordinator = _entry(
@@ -262,7 +599,7 @@ async def test_turn_off_and_on_restore_session_target() -> None:
     coordinator.async_refresh_object.side_effect = refresh_object
 
     await entity.async_turn_off()
-    assert entity.current_operation == STATE_OFF
+    assert entity.current_operation == "Выключен"
     await entity.async_turn_on()
 
     assert client.async_send_command.await_args_list == [
@@ -273,7 +610,7 @@ async def test_turn_off_and_on_restore_session_target() -> None:
         ((8362,),),
         ((8362,),),
     ]
-    assert entity.current_operation == STATE_ON
+    assert entity.current_operation == MANUAL_OPERATION
     assert entity.target_temperature == 58
 
 
@@ -310,7 +647,7 @@ async def test_turn_on_after_restart_uses_configured_temperature() -> None:
     await entity.async_turn_on()
 
     client.async_send_command.assert_awaited_once_with(8362, 3280)
-    assert entity.current_operation == STATE_ON
+    assert entity.current_operation == MANUAL_OPERATION
     assert entity.target_temperature == 55
 
 

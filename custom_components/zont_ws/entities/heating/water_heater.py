@@ -30,7 +30,7 @@ from ...heating_control import (
     ZontCommandRejectedError,
     ZontCommandStateError,
     async_apply_heating_mode_and_refresh,
-    async_set_heating_circuit_temperature_and_confirm_active,
+    async_set_heating_circuit_temperature_and_confirm_manual,
     async_set_heating_circuit_temperature_and_refresh,
 )
 from ...protocol import (
@@ -42,10 +42,12 @@ from ...protocol.heating_config import DHW_CIRCUIT_SUBTYPE
 from ...protocol.heating_modes import validated_off_mode_id
 from ...protocol.objects import ZontHeatingCircuitData, ZontHeatingCircuitMode
 from ...runtime import ZontRuntimeData
+from .mode_options import ZontHeatingModeOption, heating_mode_options
 
 MIN_TARGET_TEMPERATURE = DHW_MIN_TARGET_TEMPERATURE
 MAX_TARGET_TEMPERATURE = DHW_MAX_TARGET_TEMPERATURE
 TARGET_TEMPERATURE_STEP = 1.0
+MANUAL_OPERATION = "Ручной режим"
 
 
 class ZontDhwWaterHeater(ZontObjectCoordinatorEntity, WaterHeaterEntity):
@@ -87,7 +89,7 @@ class ZontDhwWaterHeater(ZontObjectCoordinatorEntity, WaterHeaterEntity):
 
     @property
     def supported_features(self) -> WaterHeaterEntityFeature:
-        """Expose standard on/off only for a validated controller binding."""
+        """Expose controls confirmed by current controller metadata."""
         features = WaterHeaterEntityFeature.TARGET_TEMPERATURE
         circuit = self._circuit
         if (
@@ -100,7 +102,15 @@ class ZontDhwWaterHeater(ZontObjectCoordinatorEntity, WaterHeaterEntity):
             )
         ):
             features |= WaterHeaterEntityFeature.ON_OFF
+        if self._operation_modes_by_name:
+            features |= WaterHeaterEntityFeature.OPERATION_MODE
         return features
+
+    @property
+    def operation_list(self) -> list[str] | None:
+        """Return applicable ZONT modes followed by manual control."""
+        modes = self._operation_modes_by_name
+        return [*modes, MANUAL_OPERATION] if modes else None
 
     @property
     def current_operation(self) -> str | None:
@@ -108,10 +118,41 @@ class ZontDhwWaterHeater(ZontObjectCoordinatorEntity, WaterHeaterEntity):
         circuit = self._circuit
         if circuit is None:
             return None
+        modes = self._operation_modes_by_name
+        if circuit.mode_id not in (None, 0):
+            current = next(
+                (
+                    name
+                    for name, option in modes.items()
+                    if option.mode.object_id == circuit.mode_id
+                ),
+                None,
+            )
+            if current is not None:
+                return current
+        if (
+            modes
+            and circuit.mode_id == 0
+            and circuit.mode is ZontHeatingCircuitMode.HEAT
+        ):
+            return MANUAL_OPERATION
         return {
             ZontHeatingCircuitMode.HEAT: STATE_ON,
             ZontHeatingCircuitMode.OFF: STATE_OFF,
         }.get(circuit.mode)
+
+    @property
+    def _operation_modes_by_name(self) -> dict[str, ZontHeatingModeOption]:
+        """Return unique operation names mapped to applicable ZONT modes."""
+        return {
+            option.label: option
+            for option in heating_mode_options(
+                self._object_id,
+                self.coordinator.data.heating_states,
+                self.coordinator.data.heating_modes,
+                reserved_names=(MANUAL_OPERATION,),
+            )
+        }
 
     @property
     def current_temperature(self) -> float | None:
@@ -174,6 +215,39 @@ class ZontDhwWaterHeater(ZontObjectCoordinatorEntity, WaterHeaterEntity):
             return
         self._last_active_target = circuit.target_temperature
 
+    async def async_set_operation_mode(self, operation_mode: str) -> None:
+        """Apply one named mode or switch the DHW circuit to manual control."""
+        modes = self._operation_modes_by_name
+        if operation_mode == MANUAL_OPERATION and modes:
+            circuit = self._circuit
+            if (
+                circuit is not None
+                and circuit.mode is ZontHeatingCircuitMode.HEAT
+                and circuit.mode_id == 0
+            ):
+                return
+            target = self._last_active_target or self._configured_on_temperature
+            await self._async_set_manual_target(target)
+            return
+
+        option = modes.get(operation_mode)
+        if option is None:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="heating_operation_mode_unavailable",
+                translation_placeholders={"operation_mode": str(operation_mode)},
+            )
+
+        circuit = self._circuit
+        if circuit is not None and circuit.mode_id == option.mode.object_id:
+            return
+        if option.disables_circuit:
+            self._remember_active_target()
+        await self._async_apply_mode(
+            option.mode.object_id,
+            expect_off=option.disables_circuit,
+        )
+
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Apply the configured all-off mode only to this DHW circuit."""
         circuit = self._circuit
@@ -186,13 +260,17 @@ class ZontDhwWaterHeater(ZontObjectCoordinatorEntity, WaterHeaterEntity):
                 translation_key="heating_off_mode_unavailable",
             )
         self._remember_active_target()
+        await self._async_apply_mode(mode_id, expect_off=True)
+
+    async def _async_apply_mode(self, mode_id: int, *, expect_off: bool) -> None:
+        """Apply one mode and translate protocol failures for Home Assistant."""
         try:
             await async_apply_heating_mode_and_refresh(
                 self._client,
                 self.coordinator,
                 self._object_id,
                 mode_id,
-                expect_off=True,
+                expect_off=expect_off,
             )
         except asyncio.CancelledError:
             raise
@@ -237,8 +315,12 @@ class ZontDhwWaterHeater(ZontObjectCoordinatorEntity, WaterHeaterEntity):
             )
 
         target = self._last_active_target or self._configured_on_temperature
+        await self._async_set_manual_target(target)
+
+    async def _async_set_manual_target(self, target: float) -> None:
+        """Apply a manual target and translate failures for Home Assistant."""
         try:
-            await async_set_heating_circuit_temperature_and_confirm_active(
+            await async_set_heating_circuit_temperature_and_confirm_manual(
                 self._client,
                 self.coordinator,
                 self._object_id,

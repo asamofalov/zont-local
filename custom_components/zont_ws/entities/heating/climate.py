@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections import Counter
 from math import isfinite
 from typing import Any
 
@@ -38,12 +37,12 @@ from ...protocol.heating_config import (
     ZontHeatingModeConfiguration,
 )
 from ...protocol.heating_modes import (
-    applicable_heating_modes,
     mode_is_applicable_to_circuit,
     validated_off_mode_id,
 )
 from ...protocol.objects import ZontHeatingCircuitData, ZontHeatingCircuitMode
 from ...runtime import ZontRuntimeData
+from .mode_options import heating_mode_options
 
 TARGET_TEMPERATURE_STEP = 1.0
 
@@ -132,26 +131,14 @@ class ZontConsumerClimate(ZontObjectCoordinatorEntity, ClimateEntity):
     @property
     def _preset_modes_by_name(self) -> dict[str, ZontHeatingModeConfiguration]:
         """Return unique Home Assistant names mapped to applicable ZONT modes."""
-        modes = applicable_heating_modes(
-            self._object_id,
-            self.coordinator.data.heating_states,
-            self.coordinator.data.heating_modes,
-        )
-        name_counts = Counter(mode.name for mode in modes)
-        reserved_names = {mode.name for mode in modes if name_counts[mode.name] == 1}
-        result: dict[str, ZontHeatingModeConfiguration] = {}
-        for mode in modes:
-            if name_counts[mode.name] == 1:
-                name = mode.name
-            else:
-                base_name = f"{mode.name} ({mode.object_id})"
-                name = base_name
-                discriminator = 2
-                while name in result or name in reserved_names:
-                    name = f"{base_name} [{discriminator}]"
-                    discriminator += 1
-            result[name] = mode
-        return result
+        return {
+            option.label: option.mode
+            for option in heating_mode_options(
+                self._object_id,
+                self.coordinator.data.heating_states,
+                self.coordinator.data.heating_modes,
+            )
+        }
 
     @property
     def current_temperature(self) -> float | None:

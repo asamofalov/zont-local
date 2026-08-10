@@ -50,13 +50,13 @@ async def async_set_heating_circuit_temperature_and_refresh(
             )
 
 
-async def async_set_heating_circuit_temperature_and_confirm_active(
+async def async_set_heating_circuit_temperature_and_confirm_manual(
     client: ZontClient,
     coordinator: ZontDataUpdateCoordinator,
     object_id: int,
     temperature: float,
 ) -> None:
-    """Set a target and require the circuit to confirm an active state."""
+    """Set a target and require the circuit to confirm manual active control."""
     await async_set_heating_circuit_temperature(client, object_id, temperature)
     try:
         refreshed = await coordinator.async_refresh_object(object_id)
@@ -75,11 +75,12 @@ async def async_set_heating_circuit_temperature_and_confirm_active(
     if (
         not isinstance(obj, ZontHeatingCircuitData)
         or obj.mode is not ZontHeatingCircuitMode.HEAT
+        or obj.mode_id != 0
         or obj.target_temperature is None
         or celsius_to_decikelvin(obj.target_temperature)
         != celsius_to_decikelvin(temperature)
     ):
-        raise ZontCommandStateError("The heating target was not applied")
+        raise ZontCommandStateError("The manual heating target was not applied")
 
 
 async def async_apply_heating_mode_and_refresh(
@@ -120,6 +121,6 @@ __all__ = (
     "ZontCommandRejectedError",
     "ZontCommandStateError",
     "async_apply_heating_mode_and_refresh",
-    "async_set_heating_circuit_temperature_and_confirm_active",
+    "async_set_heating_circuit_temperature_and_confirm_manual",
     "async_set_heating_circuit_temperature_and_refresh",
 )
