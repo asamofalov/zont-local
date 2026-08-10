@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import Counter
 from math import isfinite
 from typing import Any
 
@@ -34,8 +35,10 @@ from ...protocol.heating_config import (
     AIR_MIN_TEMPERATURE,
     CONSUMER_CIRCUIT_SUBTYPE,
     ZontHeatingCircuitControlData,
+    ZontHeatingModeConfiguration,
 )
 from ...protocol.heating_modes import (
+    applicable_heating_modes,
     mode_is_applicable_to_circuit,
     validated_off_mode_id,
 )
@@ -95,6 +98,8 @@ class ZontConsumerClimate(ZontObjectCoordinatorEntity, ClimateEntity):
             features |= ClimateEntityFeature.TARGET_TEMPERATURE
         if self._off_mode_id is not None and self._can_turn_on:
             features |= ClimateEntityFeature.TURN_ON | ClimateEntityFeature.TURN_OFF
+        if self._preset_modes_by_name:
+            features |= ClimateEntityFeature.PRESET_MODE
         return features
 
     @property
@@ -103,6 +108,50 @@ class ZontConsumerClimate(ZontObjectCoordinatorEntity, ClimateEntity):
         if self._off_mode_id is None or not self._can_turn_on:
             return []
         return [HVACMode.HEAT, HVACMode.OFF]
+
+    @property
+    def preset_modes(self) -> list[str]:
+        """Return applicable named modes in controller order."""
+        return list(self._preset_modes_by_name)
+
+    @property
+    def preset_mode(self) -> str | None:
+        """Return the current named mode, or none for manual control."""
+        circuit = self._circuit
+        if circuit is None or circuit.mode_id in (None, 0):
+            return None
+        return next(
+            (
+                name
+                for name, mode in self._preset_modes_by_name.items()
+                if mode.object_id == circuit.mode_id
+            ),
+            None,
+        )
+
+    @property
+    def _preset_modes_by_name(self) -> dict[str, ZontHeatingModeConfiguration]:
+        """Return unique Home Assistant names mapped to applicable ZONT modes."""
+        modes = applicable_heating_modes(
+            self._object_id,
+            self.coordinator.data.heating_states,
+            self.coordinator.data.heating_modes,
+        )
+        name_counts = Counter(mode.name for mode in modes)
+        reserved_names = {mode.name for mode in modes if name_counts[mode.name] == 1}
+        result: dict[str, ZontHeatingModeConfiguration] = {}
+        for mode in modes:
+            if name_counts[mode.name] == 1:
+                name = mode.name
+            else:
+                base_name = f"{mode.name} ({mode.object_id})"
+                name = base_name
+                discriminator = 2
+                while name in result or name in reserved_names:
+                    name = f"{base_name} [{discriminator}]"
+                    discriminator += 1
+            result[name] = mode
+        return result
 
     @property
     def current_temperature(self) -> float | None:
@@ -226,6 +275,25 @@ class ZontConsumerClimate(ZontObjectCoordinatorEntity, ClimateEntity):
             translation_domain=DOMAIN,
             translation_key="heating_hvac_mode_unavailable",
         )
+
+    async def async_set_preset_mode(self, preset_mode: str) -> None:
+        """Apply one named ZONT mode only to this circuit."""
+        mode = self._preset_modes_by_name.get(preset_mode)
+        if mode is None:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="heating_preset_mode_unavailable",
+                translation_placeholders={"preset_mode": str(preset_mode)},
+            )
+
+        circuit = self._circuit
+        if circuit is not None and circuit.mode_id == mode.object_id:
+            return
+
+        target = mode.circuit_targets[self._object_id]
+        if target == 0:
+            self._remember_active_state()
+        await self._async_apply_mode(mode.object_id, expect_off=target == 0)
 
     async def async_turn_off(self) -> None:
         """Apply the configured all-off mode only to this circuit."""

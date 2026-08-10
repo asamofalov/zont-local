@@ -407,6 +407,9 @@
     "heating_hvac_mode_unavailable": {
       "message": "Этот режим работы контура не поддерживается"
     },
+    "heating_preset_mode_unavailable": {
+      "message": "Режим «{preset_mode}» недоступен для этого контура"
+    },
     "heating_off_mode_unavailable": {
       "message": "Настроенный режим отключения недоступен для этого контура"
     },

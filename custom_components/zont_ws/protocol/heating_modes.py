@@ -132,6 +132,23 @@ def mode_is_applicable_to_circuit(
     return state is not None and mode_id in state.applicable_mode_ids
 
 
+def applicable_heating_modes(
+    circuit_id: int,
+    states: Mapping[int, ZontHeatingCircuitInternalState],
+    modes: Mapping[int, ZontHeatingModeConfiguration],
+) -> tuple[ZontHeatingModeConfiguration, ...]:
+    """Return configured circuit modes in the order reported by the controller."""
+    state = states.get(circuit_id)
+    if state is None:
+        return ()
+    return tuple(
+        mode
+        for mode_id in state.applicable_mode_ids
+        if (mode := modes.get(mode_id)) is not None
+        and circuit_id in mode.circuit_targets
+    )
+
+
 async def async_discover_heating_modes(
     session: ClientSession,
     url: str,

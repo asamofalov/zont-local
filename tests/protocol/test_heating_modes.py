@@ -17,6 +17,7 @@ from custom_components.zont_ws.protocol.heating_config import (
 )
 from custom_components.zont_ws.protocol.heating_modes import (
     ZontHeatingModeDiscovery,
+    applicable_heating_modes,
     async_discover_heating_modes,
     async_discover_heating_modes_from_requests,
 )
@@ -59,6 +60,28 @@ def test_only_fully_zero_and_applicable_mode_is_eligible() -> None:
     )
 
     assert [mode.object_id for mode in discovery.eligible_off_modes] == [20504]
+
+
+def test_applicable_modes_follow_controller_order_and_require_target() -> None:
+    """Return only configured modes that contain the requested circuit."""
+    modes = {
+        20501: ZontHeatingModeConfiguration(20501, "Комфорт", {20496: 3150}),
+        20502: ZontHeatingModeConfiguration(20502, "Другой контур", {9171: 2980}),
+        20504: ZontHeatingModeConfiguration(20504, "Выключен", {20496: 0}),
+    }
+    states = {
+        20496: ZontHeatingCircuitInternalState(
+            20496,
+            4104,
+            0,
+            (20504, 99999, 20502, 20501),
+        )
+    }
+
+    assert [
+        mode.object_id for mode in applicable_heating_modes(20496, states, modes)
+    ] == [20504, 20501]
+    assert applicable_heating_modes(9171, states, modes) == ()
 
 
 async def test_discovery_reads_relevant_circuits_and_modes(monkeypatch) -> None:
