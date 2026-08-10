@@ -21,6 +21,7 @@ async def async_get_config_entry_diagnostics(
     runtime_data = entry.runtime_data
     client = runtime_data.client
     coordinator = runtime_data.coordinator
+    export_manager = runtime_data.export_manager
     status = coordinator.data.controller
     info = ZontControllerInfo.from_mapping(entry.data.get(CONF_CONTROLLER))
     return {
@@ -39,6 +40,13 @@ async def async_get_config_entry_diagnostics(
             "last_error": client.last_error,
             "reconnect_count": client.reconnect_count,
             "pending_commands": client.pending_count,
+        },
+        "exports": {
+            "configured": (
+                export_manager.configured_count if export_manager is not None else 0
+            ),
+            "active": export_manager.active_count if export_manager is not None else 0,
+            "errors": export_manager.error_count if export_manager is not None else 0,
         },
         "data": {
             "last_update_success": coordinator.last_update_success,

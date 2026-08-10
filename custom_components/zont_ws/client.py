@@ -316,7 +316,9 @@ class ZontWsClient:
         self._state_slots: dict[int, _RequestSlot] = {}
         self._ids_lock = asyncio.Lock()
         self._scmd_lock = asyncio.Lock()
+        self._named_command_lock = asyncio.Lock()
         self._pending_commands: dict[int, asyncio.Future[dict[str, Any]]] = {}
+        self._pending_named_command: asyncio.Future[dict[str, Any]] | None = None
         self._pending_states: dict[int, asyncio.Future[dict[str, Any]]] = {}
         self._pending_ids: asyncio.Future[list[int]] | None = None
         self._pending_scmd: asyncio.Future[str] | None = None
@@ -346,7 +348,9 @@ class ZontWsClient:
     @property
     def pending_count(self) -> int:
         """Return the number of commands waiting for a response."""
-        return len(self._pending_commands)
+        return len(self._pending_commands) + int(
+            self._pending_named_command is not None
+        )
 
     async def async_start(self, entry: ConfigEntry[Any]) -> None:
         """Connect once and start the connection supervisor."""
@@ -526,8 +530,15 @@ class ZontWsClient:
             return False
 
         future = self._pending_commands.pop(message_id, None)
+        if future is not None:
+            if not future.done():
+                future.set_result(response)
+            return True
+
+        future = self._pending_named_command
         if future is None:
             return False
+        self._pending_named_command = None
         if not future.done():
             future.set_result(response)
         return True
@@ -630,6 +641,54 @@ class ZontWsClient:
             finally:
                 if self._pending_commands.get(command_id) is future:
                     self._pending_commands.pop(command_id, None)
+                if not future.done():
+                    future.cancel()
+
+    async def async_send_named_command(
+        self,
+        name: str,
+        object_type: int,
+        command: ZontCommand,
+        response_timeout: float = COMMAND_TIMEOUT,
+    ) -> dict[str, Any]:
+        """Send one object command addressed by name and return its response."""
+        if not isinstance(name, str):
+            raise ValueError("Object name must be text")
+        normalized_name = name.strip()
+        if not normalized_name:
+            raise ValueError("Object name must be non-empty text")
+        if type(object_type) is not int or not 0 <= object_type <= 255:
+            raise ValueError("Object type must be an integer from 0 to 255")
+
+        async with self._named_command_lock:
+            ws = self._connected_websocket()
+            future: asyncio.Future[dict[str, Any]] = (
+                asyncio.get_running_loop().create_future()
+            )
+            self._pending_named_command = future
+            try:
+                try:
+                    await self._async_send_payload(
+                        ws,
+                        {
+                            "name": normalized_name,
+                            "type": object_type,
+                            "cmd": command,
+                        },
+                    )
+                    async with asyncio.timeout(response_timeout):
+                        return await future
+                except asyncio.CancelledError:
+                    await self._async_invalidate_connection(ws)
+                    raise
+                except TimeoutError as err:
+                    await self._async_invalidate_connection(ws)
+                    raise ZontCommandTimeoutError(
+                        f"No response for named command {normalized_name!r}"
+                    ) from err
+            finally:
+                if self._pending_named_command is future:
+                    self._pending_named_command = None
                 if not future.done():
                     future.cancel()
 
@@ -857,6 +916,9 @@ class ZontWsClient:
         if self._pending_scmd is not None:
             pending.append(self._pending_scmd)
             self._pending_scmd = None
+        if self._pending_named_command is not None:
+            pending.append(self._pending_named_command)
+            self._pending_named_command = None
         for future in pending:
             if not future.done():
                 future.set_exception(error)

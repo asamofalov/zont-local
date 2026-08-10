@@ -19,8 +19,12 @@ from custom_components.zont_ws.const import (
     CONF_CONTROLLER,
     CONF_DHW_ON_TEMPERATURE,
     CONF_EXCLUDED_OBJECT_IDS,
+    CONF_EXPORT_SOURCE,
+    CONF_EXPORT_TARGET_ID,
+    CONF_EXPORT_TARGET_NAME,
     CONF_HEATING_OFF_MODE_ID,
     CONF_IMPORTED_OBJECT_IDS,
+    CONF_TEMPERATURE_EXPORTS,
     DEFAULT_SCAN_INTERVAL,
     DHW_DEFAULT_ON_TEMPERATURE,
     DOMAIN,
@@ -41,14 +45,21 @@ from custom_components.zont_ws.heating_config import (
     ZontHeatingModeConfiguration,
 )
 from custom_components.zont_ws.heating_modes import ZontHeatingModeDiscovery
-from custom_components.zont_ws.objects import ZontHeatingCircuitData
+from custom_components.zont_ws.objects import (
+    ZontDigitalTemperatureSensorData,
+    ZontHeatingCircuitData,
+)
 from homeassistant import config_entries, data_entry_flow
-from homeassistant.config_entries import ConfigEntryState
+from homeassistant.components.sensor import SensorDeviceClass
+from homeassistant.config_entries import ConfigEntryState, ConfigFlowResult
 from homeassistant.const import (
+    ATTR_DEVICE_CLASS,
+    ATTR_UNIT_OF_MEASUREMENT,
     CONF_HOST,
     CONF_PASSWORD,
     CONF_SCAN_INTERVAL,
     CONF_USERNAME,
+    UnitOfTemperature,
 )
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -527,6 +538,179 @@ async def test_loaded_options_flow_reuses_coordinator_data(
     assert result["errors"] == {}
     discover.assert_not_awaited()
     coordinator.async_request_refresh.assert_not_awaited()
+
+
+def _loaded_export_entry(
+    hass: HomeAssistant,
+    *,
+    objects: dict[int, ZontDigitalTemperatureSensorData],
+    options: dict | None = None,
+) -> tuple[MockConfigEntry, MagicMock, MagicMock]:
+    """Create a loaded config entry backed by one mocked runtime connection."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title=AUTO_TITLE,
+        unique_id=SERIAL_NUMBER,
+        data=ENTRY_DATA,
+        options=options or {CONF_HEATING_OFF_MODE_ID: OFF_MODE_ID},
+    )
+    entry.add_to_hass(hass)
+    client = MagicMock(spec=ZontWsClient)
+    client.is_connected = True
+    client.async_get_object_state = AsyncMock()
+    client.async_send_command = AsyncMock()
+    client.async_send_named_command = AsyncMock()
+    coordinator = MagicMock()
+    coordinator.data = ZontData(
+        controller=ZontControllerData(info=CONTROLLER_INFO),
+        objects=objects,
+    )
+    coordinator.last_update_success = True
+    coordinator.async_request_refresh = AsyncMock()
+    entry.runtime_data = ZontRuntimeData(client, coordinator)
+    entry.mock_state(hass, ConfigEntryState.LOADED)
+    return entry, client, coordinator
+
+
+async def _open_export_options(
+    hass: HomeAssistant,
+    entry: MockConfigEntry,
+    step_id: str,
+) -> ConfigFlowResult:
+    """Open one temperature-export branch of the options flow."""
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["type"] is data_entry_flow.FlowResultType.MENU
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "exports"}
+    )
+    assert result["type"] is data_entry_flow.FlowResultType.MENU
+    return await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": step_id}
+    )
+
+
+async def test_options_flow_links_existing_temperature_sensor(
+    hass: HomeAssistant,
+) -> None:
+    target = ZontDigitalTemperatureSensorData(4110, 1, "Т Кабинет", temperature=23)
+    options = {
+        CONF_HEATING_OFF_MODE_ID: OFF_MODE_ID,
+        CONF_IMPORTED_OBJECT_IDS: [4110],
+        CONF_EXCLUDED_OBJECT_IDS: [],
+        CONF_AUTO_IMPORT_NEW_OBJECTS: True,
+    }
+    entry, client, coordinator = _loaded_export_entry(
+        hass,
+        objects={target.object_id: target},
+        options=options,
+    )
+    hass.states.async_set(
+        "sensor.office_temperature",
+        "24.14",
+        {
+            ATTR_DEVICE_CLASS: SensorDeviceClass.TEMPERATURE,
+            ATTR_UNIT_OF_MEASUREMENT: UnitOfTemperature.CELSIUS,
+        },
+    )
+    client.async_get_object_state.return_value = {
+        "id": target.object_id,
+        "type": 1,
+        "name": target.name,
+    }
+    client.async_send_command.return_value = {
+        "id": target.object_id,
+        "cmdres": 0,
+    }
+
+    result = await _open_export_options(hass, entry, "export_link")
+    assert result["type"] is data_entry_flow.FlowResultType.FORM
+    assert result["step_id"] == "export_link"
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {"entity_id": "sensor.office_temperature", "target_id": "4110"},
+    )
+    assert result["step_id"] == "export_link_confirm"
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {})
+
+    assert result["type"] is data_entry_flow.FlowResultType.CREATE_ENTRY
+    assert entry.options[CONF_TEMPERATURE_EXPORTS] == [
+        {
+            CONF_EXPORT_SOURCE: "sensor.office_temperature",
+            CONF_EXPORT_TARGET_ID: 4110,
+            CONF_EXPORT_TARGET_NAME: "Т Кабинет",
+        }
+    ]
+    assert entry.options[CONF_IMPORTED_OBJECT_IDS] == []
+    assert entry.options[CONF_EXCLUDED_OBJECT_IDS] == [4110]
+    client.async_get_object_state.assert_awaited_once_with(4110)
+    client.async_send_command.assert_awaited_once_with(4110, "1 24.1")
+    coordinator.async_request_refresh.assert_awaited_once()
+
+
+async def test_options_flow_creates_named_temperature_sensor(
+    hass: HomeAssistant,
+) -> None:
+    entry, client, coordinator = _loaded_export_entry(hass, objects={})
+    hass.states.async_set(
+        "sensor.bedroom_temperature",
+        "21.05",
+        {
+            ATTR_DEVICE_CLASS: SensorDeviceClass.TEMPERATURE,
+            ATTR_UNIT_OF_MEASUREMENT: UnitOfTemperature.CELSIUS,
+        },
+    )
+    client.async_send_named_command.return_value = {"id": 4111, "cmdres": 0}
+    client.async_get_object_state.return_value = {
+        "id": 4111,
+        "type": 1,
+        "name": "HA - Спальня",
+    }
+
+    result = await _open_export_options(hass, entry, "export_create_source")
+    assert result["step_id"] == "export_create_source"
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"entity_id": "sensor.bedroom_temperature"}
+    )
+    assert result["step_id"] == "export_create"
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"name": "HA - Спальня"}
+    )
+
+    assert result["type"] is data_entry_flow.FlowResultType.CREATE_ENTRY
+    assert entry.options[CONF_TEMPERATURE_EXPORTS] == [
+        {
+            CONF_EXPORT_SOURCE: "sensor.bedroom_temperature",
+            CONF_EXPORT_TARGET_ID: 4111,
+            CONF_EXPORT_TARGET_NAME: "HA - Спальня",
+        }
+    ]
+    assert entry.options[CONF_EXCLUDED_OBJECT_IDS] == [4111]
+    client.async_send_named_command.assert_awaited_once_with(
+        "HA - Спальня", 1, "1 21.1"
+    )
+    client.async_get_object_state.assert_awaited_once_with(4111)
+    coordinator.async_request_refresh.assert_awaited_once()
+
+
+def test_removing_export_keeps_old_target_excluded() -> None:
+    options = {
+        CONF_IMPORTED_OBJECT_IDS: [4110],
+        CONF_EXCLUDED_OBJECT_IDS: [],
+        CONF_AUTO_IMPORT_NEW_OBJECTS: True,
+        CONF_TEMPERATURE_EXPORTS: [
+            {
+                CONF_EXPORT_SOURCE: "sensor.office_temperature",
+                CONF_EXPORT_TARGET_ID: 4110,
+                CONF_EXPORT_TARGET_NAME: "Т Кабинет",
+            }
+        ],
+    }
+
+    updated = zont_config_flow._options_with_export_bindings(options, ())
+
+    assert updated[CONF_TEMPERATURE_EXPORTS] == []
+    assert updated[CONF_IMPORTED_OBJECT_IDS] == []
+    assert updated[CONF_EXCLUDED_OBJECT_IDS] == [4110]
 
 
 @pytest.mark.parametrize(

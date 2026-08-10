@@ -36,6 +36,7 @@ from .controller import (
     controller_websocket_url,
 )
 from .coordinator import ZontDataUpdateCoordinator, ZontRuntimeData
+from .object_export import ZontTemperatureExportManager
 from .object_import import (
     importable_object_descriptor,
     object_import_configuration,
@@ -125,7 +126,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ZontConfigEntry) -> bool
             info,
         ),
     )
-    entry.runtime_data = ZontRuntimeData(client=client, coordinator=coordinator)
+    export_manager = ZontTemperatureExportManager(hass, entry, client)
+    entry.runtime_data = ZontRuntimeData(
+        client=client,
+        coordinator=coordinator,
+        export_manager=export_manager,
+    )
     entry.async_on_unload(
         coordinator.async_add_listener(
             lambda: _async_sync_object_devices(
@@ -139,11 +145,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ZontConfigEntry) -> bool
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     except BaseException:
         try:
-            await coordinator.async_shutdown()
+            await export_manager.async_shutdown()
         finally:
-            await client.async_stop()
+            try:
+                await coordinator.async_shutdown()
+            finally:
+                await client.async_stop()
         raise
 
+    export_manager.async_start()
     coordinator.async_start()
 
     return True
@@ -227,9 +237,13 @@ async def async_unload_entry(hass: HomeAssistant, entry: ZontConfigEntry) -> boo
 
     runtime_data = entry.runtime_data
     try:
-        await runtime_data.coordinator.async_shutdown()
+        if runtime_data.export_manager is not None:
+            await runtime_data.export_manager.async_shutdown()
     finally:
-        await runtime_data.client.async_stop()
+        try:
+            await runtime_data.coordinator.async_shutdown()
+        finally:
+            await runtime_data.client.async_stop()
     return True
 
 

@@ -8,6 +8,7 @@ from collections.abc import Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import TYPE_CHECKING
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_SCAN_INTERVAL
@@ -86,6 +87,9 @@ from .relay import (
     parse_relay_internal_state,
 )
 
+if TYPE_CHECKING:
+    from .object_export import ZontTemperatureExportManager
+
 _LOGGER = logging.getLogger(__name__)
 
 _SOURCE_SERVER_STATUS = "server_status"
@@ -130,6 +134,7 @@ class ZontRuntimeData:
 
     client: ZontWsClient
     coordinator: ZontDataUpdateCoordinator
+    export_manager: ZontTemperatureExportManager | None = None
 
 
 def _scan_interval_seconds(value: object) -> int:

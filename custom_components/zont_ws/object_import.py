@@ -11,6 +11,7 @@ from .const import (
     CONF_EXCLUDED_OBJECT_IDS,
     CONF_IMPORTED_OBJECT_IDS,
 )
+from .object_export import temperature_export_target_ids
 from .objects import (
     SUPPORTED_RADIO_SENSOR_SUBTYPES,
     ZontAnalogInputData,
@@ -57,10 +58,13 @@ class ZontObjectImportConfiguration:
     imported_ids: frozenset[int]
     excluded_ids: frozenset[int]
     auto_import_new: bool
+    exported_ids: frozenset[int] = frozenset()
     legacy_import_all: bool = False
 
     def imports(self, object_id: int) -> bool:
         """Return whether one object should be exposed in Home Assistant."""
+        if object_id in self.exported_ids:
+            return False
         if self.legacy_import_all:
             return True
         if object_id in self.imported_ids:
@@ -122,14 +126,16 @@ def object_import_configuration(
     options: Mapping[str, Any],
 ) -> ZontObjectImportConfiguration:
     """Normalize stored options, preserving safe legacy import-all behavior."""
+    exported_ids = temperature_export_target_ids(options)
     if (
         CONF_IMPORTED_OBJECT_IDS not in options
         and CONF_EXCLUDED_OBJECT_IDS not in options
     ):
         return ZontObjectImportConfiguration(
-            frozenset(),
-            frozenset(),
-            True,
+            imported_ids=frozenset(),
+            excluded_ids=frozenset(),
+            auto_import_new=True,
+            exported_ids=exported_ids,
             legacy_import_all=True,
         )
 
@@ -142,15 +148,17 @@ def object_import_configuration(
         or type(auto_import_new) is not bool
     ):
         return ZontObjectImportConfiguration(
-            frozenset(),
-            frozenset(),
-            True,
+            imported_ids=frozenset(),
+            excluded_ids=frozenset(),
+            auto_import_new=True,
+            exported_ids=exported_ids,
             legacy_import_all=True,
         )
     return ZontObjectImportConfiguration(
-        imported_ids,
-        excluded_ids - imported_ids,
-        auto_import_new,
+        imported_ids=imported_ids,
+        excluded_ids=excluded_ids - imported_ids,
+        auto_import_new=auto_import_new,
+        exported_ids=exported_ids,
     )
 
 

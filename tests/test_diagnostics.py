@@ -73,6 +73,11 @@ async def test_diagnostics_exclude_credentials(hass: HomeAssistant) -> None:
             "reconnect_count": 2,
             "pending_commands": 1,
         },
+        "exports": {
+            "configured": 0,
+            "active": 0,
+            "errors": 0,
+        },
         "data": {
             "last_update_success": True,
             "disabled_sources": (),

@@ -485,6 +485,95 @@ async def test_numeric_command_is_serialized_without_string_conversion(
 
 
 @pytest.mark.asyncio
+async def test_named_command_is_serialized_and_correlated(
+    fake_hass: Any, auth_error_callback: Any
+) -> None:
+    ws = auth_socket()
+    client = ZontWsClient(
+        fake_hass,
+        FakeSession([ws]),  # type: ignore[arg-type]
+        "ws://controller/ws",
+        ZontCredentials("user", "password"),
+        "entry",
+        "device",
+        auth_error_callback,
+    )
+    await async_start_client(client)
+
+    command_task = asyncio.create_task(
+        client.async_send_named_command("HA - Кабинет", 1, "1 24.1")
+    )
+    await asyncio.sleep(0)
+
+    assert ws.sent[-1] == {
+        "name": "HA - Кабинет",
+        "type": 1,
+        "cmd": "1 24.1",
+    }
+    assert client.pending_count == 1
+    client._handle_incoming('{"id":4111,"cmdres":0}')
+
+    assert await command_task == {"id": 4111, "cmdres": 0}
+    assert client.pending_count == 0
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_addressed_response_does_not_complete_named_command(
+    fake_hass: Any, auth_error_callback: Any
+) -> None:
+    ws = auth_socket()
+    client = ZontWsClient(
+        fake_hass,
+        FakeSession([ws]),  # type: ignore[arg-type]
+        "ws://controller/ws",
+        ZontCredentials("user", "password"),
+        "entry",
+        "device",
+        auth_error_callback,
+    )
+    await async_start_client(client)
+
+    named = asyncio.create_task(client.async_send_named_command("HA - Кабинет", 1, 24))
+    addressed = asyncio.create_task(client.async_send_command(7, "value"))
+    await asyncio.sleep(0)
+
+    client._handle_incoming('{"id":7,"cmdres":0}')
+    assert await addressed == {"id": 7, "cmdres": 0}
+    assert not named.done()
+
+    client._handle_incoming('{"id":4111,"cmdres":0}')
+    assert (await named)["id"] == 4111
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_named_command_timeout_invalidates_connection(
+    fake_hass: Any, auth_error_callback: Any
+) -> None:
+    ws = auth_socket()
+    client = ZontWsClient(
+        fake_hass,
+        FakeSession([ws]),  # type: ignore[arg-type]
+        "ws://controller/ws",
+        ZontCredentials("user", "password"),
+        "entry",
+        "device",
+        auth_error_callback,
+    )
+    await async_start_client(client)
+
+    with pytest.raises(ZontCommandTimeoutError):
+        await client.async_send_named_command(
+            "HA - Кабинет", 1, "1 24.1", response_timeout=0.01
+        )
+
+    assert client.pending_count == 0
+    assert ws.closed
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
 async def test_push_state_does_not_complete_command(
     fake_hass: Any, auth_error_callback: Any
 ) -> None:

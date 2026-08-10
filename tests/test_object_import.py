@@ -6,7 +6,11 @@ import pytest
 from custom_components.zont_ws.const import (
     CONF_AUTO_IMPORT_NEW_OBJECTS,
     CONF_EXCLUDED_OBJECT_IDS,
+    CONF_EXPORT_SOURCE,
+    CONF_EXPORT_TARGET_ID,
+    CONF_EXPORT_TARGET_NAME,
     CONF_IMPORTED_OBJECT_IDS,
+    CONF_TEMPERATURE_EXPORTS,
 )
 from custom_components.zont_ws.object_import import (
     importable_object_descriptor,
@@ -99,6 +103,27 @@ def test_auto_import_can_be_disabled() -> None:
 
     assert object_is_imported(options, 1)
     assert not object_is_imported(options, 2)
+
+
+def test_export_target_is_never_imported_as_a_zont_device() -> None:
+    options = {
+        CONF_IMPORTED_OBJECT_IDS: [4110],
+        CONF_EXCLUDED_OBJECT_IDS: [],
+        CONF_AUTO_IMPORT_NEW_OBJECTS: True,
+        CONF_TEMPERATURE_EXPORTS: [
+            {
+                CONF_EXPORT_SOURCE: "sensor.office_temperature",
+                CONF_EXPORT_TARGET_ID: 4110,
+                CONF_EXPORT_TARGET_NAME: "Т Кабинет",
+            }
+        ],
+    }
+
+    configuration = object_import_configuration(options)
+
+    assert configuration.exported_ids == frozenset({4110})
+    assert not configuration.imports(4110)
+    assert configuration.imports(4111)
 
 
 @pytest.mark.parametrize(
