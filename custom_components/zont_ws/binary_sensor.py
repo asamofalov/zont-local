@@ -14,6 +14,8 @@ from .entities.analog_input import ZontAnalogInputTriggeredBinarySensor
 from .entities.controller import (
     ZontCloudConnectedBinarySensor,
     ZontConnectedBinarySensor,
+    ZontEthernetConnectedBinarySensor,
+    ZontWifiConnectedBinarySensor,
 )
 from .entities.heating.diagnostics import (
     HEATING_CIRCUIT_BINARY_SENSOR_DESCRIPTIONS_BY_SUBTYPE,
@@ -49,6 +51,41 @@ async def async_setup_entry(
             ZontConnectedBinarySensor(entry),
             ZontCloudConnectedBinarySensor(entry),
         ]
+    )
+
+    added_controller_entities: set[str] = set()
+
+    @callback
+    def add_supported_controller_entities() -> None:
+        """Add optional connection sensors after their source is supported."""
+        controller = entry.runtime_data.coordinator.data.controller
+        factories: tuple[tuple[str, bool, Callable[[], BinarySensorEntity]], ...] = (
+            (
+                "wifi_connected",
+                controller.wifi_status is not None,
+                partial(ZontWifiConnectedBinarySensor, entry),
+            ),
+            (
+                "ethernet_connected",
+                controller.ethernet_status is not None,
+                partial(ZontEthernetConnectedBinarySensor, entry),
+            ),
+        )
+        new_factories = [
+            (key, factory)
+            for key, supported, factory in factories
+            if supported and key not in added_controller_entities
+        ]
+        if not new_factories:
+            return
+        added_controller_entities.update(key for key, _factory in new_factories)
+        async_add_entities([factory() for _key, factory in new_factories])
+
+    add_supported_controller_entities()
+    entry.async_on_unload(
+        entry.runtime_data.coordinator.async_add_listener(
+            add_supported_controller_entities
+        )
     )
 
     @callback

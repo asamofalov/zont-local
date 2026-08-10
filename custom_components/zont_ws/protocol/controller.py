@@ -23,6 +23,9 @@ _INFO_VALUE_PATTERN = re.compile(r"[A-Za-z0-9._+-]+")
 COMMAND_CONTROLLER_INFO = "#S7?"
 COMMAND_SERVER_INFO = "#S224?"
 COMMAND_SUPPLY_VOLTAGE = "#S6?"
+COMMAND_WIFI_INFO = "#S198?"
+COMMAND_ETHERNET_INFO = "#S205?"
+COMMAND_GSM_INFO = "#S4?"
 COMMAND_RESTART = "SRESTART?"
 
 
@@ -36,6 +39,76 @@ class ZontCommunicationChannel(StrEnum):
     GSM = "gsm"
     WIFI = "wifi"
     ETHERNET = "ethernet"
+
+
+class ZontGsmRegistrationState(StrEnum):
+    """GSM network registration state reported by a controller."""
+
+    NOT_REGISTERED = "not_registered"
+    HOME_NETWORK = "home_network"
+    SEARCHING = "searching"
+    REJECTED = "rejected"
+    UNKNOWN = "unknown"
+    ROAMING = "roaming"
+
+
+class ZontPowerSource(StrEnum):
+    """Controller power source reported by #S6."""
+
+    MAIN = "main"
+    BATTERY = "battery"
+
+
+_GSM_REGISTRATION_STATES = tuple(ZontGsmRegistrationState)
+
+
+@dataclass(frozen=True, slots=True)
+class ZontWifiStatus:
+    """Wi-Fi link state without network identifiers."""
+
+    connected: bool
+    raw_signal: int
+
+    @property
+    def signal_percent(self) -> int:
+        """Return the observed RSSI magnitude converted to percent."""
+        if self.raw_signal == 0:
+            return 0
+        if self.raw_signal >= 100:
+            return 1
+        if self.raw_signal <= 50:
+            return 100
+        return 2 * (100 - self.raw_signal)
+
+
+@dataclass(frozen=True, slots=True)
+class ZontEthernetStatus:
+    """Ethernet link state without network identifiers."""
+
+    connected: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ZontGsmStatus:
+    """GSM registration and signal state without operator data."""
+
+    registration: ZontGsmRegistrationState
+    raw_signal: int | None
+
+    @property
+    def signal_percent(self) -> int | None:
+        """Return the observed 0..31 signal level converted to percent."""
+        if self.raw_signal is None:
+            return None
+        return int(self.raw_signal / 31 * 100)
+
+
+@dataclass(frozen=True, slots=True)
+class ZontPowerStatus:
+    """Controller supply voltage and optional source."""
+
+    voltage: float
+    source: ZontPowerSource | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,8 +230,8 @@ def parse_server_status_response(response: str) -> ZontServerStatus:
     )
 
 
-def parse_supply_voltage_response(response: str) -> float:
-    """Return controller supply voltage from a strict #S6 response."""
+def parse_power_status_response(response: str) -> ZontPowerStatus:
+    """Return controller supply voltage and source from a strict #S6 response."""
     prefix = "#S6:"
     if not response.startswith(prefix):
         raise ValueError("Unexpected supply voltage response")
@@ -166,7 +239,73 @@ def parse_supply_voltage_response(response: str) -> float:
     values = response.removeprefix(prefix).split()
     if len(values) != 2 or not values[0].isdigit():
         raise ValueError("Invalid supply voltage response")
-    return int(values[0]) / 10
+    source = None
+    if values[1] == "0":
+        source = ZontPowerSource.MAIN
+    elif values[1].isdigit():
+        source = ZontPowerSource.BATTERY
+    return ZontPowerStatus(int(values[0]) / 10, source)
+
+
+def parse_supply_voltage_response(response: str) -> float:
+    """Return controller supply voltage from a strict #S6 response."""
+    return parse_power_status_response(response).voltage
+
+
+def parse_wifi_status_response(response: str) -> ZontWifiStatus:
+    """Return Wi-Fi connection and raw signal without retaining network data."""
+    prefix = "#S198:"
+    if not response.startswith(prefix):
+        raise ValueError("Unexpected Wi-Fi status response")
+
+    values = response.removeprefix(prefix).split()
+    if (
+        len(values) != 6
+        or not values[0].isdigit()
+        or not values[1].isdigit()
+        or any(not value for value in values[2:])
+    ):
+        raise ValueError("Invalid Wi-Fi status response")
+    return ZontWifiStatus(
+        connected=int(values[0]) == 8,
+        raw_signal=int(values[1]),
+    )
+
+
+def parse_ethernet_status_response(response: str) -> ZontEthernetStatus:
+    """Return Ethernet connection without retaining network data."""
+    prefix = "#S205:"
+    if not response.startswith(prefix):
+        raise ValueError("Unexpected Ethernet status response")
+
+    values = response.removeprefix(prefix).split()
+    if len(values) != 5 or values[4] not in {"0", "1"}:
+        raise ValueError("Invalid Ethernet status response")
+    return ZontEthernetStatus(connected=values[4] == "1")
+
+
+def parse_gsm_status_response(response: str) -> ZontGsmStatus:
+    """Return GSM registration and raw signal without retaining operator data."""
+    prefix = "#S4:"
+    if not response.startswith(prefix):
+        raise ValueError("Unexpected GSM status response")
+
+    values = response.removeprefix(prefix).split(maxsplit=2)
+    if (
+        len(values) != 3
+        or not values[0].isdigit()
+        or not values[1].isdigit()
+        or not values[2]
+    ):
+        raise ValueError("Invalid GSM status response")
+    registration_index = int(values[1])
+    if registration_index >= len(_GSM_REGISTRATION_STATES):
+        raise ValueError("Invalid GSM registration state")
+    raw_signal = int(values[0])
+    return ZontGsmStatus(
+        registration=_GSM_REGISTRATION_STATES[registration_index],
+        raw_signal=raw_signal if 0 <= raw_signal <= 31 else None,
+    )
 
 
 async def async_identify_controller(

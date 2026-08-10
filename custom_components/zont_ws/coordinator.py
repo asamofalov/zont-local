@@ -103,6 +103,11 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
         """Return controller data sources disabled until the next reload."""
         return self._updater.disabled_sources
 
+    @property
+    def unsupported_sources(self) -> tuple[str, ...]:
+        """Return optional controller sources unavailable on this device."""
+        return self._updater.unsupported_sources
+
     @callback
     def async_start(self) -> None:
         """Subscribe to connection changes and start a non-blocking refresh."""

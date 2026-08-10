@@ -5,7 +5,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from .protocol.controller import ZontControllerInfo, ZontServerStatus
+from .protocol.controller import (
+    ZontControllerInfo,
+    ZontEthernetStatus,
+    ZontGsmStatus,
+    ZontPowerSource,
+    ZontServerStatus,
+    ZontWifiStatus,
+)
 from .protocol.heating_config import (
     ZontHeatingCircuitControlData,
     ZontHeatingCircuitInternalState,
@@ -31,6 +38,10 @@ class ZontControllerData:
     info: ZontControllerInfo | None
     server_status: ZontServerStatus | None = None
     supply_voltage: float | None = None
+    power_source: ZontPowerSource | None = None
+    wifi_status: ZontWifiStatus | None = None
+    ethernet_status: ZontEthernetStatus | None = None
+    gsm_status: ZontGsmStatus | None = None
 
 
 @dataclass(frozen=True, slots=True)

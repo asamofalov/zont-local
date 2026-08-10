@@ -51,6 +51,7 @@ async def async_get_config_entry_diagnostics(
         "data": {
             "last_update_success": coordinator.last_update_success,
             "disabled_sources": coordinator.disabled_sources,
+            "unsupported_sources": coordinator.unsupported_sources,
             "cloud_connected": (
                 status.server_status.cloud_connected
                 if status.server_status is not None
@@ -62,5 +63,31 @@ async def async_get_config_entry_diagnostics(
                 else None
             ),
             "supply_voltage": status.supply_voltage,
+            "power_source": (
+                status.power_source.value if status.power_source is not None else None
+            ),
+            "wifi_connected": (
+                status.wifi_status.connected if status.wifi_status is not None else None
+            ),
+            "wifi_signal_percent": (
+                status.wifi_status.signal_percent
+                if status.wifi_status is not None
+                else None
+            ),
+            "ethernet_connected": (
+                status.ethernet_status.connected
+                if status.ethernet_status is not None
+                else None
+            ),
+            "gsm_registration": (
+                status.gsm_status.registration.value
+                if status.gsm_status is not None
+                else None
+            ),
+            "gsm_signal_percent": (
+                status.gsm_status.signal_percent
+                if status.gsm_status is not None
+                else None
+            ),
         },
     }

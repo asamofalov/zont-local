@@ -16,18 +16,28 @@ from custom_components.zont_ws.protocol.controller import (
     COMMAND_RESTART,
     ZontCommunicationChannel,
     ZontControllerInfo,
+    ZontEthernetStatus,
+    ZontGsmRegistrationState,
+    ZontGsmStatus,
     ZontIdentificationError,
+    ZontPowerSource,
+    ZontPowerStatus,
     ZontServerStatus,
+    ZontWifiStatus,
     async_identify_controller,
     async_identify_controller_from_requests,
     async_restart_controller,
     controller_configuration_url,
     controller_endpoint,
     controller_websocket_url,
+    parse_ethernet_status_response,
+    parse_gsm_status_response,
     parse_identity_response,
+    parse_power_status_response,
     parse_serial_response,
     parse_server_status_response,
     parse_supply_voltage_response,
+    parse_wifi_status_response,
 )
 
 
@@ -149,9 +159,94 @@ def test_reject_invalid_server_status(response: str) -> None:
 
 
 def test_parse_supply_voltage_response() -> None:
-    """Convert controller decivolts to volts without interpreting field two."""
+    """Convert controller decivolts while preserving the legacy helper."""
     assert parse_supply_voltage_response("#S6:123 0") == 12.3
     assert parse_supply_voltage_response("#S6:240 reserved") == 24.0
+
+
+@pytest.mark.parametrize(
+    ("response", "expected"),
+    [
+        ("#S6:122 0", ZontPowerStatus(12.2, ZontPowerSource.MAIN)),
+        ("#S6:120 1", ZontPowerStatus(12.0, ZontPowerSource.BATTERY)),
+        ("#S6:240 reserved", ZontPowerStatus(24.0, None)),
+    ],
+)
+def test_parse_power_status_response(
+    response: str,
+    expected: ZontPowerStatus,
+) -> None:
+    """Parse supply voltage without guessing an unknown source code."""
+    assert parse_power_status_response(response) == expected
+
+
+def test_parse_wifi_status_without_retaining_network_identifiers() -> None:
+    """Parse Wi-Fi connection and normalize the observed RSSI magnitude."""
+    status = parse_wifi_status_response(
+        "#S198:8 86 02:00:00:00:00:01 192.0.2.10 255.255.255.0 192.0.2.1"
+    )
+
+    assert status == ZontWifiStatus(connected=True, raw_signal=86)
+    assert status.signal_percent == 28
+    assert (
+        parse_wifi_status_response(
+            "#S198:0 0 02:00:00:00:00:01 0.0.0.0 0.0.0.0 0.0.0.0"
+        ).signal_percent
+        == 0
+    )
+    assert ZontWifiStatus(connected=True, raw_signal=50).signal_percent == 100
+    assert ZontWifiStatus(connected=True, raw_signal=100).signal_percent == 1
+
+
+def test_parse_ethernet_status_without_retaining_network_identifiers() -> None:
+    """Parse only the confirmed Ethernet connection flag."""
+    assert parse_ethernet_status_response(
+        "#S205:02:00:00:00:00:01 192.0.2.10 255.255.255.0 192.0.2.1 1"
+    ) == ZontEthernetStatus(connected=True)
+    assert parse_ethernet_status_response(
+        "#S205:02:00:00:00:00:01 192.0.2.10 255.255.255.0 192.0.2.1 0"
+    ) == ZontEthernetStatus(connected=False)
+
+
+@pytest.mark.parametrize(
+    ("state", "expected"),
+    list(enumerate(ZontGsmRegistrationState)),
+)
+def test_parse_gsm_registration_states(
+    state: int,
+    expected: ZontGsmRegistrationState,
+) -> None:
+    """Parse every confirmed GSM registration state."""
+    status = parse_gsm_status_response(f"#S4:19 {state} Test Operator")
+
+    assert status == ZontGsmStatus(expected, 19)
+    assert status.signal_percent == 61
+
+
+def test_unsupported_gsm_signal_does_not_hide_registration() -> None:
+    """Keep registration available when the signal level is outside 0..31."""
+    status = parse_gsm_status_response("#S4:99 4 Test Operator")
+
+    assert status.registration is ZontGsmRegistrationState.UNKNOWN
+    assert status.raw_signal is None
+    assert status.signal_percent is None
+
+
+@pytest.mark.parametrize(
+    ("parser", "response"),
+    [
+        (parse_wifi_status_response, "#S198:!"),
+        (parse_wifi_status_response, "#S198:8 bad mac ip mask gateway"),
+        (parse_ethernet_status_response, "#S205:!"),
+        (parse_ethernet_status_response, "#S205:mac ip mask gateway 2"),
+        (parse_gsm_status_response, "#S4:0 6 Test Operator"),
+        (parse_gsm_status_response, "#S4:bad 1 Test Operator"),
+    ],
+)
+def test_reject_invalid_extended_status_response(parser, response: str) -> None:
+    """Reject unsupported and malformed extended status data."""
+    with pytest.raises(ValueError):
+        parser(response)
 
 
 @pytest.mark.parametrize(

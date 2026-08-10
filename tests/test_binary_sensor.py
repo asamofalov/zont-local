@@ -17,6 +17,8 @@ from custom_components.zont_ws.entities.analog_input import (
 from custom_components.zont_ws.entities.controller import (
     ZontCloudConnectedBinarySensor,
     ZontConnectedBinarySensor,
+    ZontEthernetConnectedBinarySensor,
+    ZontWifiConnectedBinarySensor,
 )
 from custom_components.zont_ws.entities.heating.diagnostics import (
     HEATING_CIRCUIT_BINARY_SENSOR_DESCRIPTIONS_BY_SUBTYPE,
@@ -37,7 +39,9 @@ from custom_components.zont_ws.entities.relay import (
 from custom_components.zont_ws.protocol import ZontClient
 from custom_components.zont_ws.protocol.controller import (
     ZontCommunicationChannel,
+    ZontEthernetStatus,
     ZontServerStatus,
+    ZontWifiStatus,
 )
 from custom_components.zont_ws.protocol.heating_config import (
     ZontConsumerControlMode,
@@ -202,6 +206,72 @@ async def test_cloud_connection_uses_shared_snapshot(hass: HomeAssistant) -> Non
     assert entity.unique_id == "ABCDEF123456_cloud_connected"
     assert entity.suggested_object_id == "cloud_connected"
     assert entity.device_info["identifiers"] == {(DOMAIN, "ABCDEF123456")}
+
+
+def test_extended_connection_sensors_use_link_status() -> None:
+    """Expose access-point and Ethernet link state separately from cloud channels."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="ABCDEF123456",
+        data={},
+    )
+    client = MagicMock(spec=ZontClient)
+    coordinator = MagicMock(spec=ZontDataUpdateCoordinator)
+    coordinator.last_update_success = True
+    coordinator.data = ZontData(
+        controller=ZontControllerData(
+            info=None,
+            wifi_status=ZontWifiStatus(connected=True, raw_signal=86),
+            ethernet_status=ZontEthernetStatus(connected=False),
+        )
+    )
+    entry.runtime_data = ZontRuntimeData(client, coordinator)
+
+    wifi = ZontWifiConnectedBinarySensor(entry)
+    ethernet = ZontEthernetConnectedBinarySensor(entry)
+
+    assert wifi.available
+    assert wifi.is_on
+    assert ethernet.available
+    assert not ethernet.is_on
+    assert wifi.device_class is BinarySensorDeviceClass.CONNECTIVITY
+    assert ethernet.device_class is BinarySensorDeviceClass.CONNECTIVITY
+    assert wifi.entity_category is EntityCategory.DIAGNOSTIC
+    assert wifi.unique_id == "ABCDEF123456_wifi_connected"
+    assert ethernet.unique_id == "ABCDEF123456_ethernet_connected"
+
+
+async def test_setup_adds_only_supported_controller_connections(
+    hass: HomeAssistant,
+) -> None:
+    """Do not create Ethernet when its optional source is unsupported."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="ABCDEF123456",
+        data={},
+    )
+    client = MagicMock(spec=ZontClient)
+    coordinator = MagicMock(spec=ZontDataUpdateCoordinator)
+    coordinator.last_update_success = True
+    coordinator.data = ZontData(
+        controller=ZontControllerData(
+            info=None,
+            wifi_status=ZontWifiStatus(connected=True, raw_signal=86),
+        )
+    )
+    coordinator.async_add_listener.return_value = lambda: None
+    entry.runtime_data = ZontRuntimeData(client, coordinator)
+    entry.add_to_hass(hass)
+    async_add_entities = MagicMock()
+
+    await async_setup_entry(hass, entry, async_add_entities)
+
+    optional_entities = async_add_entities.call_args_list[1].args[0]
+    assert len(optional_entities) == 1
+    assert isinstance(optional_entities[0], ZontWifiConnectedBinarySensor)
+    controller_listener = coordinator.async_add_listener.call_args_list[0].args[0]
+    controller_listener()
+    assert async_add_entities.call_count == 2
 
 
 @pytest.mark.parametrize(

@@ -17,7 +17,11 @@ from custom_components.zont_ws.entities.analog_input import (
 from custom_components.zont_ws.entities.controller import (
     CONNECTION_CHANNEL_STATES,
     ZontConnectionChannelSensor,
+    ZontGsmRegistrationSensor,
+    ZontGsmSignalSensor,
+    ZontPowerSourceSensor,
     ZontSupplyVoltageSensor,
+    ZontWifiSignalSensor,
 )
 from custom_components.zont_ws.entities.digital_bus import (
     DIGITAL_BUS_SENSOR_DESCRIPTIONS,
@@ -39,7 +43,11 @@ from custom_components.zont_ws.entities.temperature import (
 from custom_components.zont_ws.protocol import ZontClient
 from custom_components.zont_ws.protocol.controller import (
     ZontCommunicationChannel,
+    ZontGsmRegistrationState,
+    ZontGsmStatus,
+    ZontPowerSource,
     ZontServerStatus,
+    ZontWifiStatus,
 )
 from custom_components.zont_ws.protocol.heating_config import (
     ZontConsumerControlMode,
@@ -152,6 +160,81 @@ def test_controller_sensors_are_unavailable_without_source_data() -> None:
 
     assert not ZontConnectionChannelSensor(entry).available
     assert not ZontSupplyVoltageSensor(entry).available
+
+
+def test_extended_controller_sensors_use_safe_derived_values() -> None:
+    """Expose only safe status and normalized signal values."""
+    entry = _entry(
+        ZontControllerData(
+            info=None,
+            power_source=ZontPowerSource.MAIN,
+            wifi_status=ZontWifiStatus(connected=True, raw_signal=86),
+            gsm_status=ZontGsmStatus(ZontGsmRegistrationState.SEARCHING, 0),
+        )
+    )
+
+    power = ZontPowerSourceSensor(entry)
+    registration = ZontGsmRegistrationSensor(entry)
+    wifi_signal = ZontWifiSignalSensor(entry)
+    gsm_signal = ZontGsmSignalSensor(entry)
+
+    assert power.native_value == "main"
+    assert power.options == ["main", "battery"]
+    assert registration.native_value == "searching"
+    assert wifi_signal.native_value == 28
+    assert gsm_signal.native_value == 0
+    assert wifi_signal.native_unit_of_measurement == PERCENTAGE
+    assert gsm_signal.native_unit_of_measurement == PERCENTAGE
+    assert not wifi_signal.entity_registry_enabled_default
+    assert not gsm_signal.entity_registry_enabled_default
+    assert all(
+        entity.entity_category is EntityCategory.DIAGNOSTIC
+        for entity in (power, registration, wifi_signal, gsm_signal)
+    )
+    assert wifi_signal.unique_id == "ABCDEF123456_wifi_signal"
+    assert gsm_signal.unique_id == "ABCDEF123456_gsm_signal"
+
+
+def test_gsm_signal_is_unavailable_for_unknown_raw_level() -> None:
+    """Keep GSM registration usable without inventing a signal percentage."""
+    entry = _entry(
+        ZontControllerData(
+            info=None,
+            gsm_status=ZontGsmStatus(ZontGsmRegistrationState.UNKNOWN, None),
+        )
+    )
+
+    assert ZontGsmRegistrationSensor(entry).available
+    assert not ZontGsmSignalSensor(entry).available
+
+
+async def test_setup_adds_supported_controller_sensors_once(hass) -> None:
+    """Add optional controller sensors after a supported response without duplicates."""
+    entry = _entry(
+        ZontControllerData(
+            info=None,
+            power_source=ZontPowerSource.MAIN,
+            wifi_status=ZontWifiStatus(connected=True, raw_signal=86),
+            gsm_status=ZontGsmStatus(ZontGsmRegistrationState.SEARCHING, 0),
+        )
+    )
+    entry.add_to_hass(hass)
+    async_add_entities = MagicMock()
+
+    await async_setup_entry(hass, entry, async_add_entities)
+
+    optional_entities = async_add_entities.call_args_list[1].args[0]
+    assert {type(entity) for entity in optional_entities} == {
+        ZontPowerSourceSensor,
+        ZontGsmRegistrationSensor,
+        ZontWifiSignalSensor,
+        ZontGsmSignalSensor,
+    }
+    controller_listener = (
+        entry.runtime_data.coordinator.async_add_listener.call_args_list[0].args[0]
+    )
+    controller_listener()
+    assert async_add_entities.call_count == 2
 
 
 @pytest.mark.parametrize(

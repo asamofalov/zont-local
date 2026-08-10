@@ -15,13 +15,23 @@ from .protocol import (
 )
 from .protocol.constants import CONTROLLER_INFO_TIMEOUT
 from .protocol.controller import (
+    COMMAND_ETHERNET_INFO,
+    COMMAND_GSM_INFO,
     COMMAND_SERVER_INFO,
     COMMAND_SUPPLY_VOLTAGE,
+    COMMAND_WIFI_INFO,
     ZontControllerInfo,
+    ZontEthernetStatus,
+    ZontGsmStatus,
+    ZontPowerStatus,
     ZontServerStatus,
+    ZontWifiStatus,
     async_refresh_controller_info,
+    parse_ethernet_status_response,
+    parse_gsm_status_response,
+    parse_power_status_response,
     parse_server_status_response,
-    parse_supply_voltage_response,
+    parse_wifi_status_response,
 )
 from .protocol.metadata import (
     ZontHeatingMetadataRefresher,
@@ -41,6 +51,9 @@ _LOGGER = logging.getLogger(__name__)
 
 _SOURCE_SERVER_STATUS = "server_status"
 _SOURCE_SUPPLY_VOLTAGE = "supply_voltage"
+_SOURCE_WIFI_STATUS = "wifi_status"
+_SOURCE_ETHERNET_STATUS = "ethernet_status"
+_SOURCE_GSM_STATUS = "gsm_status"
 
 
 class ZontDataUpdater:
@@ -56,6 +69,7 @@ class ZontDataUpdater:
         self._client = client
         self._on_controller_info = on_controller_info
         self._disabled_sources: set[str] = set()
+        self._unsupported_sources: set[str] = set()
         self._object_error_types: set[int] = set()
         self._info_refresh_enabled = initial_info is not None
         self._info_refresh_needed = initial_info is not None
@@ -67,6 +81,11 @@ class ZontDataUpdater:
     def disabled_sources(self) -> tuple[str, ...]:
         """Return sources disabled until the integration is reloaded."""
         return tuple(sorted(self._disabled_sources))
+
+    @property
+    def unsupported_sources(self) -> tuple[str, ...]:
+        """Return optional sources unsupported until the integration is reloaded."""
+        return tuple(sorted(self._unsupported_sources))
 
     def mark_connection_stale(self) -> None:
         """Mark connection-scoped metadata for refresh after reconnect."""
@@ -87,7 +106,10 @@ class ZontDataUpdater:
         previous_controller = previous.controller
         info = await self._async_refresh_info(previous_controller.info)
         server_status = await self._async_refresh_server_status()
-        supply_voltage = await self._async_refresh_supply_voltage()
+        power_status = await self._async_refresh_power_status()
+        wifi_status = await self._async_refresh_wifi_status()
+        ethernet_status = await self._async_refresh_ethernet_status()
+        gsm_status = await self._async_refresh_gsm_status()
         objects = await self._async_refresh_objects(previous.objects)
         mixer_states = await self.mixer_metadata.async_refresh(objects)
         relay_configurations, relay_states = await self.relay_metadata.async_refresh(
@@ -109,7 +131,15 @@ class ZontDataUpdater:
             controller=ZontControllerData(
                 info=info,
                 server_status=server_status,
-                supply_voltage=supply_voltage,
+                supply_voltage=(
+                    power_status.voltage if power_status is not None else None
+                ),
+                power_source=(
+                    power_status.source if power_status is not None else None
+                ),
+                wifi_status=wifi_status,
+                ethernet_status=ethernet_status,
+                gsm_status=gsm_status,
             ),
             objects=objects,
             heating_controls=heating_controls,
@@ -222,8 +252,8 @@ class ZontDataUpdater:
             self._disable_source(_SOURCE_SERVER_STATUS, COMMAND_SERVER_INFO)
             return None
 
-    async def _async_refresh_supply_voltage(self) -> float | None:
-        """Refresh controller supply voltage."""
+    async def _async_refresh_power_status(self) -> ZontPowerStatus | None:
+        """Refresh controller supply voltage and source."""
         if _SOURCE_SUPPLY_VOLTAGE in self._disabled_sources:
             return None
         try:
@@ -231,13 +261,67 @@ class ZontDataUpdater:
                 COMMAND_SUPPLY_VOLTAGE,
                 response_timeout=CONTROLLER_INFO_TIMEOUT,
             )
-            return parse_supply_voltage_response(response)
+            return parse_power_status_response(response)
         except asyncio.CancelledError:
             raise
         except ZontConnectionError:
             raise
         except (ValueError, ZontProtocolError, ZontRequestTimeoutError):
             self._disable_source(_SOURCE_SUPPLY_VOLTAGE, COMMAND_SUPPLY_VOLTAGE)
+            return None
+
+    async def _async_refresh_wifi_status(self) -> ZontWifiStatus | None:
+        """Refresh optional Wi-Fi state."""
+        return await self._async_refresh_optional_status(
+            _SOURCE_WIFI_STATUS,
+            COMMAND_WIFI_INFO,
+            "#S198:!",
+            parse_wifi_status_response,
+        )
+
+    async def _async_refresh_ethernet_status(self) -> ZontEthernetStatus | None:
+        """Refresh optional Ethernet state."""
+        return await self._async_refresh_optional_status(
+            _SOURCE_ETHERNET_STATUS,
+            COMMAND_ETHERNET_INFO,
+            "#S205:!",
+            parse_ethernet_status_response,
+        )
+
+    async def _async_refresh_gsm_status(self) -> ZontGsmStatus | None:
+        """Refresh optional GSM state."""
+        return await self._async_refresh_optional_status(
+            _SOURCE_GSM_STATUS,
+            COMMAND_GSM_INFO,
+            "#S4:!",
+            parse_gsm_status_response,
+        )
+
+    async def _async_refresh_optional_status[StatusT](
+        self,
+        source: str,
+        command: str,
+        unsupported_response: str,
+        parser: Callable[[str], StatusT],
+    ) -> StatusT | None:
+        """Refresh one optional controller source without affecting others."""
+        if source in self._disabled_sources or source in self._unsupported_sources:
+            return None
+        try:
+            response = await self._client.async_send_system_command(
+                command,
+                response_timeout=CONTROLLER_INFO_TIMEOUT,
+            )
+            if response == unsupported_response:
+                self._unsupported_sources.add(source)
+                return None
+            return parser(response)
+        except asyncio.CancelledError:
+            raise
+        except ZontConnectionError:
+            raise
+        except (ValueError, ZontProtocolError, ZontRequestTimeoutError):
+            self._disable_source(source, command)
             return None
 
     def _disable_source(self, source: str, command: str) -> None:

@@ -223,6 +223,12 @@
       "cloud_connected": {
         "name": "Связь с облаком"
       },
+      "wifi_connected": {
+        "name": "Подключение Wi‑Fi"
+      },
+      "ethernet_connected": {
+        "name": "Подключение Ethernet"
+      },
       "analog_triggered": {
         "name": "Сработка"
       },
@@ -278,6 +284,30 @@
       },
       "supply_voltage": {
         "name": "Напряжение питания"
+      },
+      "power_source": {
+        "name": "Источник питания",
+        "state": {
+          "main": "Основное питание",
+          "battery": "Батарея"
+        }
+      },
+      "gsm_registration": {
+        "name": "Регистрация GSM",
+        "state": {
+          "not_registered": "Не зарегистрирован",
+          "home_network": "Домашняя сеть",
+          "searching": "Поиск сети",
+          "rejected": "Регистрация отклонена",
+          "unknown": "Неизвестно",
+          "roaming": "Роуминг"
+        }
+      },
+      "wifi_signal": {
+        "name": "Уровень сигнала Wi‑Fi"
+      },
+      "gsm_signal": {
+        "name": "Уровень сигнала GSM"
       },
       "digital_bus_flow_temperature": {
         "name": "Температура теплоносителя"

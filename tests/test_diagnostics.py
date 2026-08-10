@@ -14,7 +14,11 @@ from custom_components.zont_ws.protocol import ZontClient
 from custom_components.zont_ws.protocol.controller import (
     ZontCommunicationChannel,
     ZontControllerInfo,
+    ZontGsmRegistrationState,
+    ZontGsmStatus,
+    ZontPowerSource,
     ZontServerStatus,
+    ZontWifiStatus,
 )
 from custom_components.zont_ws.runtime import ZontRuntimeData
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
@@ -45,6 +49,7 @@ async def test_diagnostics_exclude_credentials(hass: HomeAssistant) -> None:
     coordinator = MagicMock(spec=ZontDataUpdateCoordinator)
     coordinator.last_update_success = True
     coordinator.disabled_sources = ()
+    coordinator.unsupported_sources = ("ethernet_status",)
     coordinator.data = ZontData(
         controller=ZontControllerData(
             info=None,
@@ -53,6 +58,9 @@ async def test_diagnostics_exclude_credentials(hass: HomeAssistant) -> None:
                 channels=frozenset({ZontCommunicationChannel.WIFI}),
             ),
             supply_voltage=12.3,
+            power_source=ZontPowerSource.MAIN,
+            wifi_status=ZontWifiStatus(connected=True, raw_signal=86),
+            gsm_status=ZontGsmStatus(ZontGsmRegistrationState.SEARCHING, 0),
         )
     )
     entry.runtime_data = ZontRuntimeData(client, coordinator)
@@ -80,11 +88,20 @@ async def test_diagnostics_exclude_credentials(hass: HomeAssistant) -> None:
         "data": {
             "last_update_success": True,
             "disabled_sources": (),
+            "unsupported_sources": ("ethernet_status",),
             "cloud_connected": True,
             "connection_channels": ["wifi"],
             "supply_voltage": 12.3,
+            "power_source": "main",
+            "wifi_connected": True,
+            "wifi_signal_percent": 28,
+            "ethernet_connected": None,
+            "gsm_registration": "searching",
+            "gsm_signal_percent": 0,
         },
     }
     assert "secret-user" not in str(result)
     assert "secret-password" not in str(result)
     assert "ABCDEF123456" not in str(result)
+    assert "02:00:00:00:00:01" not in str(result)
+    assert "Test Operator" not in str(result)

@@ -11,7 +11,14 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .entities.analog_input import ZontAnalogInputValueSensor
-from .entities.controller import ZontConnectionChannelSensor, ZontSupplyVoltageSensor
+from .entities.controller import (
+    ZontConnectionChannelSensor,
+    ZontGsmRegistrationSensor,
+    ZontGsmSignalSensor,
+    ZontPowerSourceSensor,
+    ZontSupplyVoltageSensor,
+    ZontWifiSignalSensor,
+)
 from .entities.digital_bus import (
     DIGITAL_BUS_SENSOR_DESCRIPTIONS,
     ZontDigitalBusSensor,
@@ -55,6 +62,51 @@ async def async_setup_entry(
             ZontConnectionChannelSensor(entry),
             ZontSupplyVoltageSensor(entry),
         ]
+    )
+
+    added_controller_entities: set[str] = set()
+
+    @callback
+    def add_supported_controller_entities() -> None:
+        """Add optional controller sensors after their source is supported."""
+        controller = entry.runtime_data.coordinator.data.controller
+        factories: tuple[tuple[str, bool, Callable[[], SensorEntity]], ...] = (
+            (
+                "power_source",
+                controller.power_source is not None,
+                partial(ZontPowerSourceSensor, entry),
+            ),
+            (
+                "gsm_registration",
+                controller.gsm_status is not None,
+                partial(ZontGsmRegistrationSensor, entry),
+            ),
+            (
+                "wifi_signal",
+                controller.wifi_status is not None,
+                partial(ZontWifiSignalSensor, entry),
+            ),
+            (
+                "gsm_signal",
+                controller.gsm_status is not None,
+                partial(ZontGsmSignalSensor, entry),
+            ),
+        )
+        new_factories = [
+            (key, factory)
+            for key, supported, factory in factories
+            if supported and key not in added_controller_entities
+        ]
+        if not new_factories:
+            return
+        added_controller_entities.update(key for key, _factory in new_factories)
+        async_add_entities([factory() for _key, factory in new_factories])
+
+    add_supported_controller_entities()
+    entry.async_on_unload(
+        entry.runtime_data.coordinator.async_add_listener(
+            add_supported_controller_entities
+        )
     )
 
     @callback

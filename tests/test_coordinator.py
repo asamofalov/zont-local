@@ -19,9 +19,14 @@ from custom_components.zont_ws.coordinator import (
 from custom_components.zont_ws.data import ZontControllerData, ZontData
 from custom_components.zont_ws.protocol import ZontClient, ZontProtocolError
 from custom_components.zont_ws.protocol.controller import (
+    COMMAND_ETHERNET_INFO,
+    COMMAND_GSM_INFO,
     COMMAND_SERVER_INFO,
     COMMAND_SUPPLY_VOLTAGE,
+    COMMAND_WIFI_INFO,
     ZontCommunicationChannel,
+    ZontGsmRegistrationState,
+    ZontPowerSource,
 )
 from custom_components.zont_ws.protocol.heating_config import (
     ZontConsumerControlMode,
@@ -83,6 +88,41 @@ class _ObjectIdsMock(AsyncMock):
         return await super()._execute_mock_call(*args, **kwargs)
 
 
+class _SystemCommandMock(AsyncMock):
+    """Keep existing coordinator fixtures focused on their original sources."""
+
+    optional_responses: dict[str, str]
+
+    def __init__(self) -> None:
+        """Initialize optional controller sources as unsupported."""
+        super().__init__()
+        self.optional_responses = {
+            COMMAND_WIFI_INFO: "#S198:!",
+            COMMAND_ETHERNET_INFO: "#S205:!",
+            COMMAND_GSM_INFO: "#S4:!",
+        }
+
+    async def _execute_mock_call(self, *args: object, **kwargs: object) -> object:
+        if args and args[0] in self.optional_responses:
+            side_effect = self.side_effect
+            return_value = self.return_value
+            self.side_effect = None
+            self.return_value = self.optional_responses[str(args[0])]
+            try:
+                return await super()._execute_mock_call(*args, **kwargs)
+            finally:
+                self.side_effect = side_effect
+                self.return_value = return_value
+        return await super()._execute_mock_call(*args, **kwargs)
+
+
+_OPTIONAL_STATUS_CALLS = [
+    call(COMMAND_WIFI_INFO, response_timeout=3.0),
+    call(COMMAND_ETHERNET_INFO, response_timeout=3.0),
+    call(COMMAND_GSM_INFO, response_timeout=3.0),
+]
+
+
 def _coordinator(
     hass: HomeAssistant,
     scan_interval: object | None = None,
@@ -97,7 +137,7 @@ def _coordinator(
     )
     client = MagicMock(spec=ZontClient)
     client.is_connected = True
-    client.async_send_system_command = AsyncMock()
+    client.async_send_system_command = _SystemCommandMock()
     client.async_get_object_ids = _ObjectIdsMock()
     client.async_get_object_state = AsyncMock()
     coordinator = ZontDataUpdateCoordinator(
@@ -198,6 +238,7 @@ async def test_refresh_builds_one_controller_snapshot(hass: HomeAssistant) -> No
     assert client.async_send_system_command.await_args_list == [
         call(COMMAND_SERVER_INFO, response_timeout=3.0),
         call(COMMAND_SUPPLY_VOLTAGE, response_timeout=3.0),
+        *_OPTIONAL_STATUS_CALLS,
     ]
     assert client.async_get_object_ids.await_args_list == [
         call(0),
@@ -232,8 +273,49 @@ async def test_invalid_source_is_disabled_without_breaking_others(
     assert client.async_send_system_command.await_args_list == [
         call(COMMAND_SERVER_INFO, response_timeout=3.0),
         call(COMMAND_SUPPLY_VOLTAGE, response_timeout=3.0),
+        *_OPTIONAL_STATUS_CALLS,
         call(COMMAND_SUPPLY_VOLTAGE, response_timeout=3.0),
     ]
+
+
+async def test_refresh_builds_extended_controller_status(hass: HomeAssistant) -> None:
+    """Build safe Wi-Fi, GSM and power status while skipping Ethernet support."""
+    coordinator, client = _coordinator(hass)
+    client.async_send_system_command.side_effect = [
+        "#S224:1 0 1 0",
+        "#S6:122 0",
+        "#S224:1 0 1 0",
+        "#S6:122 0",
+    ]
+    client.async_send_system_command.optional_responses.update(
+        {
+            COMMAND_WIFI_INFO: (
+                "#S198:8 86 02:00:00:00:00:01 192.0.2.10 255.255.255.0 192.0.2.1"
+            ),
+            COMMAND_GSM_INFO: "#S4:0 2 Test Operator",
+        }
+    )
+
+    await coordinator.async_refresh()
+    await coordinator.async_refresh()
+
+    status = coordinator.data.controller
+    assert status.supply_voltage == 12.2
+    assert status.power_source is ZontPowerSource.MAIN
+    assert status.wifi_status is not None
+    assert status.wifi_status.connected
+    assert status.wifi_status.signal_percent == 28
+    assert status.ethernet_status is None
+    assert status.gsm_status is not None
+    assert status.gsm_status.registration is ZontGsmRegistrationState.SEARCHING
+    assert status.gsm_status.signal_percent == 0
+    assert coordinator.unsupported_sources == ("ethernet_status",)
+    commands = [
+        awaited.args[0] for awaited in client.async_send_system_command.await_args_list
+    ]
+    assert commands.count(COMMAND_WIFI_INFO) == 2
+    assert commands.count(COMMAND_ETHERNET_INFO) == 1
+    assert commands.count(COMMAND_GSM_INFO) == 2
 
 
 async def test_disconnected_client_marks_snapshot_unavailable(
@@ -801,6 +883,7 @@ async def test_refresh_resolves_consumer_water_range(hass: HomeAssistant) -> Non
     assert client.async_send_system_command.await_args_list == [
         call(COMMAND_SERVER_INFO, response_timeout=3.0),
         call(COMMAND_SUPPLY_VOLTAGE, response_timeout=3.0),
+        *_OPTIONAL_STATUS_CALLS,
         call("#Z20496?"),
         call("#Y20496?"),
     ]
@@ -1235,6 +1318,7 @@ async def test_refresh_discovers_pump(hass: HomeAssistant) -> None:
     assert client.async_send_system_command.await_args_list == [
         call(COMMAND_SERVER_INFO, response_timeout=3.0),
         call(COMMAND_SUPPLY_VOLTAGE, response_timeout=3.0),
+        *_OPTIONAL_STATUS_CALLS,
     ]
 
 
@@ -1293,6 +1377,7 @@ async def test_refresh_discovers_mixer_and_internal_state(
     assert client.async_send_system_command.await_args_list == [
         call(COMMAND_SERVER_INFO, response_timeout=3.0),
         call(COMMAND_SUPPLY_VOLTAGE, response_timeout=3.0),
+        *_OPTIONAL_STATUS_CALLS,
         call("#Y9078?"),
     ]
 
