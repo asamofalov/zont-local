@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from custom_components.zont_ws import (
     _async_cleanup_excluded_object_devices,
+    _async_entry_updated,
     _async_sync_object_devices,
     async_migrate_entry,
     async_setup_entry,
@@ -24,6 +25,7 @@ from custom_components.zont_ws.const import (
     CONF_CONTROLLER,
     CONF_EXCLUDED_OBJECT_IDS,
     CONF_IMPORTED_OBJECT_IDS,
+    CONF_TEMPERATURE_EXPORTS,
     CONFIG_ENTRY_VERSION,
     DOMAIN,
     connection_signal,
@@ -57,7 +59,13 @@ from custom_components.zont_ws.objects import (
     immutable_objects,
 )
 from homeassistant.config_entries import ConfigEntryAuthFailed, ConfigEntryNotReady
-from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_URL, CONF_USERNAME
+from homeassistant.const import (
+    CONF_HOST,
+    CONF_PASSWORD,
+    CONF_URL,
+    CONF_USERNAME,
+    STATE_UNAVAILABLE,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -496,6 +504,100 @@ async def test_discovered_adapter_creates_prefixed_entities(
         )
         == "sensor.navien_error_code"
     )
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_live_import_change_keeps_unaffected_entity_available(
+    hass: HomeAssistant,
+) -> None:
+    """Excluding one object must not unload the shared client or other entities."""
+    first_id = 4107
+    second_id = 4109
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=CONFIG_ENTRY_VERSION,
+        unique_id=SERIAL_NUMBER,
+        data={
+            **ENTRY_DATA,
+            CONF_CONTROLLER: CONTROLLER_INFO.as_dict(),
+            CONF_AUTO_TITLE: "ZONT H1V02 PRO (192.0.2.10)",
+        },
+        options={
+            CONF_IMPORTED_OBJECT_IDS: [first_id, second_id],
+            CONF_EXCLUDED_OBJECT_IDS: [],
+            CONF_AUTO_IMPORT_NEW_OBJECTS: False,
+        },
+    )
+    entry.add_to_hass(hass)
+
+    def start_with_sensors(coordinator: ZontDataUpdateCoordinator) -> None:
+        coordinator.data = ZontData(
+            controller=ZontControllerData(info=CONTROLLER_INFO),
+            objects=immutable_objects(
+                {
+                    first_id: ZontDigitalTemperatureSensorData(
+                        first_id,
+                        1,
+                        "Т Спальня",
+                        temperature=21.0,
+                    ),
+                    second_id: ZontDigitalTemperatureSensorData(
+                        second_id,
+                        1,
+                        "Т Зал",
+                        temperature=22.0,
+                    ),
+                }
+            ),
+        )
+        coordinator.async_update_listeners()
+
+    with (
+        patch.object(ZontWsClient, "async_start", new=AsyncMock()),
+        patch.object(
+            ZontDataUpdateCoordinator,
+            "async_start",
+            new=start_with_sensors,
+        ),
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    registry = er.async_get(hass)
+    first_entity_id = registry.async_get_entity_id(
+        "sensor", DOMAIN, f"{SERIAL_NUMBER}_{first_id}_temperature"
+    )
+    second_entity_id = registry.async_get_entity_id(
+        "sensor", DOMAIN, f"{SERIAL_NUMBER}_{second_id}_temperature"
+    )
+    assert first_entity_id is not None
+    assert second_entity_id is not None
+    client = entry.runtime_data.client
+
+    with patch.object(
+        hass.config_entries,
+        "async_reload",
+        new=AsyncMock(),
+    ) as reload_entry:
+        hass.config_entries.async_update_entry(
+            entry,
+            options={
+                CONF_IMPORTED_OBJECT_IDS: [second_id],
+                CONF_EXCLUDED_OBJECT_IDS: [first_id],
+                CONF_AUTO_IMPORT_NEW_OBJECTS: False,
+            },
+        )
+        await hass.async_block_till_done()
+
+    reload_entry.assert_not_awaited()
+    assert entry.runtime_data.client is client
+    assert registry.async_get(first_entity_id) is None
+    assert hass.states.get(first_entity_id) is None
+    assert registry.async_get(second_entity_id) is not None
+    second_state = hass.states.get(second_entity_id)
+    assert second_state is not None
+    assert second_state.state != STATE_UNAVAILABLE
 
     assert await hass.config_entries.async_unload(entry.entry_id)
 
@@ -1440,3 +1542,77 @@ async def test_unload_stops_client(hass: HomeAssistant) -> None:
 
     client.async_stop.assert_awaited_once()
     coordinator.async_shutdown.assert_awaited_once()
+
+
+async def test_options_update_is_applied_without_reload(
+    hass: HomeAssistant,
+) -> None:
+    """Options use live runtime reconfiguration and preserve the client."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data=ENTRY_DATA,
+        options={},
+    )
+    entry.add_to_hass(hass)
+    coordinator = MagicMock(spec=ZontDataUpdateCoordinator)
+    coordinator.async_apply_options = MagicMock()
+    export_manager = MagicMock()
+    export_manager.async_reconfigure = AsyncMock()
+    object_entities = MagicMock()
+    object_entities.async_reconcile = AsyncMock()
+    entry.runtime_data = ZontRuntimeData(
+        MagicMock(spec=ZontWsClient),
+        coordinator,
+        export_manager,
+        object_entities=object_entities,
+        options={},
+        connection_settings=("192.0.2.10", "user", "password"),
+    )
+    updated_options = {CONF_TEMPERATURE_EXPORTS: []}
+    hass.config_entries.async_update_entry(entry, options=updated_options)
+
+    with patch.object(
+        hass.config_entries,
+        "async_reload",
+        new=AsyncMock(),
+    ) as reload_entry:
+        await _async_entry_updated(hass, entry)
+
+    reload_entry.assert_not_awaited()
+    export_manager.async_reconfigure.assert_awaited_once_with(updated_options)
+    coordinator.async_apply_options.assert_called_once_with()
+    object_entities.async_reconcile.assert_awaited_once_with()
+
+
+async def test_connection_update_still_reloads_entry(
+    hass: HomeAssistant,
+) -> None:
+    """Changing the endpoint replaces the transport through a controlled reload."""
+    entry = MockConfigEntry(domain=DOMAIN, data=ENTRY_DATA, options={})
+    entry.add_to_hass(hass)
+    coordinator = MagicMock(spec=ZontDataUpdateCoordinator)
+    coordinator.async_apply_options = MagicMock()
+    export_manager = MagicMock()
+    export_manager.async_reconfigure = AsyncMock()
+    entry.runtime_data = ZontRuntimeData(
+        MagicMock(spec=ZontWsClient),
+        coordinator,
+        export_manager,
+        options={},
+        connection_settings=("192.0.2.10", "user", "password"),
+    )
+    hass.config_entries.async_update_entry(
+        entry,
+        data={**ENTRY_DATA, CONF_HOST: "192.0.2.11"},
+    )
+
+    with patch.object(
+        hass.config_entries,
+        "async_reload",
+        new=AsyncMock(),
+    ) as reload_entry:
+        await _async_entry_updated(hass, entry)
+
+    reload_entry.assert_awaited_once_with(entry.entry_id)
+    export_manager.async_reconfigure.assert_not_awaited()
+    coordinator.async_apply_options.assert_not_called()

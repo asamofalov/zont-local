@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
+from functools import partial
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
@@ -21,6 +23,7 @@ from .coordinator import ZontRuntimeData
 from .entity import ZontObjectCoordinatorEntity
 from .heating import ZontCommandRejectedError, ZontCommandStateError
 from .object_import import object_import_configuration
+from .object_platform import ZontObjectEntityReconciler
 from .objects import ZontRelayData
 from .relay import (
     ZontRelayConfiguration,
@@ -35,29 +38,37 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up ZONT relay switches."""
-    known_entities: set[int] = set()
-    import_configuration = object_import_configuration(entry.options)
 
     @callback
-    def async_add_object_entities() -> None:
-        """Add switches for newly discovered relays."""
-        new_entities: list[SwitchEntity] = []
+    def object_entity_factories() -> dict[int, Callable[[], SwitchEntity]]:
+        """Describe relay switches selected by current import options."""
+        factories: dict[int, Callable[[], SwitchEntity]] = {}
+        import_configuration = object_import_configuration(entry.options)
         for obj in entry.runtime_data.coordinator.data.objects.values():
-            if (
-                not import_configuration.imports(obj.object_id)
-                or not isinstance(obj, ZontRelayData)
-                or obj.object_id in known_entities
+            if not import_configuration.imports(obj.object_id) or not isinstance(
+                obj, ZontRelayData
             ):
                 continue
-            known_entities.add(obj.object_id)
-            new_entities.append(ZontRelaySwitch(entry, obj.object_id))
-        if new_entities:
-            async_add_entities(new_entities)
+            factories[obj.object_id] = partial(
+                ZontRelaySwitch,
+                entry,
+                obj.object_id,
+            )
+        return factories
 
-    entry.async_on_unload(
-        entry.runtime_data.coordinator.async_add_listener(async_add_object_entities)
+    reconciler = ZontObjectEntityReconciler(
+        hass,
+        entry,
+        async_add_entities,
+        object_entity_factories,
     )
-    async_add_object_entities()
+    entry.async_on_unload(entry.runtime_data.object_entities.async_register(reconciler))
+    entry.async_on_unload(
+        entry.runtime_data.coordinator.async_add_listener(
+            reconciler.async_schedule_reconcile
+        )
+    )
+    await reconciler.async_reconcile()
 
 
 class ZontRelaySwitch(ZontObjectCoordinatorEntity, SwitchEntity):

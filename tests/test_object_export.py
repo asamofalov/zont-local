@@ -238,3 +238,34 @@ async def test_manager_tracks_state_changes_and_shutdown(
     _set_temperature(hass, "24.0")
     await hass.async_block_till_done()
     assert client.async_send_command.await_count == 2
+
+
+async def test_manager_applies_bindings_without_replacing_client(
+    hass: HomeAssistant,
+) -> None:
+    """An export added in options starts on the existing shared client."""
+    entry = MockConfigEntry(domain=DOMAIN, options={})
+    entry.add_to_hass(hass)
+    _set_temperature(hass, "22.5")
+    client = MagicMock(spec=ZontWsClient)
+    client.is_connected = True
+    client.async_get_object_state = AsyncMock(
+        return_value={"id": 4110, "type": 1, "name": "Т Кабинет"}
+    )
+    client.async_send_command = AsyncMock(return_value={"id": 4110, "cmdres": 0})
+    manager = ZontTemperatureExportManager(hass, entry, client)
+    manager.async_start()
+
+    await manager.async_reconfigure(_binding_options())
+    await hass.async_block_till_done()
+
+    client.async_send_command.assert_awaited_once_with(4110, "1 22.5")
+    assert manager.configured_count == 1
+
+    await manager.async_reconfigure({})
+    _set_temperature(hass, "23.0")
+    await hass.async_block_till_done()
+
+    assert client.async_send_command.await_count == 1
+    assert manager.configured_count == 0
+    await manager.async_shutdown()

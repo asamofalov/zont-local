@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -33,6 +34,7 @@ from .entity import ZontCoordinatorEntity, ZontObjectCoordinatorEntity
 from .heating_config import CONSUMER_CIRCUIT_SUBTYPE, ZontConsumerControlMode
 from .mixer import ZontMixerInternalState
 from .object_import import object_import_configuration
+from .object_platform import ZontObjectEntityReconciler
 from .objects import (
     ANALOG_BINARY_FIRST_SUBTYPES,
     ZontAnalogInputData,
@@ -231,50 +233,47 @@ async def async_setup_entry(
         ]
     )
 
-    known_entities: set[tuple[int, str]] = set()
-    import_configuration = object_import_configuration(entry.options)
-
     @callback
-    def async_add_object_entities() -> None:
-        """Add entities for newly discovered object fields."""
-        new_entities: list[SensorEntity] = []
+    def object_entity_factories() -> dict[tuple[int, str], Callable[[], SensorEntity]]:
+        """Describe sensor entities selected by the current import options."""
+        factories: dict[tuple[int, str], Callable[[], SensorEntity]] = {}
+        import_configuration = object_import_configuration(entry.options)
         for obj in entry.runtime_data.coordinator.data.objects.values():
             if not import_configuration.imports(obj.object_id):
                 continue
             if isinstance(obj, ZontAnalogInputData):
                 identity = (obj.object_id, "value")
-                if identity not in known_entities:
-                    known_entities.add(identity)
-                    new_entities.append(
-                        ZontAnalogInputValueSensor(entry, obj.object_id, obj.subtype)
-                    )
+                factories[identity] = partial(
+                    ZontAnalogInputValueSensor,
+                    entry,
+                    obj.object_id,
+                    obj.subtype,
+                )
                 continue
             if isinstance(obj, ZontDigitalTemperatureSensorData):
                 identity = (obj.object_id, "temperature")
-                if identity not in known_entities:
-                    known_entities.add(identity)
-                    new_entities.append(
-                        ZontDigitalTemperatureSensor(entry, obj.object_id)
-                    )
+                factories[identity] = partial(
+                    ZontDigitalTemperatureSensor,
+                    entry,
+                    obj.object_id,
+                )
                 continue
             if isinstance(obj, ZontNtcTemperatureSensorData):
                 identity = (obj.object_id, "temperature")
-                if identity not in known_entities:
-                    known_entities.add(identity)
-                    new_entities.append(ZontNtcTemperatureSensor(entry, obj.object_id))
+                factories[identity] = partial(
+                    ZontNtcTemperatureSensor,
+                    entry,
+                    obj.object_id,
+                )
                 continue
             if isinstance(obj, ZontRadioSensorData):
                 for field in RADIO_SENSOR_FIELDS_BY_SUBTYPE.get(obj.subtype, ()):
                     identity = (obj.object_id, field)
-                    if identity in known_entities:
-                        continue
-                    known_entities.add(identity)
-                    new_entities.append(
-                        ZontRadioSensor(
-                            entry,
-                            obj.object_id,
-                            RADIO_SENSOR_DESCRIPTIONS[field],
-                        )
+                    factories[identity] = partial(
+                        ZontRadioSensor,
+                        entry,
+                        obj.object_id,
+                        RADIO_SENSOR_DESCRIPTIONS[field],
                     )
                 continue
             if (
@@ -282,34 +281,46 @@ async def async_setup_entry(
                 and obj.subtype == CONSUMER_CIRCUIT_SUBTYPE
             ):
                 identity = (obj.object_id, "control_mode")
-                if identity not in known_entities:
-                    known_entities.add(identity)
-                    new_entities.append(
-                        ZontHeatingControlModeSensor(entry, obj.object_id)
-                    )
+                factories[identity] = partial(
+                    ZontHeatingControlModeSensor,
+                    entry,
+                    obj.object_id,
+                )
                 continue
             if isinstance(obj, ZontMixerData):
                 identity = (obj.object_id, "state")
-                if identity not in known_entities:
-                    known_entities.add(identity)
-                    new_entities.append(ZontMixerStateSensor(entry, obj.object_id))
+                factories[identity] = partial(
+                    ZontMixerStateSensor,
+                    entry,
+                    obj.object_id,
+                )
                 continue
             if isinstance(obj, ZontDigitalBusAdapterData) and obj.available:
                 for description in DIGITAL_BUS_SENSOR_DESCRIPTIONS:
                     identity = (obj.object_id, description.key)
-                    if identity in known_entities or description.value_fn(obj) is None:
+                    if description.value_fn(obj) is None:
                         continue
-                    known_entities.add(identity)
-                    new_entities.append(
-                        ZontDigitalBusSensor(entry, obj.object_id, description)
+                    factories[identity] = partial(
+                        ZontDigitalBusSensor,
+                        entry,
+                        obj.object_id,
+                        description,
                     )
-        if new_entities:
-            async_add_entities(new_entities)
+        return factories
 
-    entry.async_on_unload(
-        entry.runtime_data.coordinator.async_add_listener(async_add_object_entities)
+    reconciler = ZontObjectEntityReconciler(
+        hass,
+        entry,
+        async_add_entities,
+        object_entity_factories,
     )
-    async_add_object_entities()
+    entry.async_on_unload(entry.runtime_data.object_entities.async_register(reconciler))
+    entry.async_on_unload(
+        entry.runtime_data.coordinator.async_add_listener(
+            reconciler.async_schedule_reconcile
+        )
+    )
+    await reconciler.async_reconcile()
 
 
 class ZontConnectionChannelSensor(ZontCoordinatorEntity, SensorEntity):

@@ -5,10 +5,9 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable, Mapping
-from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_SCAN_INTERVAL
@@ -65,6 +64,7 @@ from .mixer import (
     immutable_mixer_states,
     parse_mixer_internal_state,
 )
+from .object_platform import ZontObjectEntityManager
 from .objects import (
     SUPPORTED_OBJECT_TYPES,
     ZontHeatingCircuitData,
@@ -135,6 +135,13 @@ class ZontRuntimeData:
     client: ZontWsClient
     coordinator: ZontDataUpdateCoordinator
     export_manager: ZontTemperatureExportManager | None = None
+    object_entities: ZontObjectEntityManager = field(
+        default_factory=ZontObjectEntityManager
+    )
+    options: dict[str, Any] = field(default_factory=dict)
+    connection_settings: tuple[str, str, str] | None = None
+    controller_device_id: str | None = None
+    options_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 def _scan_interval_seconds(value: object) -> int:
@@ -180,7 +187,8 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
         self._info_refresh_needed = initial_info is not None
         self._unsubscribe_connection: Callable[[], None] | None = None
         self._unsubscribe_messages: Callable[[], None] | None = None
-        self._initial_refresh_task: asyncio.Task[None] | None = None
+        self._refresh_tasks: set[asyncio.Task[None]] = set()
+        self._active_update_tasks: set[asyncio.Task[Any]] = set()
         self._object_error_types: set[int] = set()
         self._heating_configurations: dict[int, ZontHeatingCircuitConfiguration] = {}
         self._heating_target_sensor_ids: dict[int, int | None] = {}
@@ -194,6 +202,7 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
         self._relay_configuration_refresh_needed = True
         self._relay_metadata_errors: set[tuple[str, int]] = set()
         self._off_mode_warning_active = False
+        self._shutting_down = False
         self._shutdown_complete = False
 
     @property
@@ -214,16 +223,21 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
         self._unsubscribe_messages = self._client.async_add_message_listener(
             self._async_message_received
         )
-        self._initial_refresh_task = self._entry.async_create_background_task(
-            self.hass,
-            self.async_refresh(),
-            f"{DOMAIN} initial data refresh",
+        self._async_create_refresh_task("initial data refresh")
+
+    @callback
+    def async_apply_options(self) -> None:
+        """Apply polling and entity-facing options without reconnecting."""
+        self.update_interval = timedelta(
+            seconds=_scan_interval_seconds(self._entry.options.get(CONF_SCAN_INTERVAL))
         )
+        self.async_update_listeners()
 
     async def async_shutdown(self) -> None:
         """Stop scheduled updates and release coordinator subscriptions."""
-        if self._shutdown_complete:
+        if self._shutdown_complete or self._shutting_down:
             return
+        self._shutting_down = True
         if self._unsubscribe_connection is not None:
             self._unsubscribe_connection()
             self._unsubscribe_connection = None
@@ -231,19 +245,42 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
             self._unsubscribe_messages()
             self._unsubscribe_messages = None
 
-        task = self._initial_refresh_task
-        self._initial_refresh_task = None
-        if task is not None and not task.done():
-            task.cancel()
-            with suppress(asyncio.CancelledError):
-                await task
-
         await super().async_shutdown()
+
+        current_task = asyncio.current_task()
+        tasks = {
+            task
+            for task in (*self._refresh_tasks, *self._active_update_tasks)
+            if task is not current_task and not task.done()
+        }
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._refresh_tasks.clear()
+        self._active_update_tasks.clear()
+
         self._shutdown_complete = True
+        self._shutting_down = False
+
+    @callback
+    def _async_create_refresh_task(self, name: str) -> None:
+        """Create and track one config-entry-owned full refresh task."""
+        if self._shutting_down or self._shutdown_complete:
+            return
+        task = self._entry.async_create_background_task(
+            self.hass,
+            self.async_refresh(),
+            f"{DOMAIN} {name}",
+        )
+        self._refresh_tasks.add(task)
+        task.add_done_callback(self._refresh_tasks.discard)
 
     @callback
     def _async_connection_changed(self, connected: bool) -> None:
         """Reflect transport availability and refresh immediately on reconnect."""
+        if self._shutting_down or self._shutdown_complete:
+            return
         if not connected:
             self.async_set_update_error(
                 UpdateFailed("The ZONT controller is disconnected")
@@ -254,13 +291,22 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
             self._info_refresh_needed = True
         self._heating_configuration_refresh_needed = True
         self._relay_configuration_refresh_needed = True
-        self._entry.async_create_background_task(
-            self.hass,
-            self.async_refresh(),
-            f"{DOMAIN} reconnect data refresh",
-        )
+        self._async_create_refresh_task("reconnect data refresh")
 
     async def _async_update_data(self) -> ZontData:
+        """Track one active full poll so unload can finish it before client stop."""
+        if self._shutting_down or self._shutdown_complete:
+            raise asyncio.CancelledError
+        task = asyncio.current_task()
+        if task is not None:
+            self._active_update_tasks.add(task)
+        try:
+            return await self._async_build_snapshot()
+        finally:
+            if task is not None:
+                self._active_update_tasks.discard(task)
+
+    async def _async_build_snapshot(self) -> ZontData:
         """Build one coherent snapshot from serialized protocol requests."""
         if not self._client.is_connected:
             raise UpdateFailed("The ZONT controller is disconnected")
@@ -368,14 +414,12 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
     @callback
     def _async_message_received(self, payload: object) -> None:
         """Merge an unsolicited supported object state into the snapshot."""
+        if self._shutting_down or self._shutdown_complete:
+            return
         if payload == _CONFIG_RELOAD_MESSAGE:
             self._heating_configuration_refresh_needed = True
             self._relay_configuration_refresh_needed = True
-            self._entry.async_create_background_task(
-                self.hass,
-                self.async_refresh(),
-                f"{DOMAIN} object configuration refresh",
-            )
+            self._async_create_refresh_task("object configuration refresh")
             return
         if not isinstance(payload, Mapping):
             return

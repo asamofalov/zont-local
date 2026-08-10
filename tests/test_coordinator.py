@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, call
 
@@ -132,6 +133,48 @@ def test_coordinator_uses_safe_scan_interval(
     coordinator, _ = _coordinator(hass, configured)
 
     assert coordinator.update_interval == timedelta(seconds=expected)
+
+
+def test_coordinator_applies_changed_scan_interval(hass: HomeAssistant) -> None:
+    """A changed polling option takes effect without recreating the coordinator."""
+    coordinator, _ = _coordinator(hass, DEFAULT_SCAN_INTERVAL)
+    coordinator._entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        coordinator._entry,
+        options={CONF_SCAN_INTERVAL: MIN_SCAN_INTERVAL},
+    )
+
+    coordinator.async_apply_options()
+
+    assert coordinator.update_interval == timedelta(seconds=MIN_SCAN_INTERVAL)
+
+
+async def test_shutdown_cancels_active_poll_before_client_stop(
+    hass: HomeAssistant,
+) -> None:
+    """Unload must not fail pending protocol requests by stopping the client first."""
+    coordinator, client = _coordinator(hass)
+    client.async_send_system_command.side_effect = [
+        "#S224:1 0 1 0",
+        "#S6:123 0",
+    ]
+    client.async_get_object_ids.side_effect = [[1001]]
+    request_started = asyncio.Event()
+
+    async def wait_for_shutdown(_object_id: int) -> dict[str, object]:
+        request_started.set()
+        await asyncio.Future()
+        return {}
+
+    client.async_get_object_state.side_effect = wait_for_shutdown
+    refresh_task = hass.async_create_task(coordinator.async_refresh())
+    await request_started.wait()
+
+    await coordinator.async_shutdown()
+
+    assert refresh_task.done()
+    with pytest.raises(asyncio.CancelledError):
+        await refresh_task
 
 
 async def test_refresh_builds_one_controller_snapshot(hass: HomeAssistant) -> None:

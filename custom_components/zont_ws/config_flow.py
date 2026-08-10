@@ -1034,17 +1034,19 @@ class ZontWsConfigFlow(
                     )
 
                 title = controller_entry_title(info, normalized[CONF_HOST])
-                return self.async_update_reload_and_abort(
-                    entry,
-                    title=(title if _entry_title_is_managed(entry) else entry.title),
-                    data_updates={
+                update = {
+                    "title": (title if _entry_title_is_managed(entry) else entry.title),
+                    "data_updates": {
                         CONF_HOST: normalized[CONF_HOST],
                         CONF_USERNAME: normalized[CONF_USERNAME],
                         CONF_PASSWORD: normalized[CONF_PASSWORD],
                         CONF_CONTROLLER: info.as_dict(),
                         CONF_AUTO_TITLE: title,
                     },
-                )
+                }
+                if entry.state is config_entries.ConfigEntryState.LOADED:
+                    return self.async_update_and_abort(entry, **update)
+                return self.async_update_reload_and_abort(entry, **update)
             errors["base"] = error
 
         return self.async_show_form(
@@ -1081,16 +1083,18 @@ class ZontWsConfigFlow(
                     )
 
                 title = controller_entry_title(info, normalized[CONF_HOST])
-                return self.async_update_reload_and_abort(
-                    entry,
-                    title=(title if _entry_title_is_managed(entry) else entry.title),
-                    data_updates={
+                update = {
+                    "title": (title if _entry_title_is_managed(entry) else entry.title),
+                    "data_updates": {
                         CONF_USERNAME: normalized[CONF_USERNAME],
                         CONF_PASSWORD: normalized[CONF_PASSWORD],
                         CONF_CONTROLLER: info.as_dict(),
                         CONF_AUTO_TITLE: title,
                     },
-                )
+                }
+                if entry.state is config_entries.ConfigEntryState.LOADED:
+                    return self.async_update_and_abort(entry, **update)
+                return self.async_update_reload_and_abort(entry, **update)
             errors["base"] = error
 
         suggested_username = (
@@ -1183,7 +1187,7 @@ class ZontWsConfigFlow(
 
 class ZontWsOptionsFlow(
     _ZontWsConfigFlowSteps,
-    config_entries.OptionsFlowWithReload,
+    config_entries.OptionsFlow,
 ):
     """Manage changeable ZONT integration behavior."""
 

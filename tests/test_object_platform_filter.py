@@ -85,3 +85,77 @@ async def test_excluded_object_is_not_added_by_platform(
     await setup_platform(hass, entry, async_add_entities)
 
     assert async_add_entities.call_count == controller_entity_calls
+
+
+async def test_sensor_import_changes_reconcile_only_selected_object(
+    hass: HomeAssistant,
+) -> None:
+    """Changing import options must not recreate unaffected entities."""
+    first_id = 1001
+    second_id = 1002
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="ABCDEF123456",
+        data={},
+        options={
+            CONF_IMPORTED_OBJECT_IDS: [first_id, second_id],
+            CONF_EXCLUDED_OBJECT_IDS: [],
+            CONF_AUTO_IMPORT_NEW_OBJECTS: False,
+        },
+    )
+    entry.add_to_hass(hass)
+    coordinator = MagicMock()
+    coordinator.data = ZontData(
+        controller=ZontControllerData(info=None),
+        objects=immutable_objects(
+            {
+                first_id: ZontDigitalTemperatureSensorData(
+                    first_id, 1, "Температура 1"
+                ),
+                second_id: ZontDigitalTemperatureSensorData(
+                    second_id, 1, "Температура 2"
+                ),
+            }
+        ),
+    )
+    coordinator.async_add_listener = MagicMock()
+    entry.runtime_data = ZontRuntimeData(MagicMock(), coordinator)
+    async_add_entities = MagicMock()
+
+    await setup_sensor(hass, entry, async_add_entities)
+
+    initially_added = async_add_entities.call_args_list[1].args[0]
+    first_entity = next(
+        entity for entity in initially_added if f"_{first_id}_" in entity.unique_id
+    )
+    second_entity = next(
+        entity for entity in initially_added if f"_{second_id}_" in entity.unique_id
+    )
+
+    hass.config_entries.async_update_entry(
+        entry,
+        options={
+            CONF_IMPORTED_OBJECT_IDS: [second_id],
+            CONF_EXCLUDED_OBJECT_IDS: [first_id],
+            CONF_AUTO_IMPORT_NEW_OBJECTS: False,
+        },
+    )
+    await entry.runtime_data.object_entities.async_reconcile()
+    assert async_add_entities.call_count == 2
+
+    hass.config_entries.async_update_entry(
+        entry,
+        options={
+            CONF_IMPORTED_OBJECT_IDS: [first_id, second_id],
+            CONF_EXCLUDED_OBJECT_IDS: [],
+            CONF_AUTO_IMPORT_NEW_OBJECTS: False,
+        },
+    )
+    await entry.runtime_data.object_entities.async_reconcile()
+
+    assert async_add_entities.call_count == 3
+    reimported = async_add_entities.call_args.args[0]
+    assert len(reimported) == 1
+    assert reimported[0].unique_id == first_entity.unique_id
+    assert reimported[0] is not first_entity
+    assert second_entity not in reimported

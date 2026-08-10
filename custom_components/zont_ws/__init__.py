@@ -131,7 +131,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ZontConfigEntry) -> bool
         client=client,
         coordinator=coordinator,
         export_manager=export_manager,
+        options=dict(entry.options),
+        connection_settings=_connection_settings(entry),
+        controller_device_id=device.id,
     )
+    entry.async_on_unload(entry.add_update_listener(_async_entry_updated))
     entry.async_on_unload(
         coordinator.async_add_listener(
             lambda: _async_sync_object_devices(
@@ -145,12 +149,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ZontConfigEntry) -> bool
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     except BaseException:
         try:
-            await export_manager.async_shutdown()
+            await entry.runtime_data.object_entities.async_shutdown()
         finally:
             try:
-                await coordinator.async_shutdown()
+                await export_manager.async_shutdown()
             finally:
-                await client.async_stop()
+                try:
+                    await coordinator.async_shutdown()
+                finally:
+                    await client.async_stop()
         raise
 
     export_manager.async_start()
@@ -237,14 +244,62 @@ async def async_unload_entry(hass: HomeAssistant, entry: ZontConfigEntry) -> boo
 
     runtime_data = entry.runtime_data
     try:
-        if runtime_data.export_manager is not None:
-            await runtime_data.export_manager.async_shutdown()
+        await runtime_data.object_entities.async_shutdown()
     finally:
         try:
-            await runtime_data.coordinator.async_shutdown()
+            if runtime_data.export_manager is not None:
+                await runtime_data.export_manager.async_shutdown()
         finally:
-            await runtime_data.client.async_stop()
+            try:
+                await runtime_data.coordinator.async_shutdown()
+            finally:
+                await runtime_data.client.async_stop()
     return True
+
+
+async def _async_entry_updated(
+    hass: HomeAssistant,
+    entry: ZontConfigEntry,
+) -> None:
+    """Apply options live and reload only changed connection settings."""
+    runtime_data = entry.runtime_data
+    async with runtime_data.options_lock:
+        connection_settings = _connection_settings(entry)
+        if connection_settings != runtime_data.connection_settings:
+            await hass.config_entries.async_reload(entry.entry_id)
+            return
+
+        options = dict(entry.options)
+        if options == runtime_data.options:
+            return
+
+        if runtime_data.export_manager is not None:
+            await runtime_data.export_manager.async_reconfigure(options)
+        runtime_data.coordinator.async_apply_options()
+        await runtime_data.object_entities.async_reconcile()
+
+        controller_device_id = runtime_data.controller_device_id
+        if controller_device_id is not None:
+            _async_sync_object_devices(
+                hass,
+                entry,
+                controller_device_id,
+            )
+        _async_cleanup_excluded_object_devices(
+            hass,
+            entry,
+            entry.unique_id or entry.entry_id,
+        )
+        runtime_data.options = options
+
+
+def _connection_settings(entry: ZontConfigEntry) -> tuple[str, str, str]:
+    """Return the settings whose change requires a new WebSocket client."""
+    return (
+        entry.data[CONF_HOST],
+        entry.data[CONF_USERNAME],
+        entry.data[CONF_PASSWORD],
+    )
 
 
 @callback

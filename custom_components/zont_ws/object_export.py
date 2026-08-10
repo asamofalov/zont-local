@@ -218,6 +218,7 @@ class ZontTemperatureExportManager:
         self._unsubscribe_states: Callable[[], None] | None = None
         self._unsubscribers: list[Callable[[], None]] = []
         self._started = False
+        self._subscriptions_started = False
         self._shutdown = False
 
     @property
@@ -238,9 +239,24 @@ class ZontTemperatureExportManager:
     @callback
     def async_start(self) -> None:
         """Start subscriptions and the initial non-blocking synchronization."""
-        if self._started or not self._bindings:
+        if self._started:
             return
         self._started = True
+        if not self._bindings:
+            return
+        self._async_start_subscriptions()
+        if self._client.is_connected:
+            self._create_task(
+                self._async_sync_all(validate_targets=True),
+                "initial temperature export",
+            )
+
+    @callback
+    def _async_start_subscriptions(self) -> None:
+        """Start export subscriptions when at least one binding exists."""
+        if self._subscriptions_started:
+            return
+        self._subscriptions_started = True
         self._async_subscribe_sources()
         self._unsubscribers.extend(
             (
@@ -261,10 +277,53 @@ class ZontTemperatureExportManager:
                 ),
             )
         )
-        if self._client.is_connected:
+
+    @callback
+    def _async_stop_subscriptions(self) -> None:
+        """Stop subscriptions when exports are disabled or manager shuts down."""
+        if self._unsubscribe_states is not None:
+            self._unsubscribe_states()
+            self._unsubscribe_states = None
+        for unsubscribe in self._unsubscribers:
+            unsubscribe()
+        self._unsubscribers.clear()
+        self._resolved_sources.clear()
+        self._subscriptions_started = False
+
+    async def async_reconfigure(self, options: Mapping[str, Any]) -> None:
+        """Apply changed export bindings without replacing the shared client."""
+        bindings = temperature_export_bindings(options)
+        if bindings == self._bindings:
+            return
+
+        async with self._sync_lock:
+            previous = {binding.target_id: binding for binding in self._bindings}
+            updated = {binding.target_id: binding for binding in bindings}
+            changed_targets = {
+                target_id
+                for target_id in previous.keys() | updated.keys()
+                if previous.get(target_id) != updated.get(target_id)
+            }
+            self._bindings = bindings
+            self._validated_targets.difference_update(changed_targets)
+            self._active_targets.difference_update(changed_targets)
+            self._error_targets.difference_update(changed_targets)
+            for target_id in changed_targets:
+                ir.async_delete_issue(
+                    self.hass,
+                    DOMAIN,
+                    self._issue_id(target_id),
+                )
+
+        if self._started and self._bindings:
+            self._async_start_subscriptions()
+            self._async_subscribe_sources()
+        elif not self._bindings:
+            self._async_stop_subscriptions()
+        if self._started and self._bindings and self._client.is_connected:
             self._create_task(
                 self._async_sync_all(validate_targets=True),
-                "initial temperature export",
+                "reconfigured temperature export",
             )
 
     async def async_shutdown(self) -> None:
@@ -272,12 +331,7 @@ class ZontTemperatureExportManager:
         if self._shutdown:
             return
         self._shutdown = True
-        if self._unsubscribe_states is not None:
-            self._unsubscribe_states()
-            self._unsubscribe_states = None
-        for unsubscribe in self._unsubscribers:
-            unsubscribe()
-        self._unsubscribers.clear()
+        self._async_stop_subscriptions()
         tasks = tuple(self._tasks)
         for task in tasks:
             task.cancel()
@@ -369,6 +423,8 @@ class ZontTemperatureExportManager:
         if self._shutdown or not self._client.is_connected:
             return
         async with self._sync_lock:
+            if binding not in self._bindings:
+                return
             await self._async_sync_binding_locked(
                 binding,
                 validate_target=validate_target,

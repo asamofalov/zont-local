@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
@@ -31,6 +32,7 @@ from .heating_config import (
 )
 from .mixer import ZontMixerInternalState
 from .object_import import object_import_configuration
+from .object_platform import ZontObjectEntityReconciler
 from .objects import (
     ZontAnalogInputData,
     ZontHeatingCircuitData,
@@ -175,27 +177,23 @@ async def async_setup_entry(
         ]
     )
 
-    known_entities: set[tuple[int, str]] = set()
-    import_configuration = object_import_configuration(entry.options)
-
     @callback
-    def async_add_object_entities() -> None:
-        """Add binary sensor entities for newly discovered objects."""
-        new_entities: list[BinarySensorEntity] = []
+    def object_entity_factories() -> dict[
+        tuple[int, str], Callable[[], BinarySensorEntity]
+    ]:
+        """Describe binary sensors selected by the current import options."""
+        factories: dict[tuple[int, str], Callable[[], BinarySensorEntity]] = {}
+        import_configuration = object_import_configuration(entry.options)
         for obj in entry.runtime_data.coordinator.data.objects.values():
             if not import_configuration.imports(obj.object_id):
                 continue
             if isinstance(obj, ZontAnalogInputData):
                 identity = (obj.object_id, "analog_triggered")
-                if identity in known_entities:
-                    continue
-                known_entities.add(identity)
-                new_entities.append(
-                    ZontAnalogInputTriggeredBinarySensor(
-                        entry,
-                        obj.object_id,
-                        obj.subtype,
-                    )
+                factories[identity] = partial(
+                    ZontAnalogInputTriggeredBinarySensor,
+                    entry,
+                    obj.object_id,
+                    obj.subtype,
                 )
                 continue
             if isinstance(obj, ZontHeatingCircuitData):
@@ -207,44 +205,38 @@ async def async_setup_entry(
                 )
                 for description in descriptions:
                     identity = (obj.object_id, description.key)
-                    if identity in known_entities:
-                        continue
-                    known_entities.add(identity)
-                    new_entities.append(
-                        ZontHeatingCircuitBinarySensor(
-                            entry,
-                            obj.object_id,
-                            description,
-                        )
+                    factories[identity] = partial(
+                        ZontHeatingCircuitBinarySensor,
+                        entry,
+                        obj.object_id,
+                        description,
                     )
                 continue
             if isinstance(obj, ZontPumpData):
                 identity = (obj.object_id, "running")
-                if identity in known_entities:
-                    continue
-                known_entities.add(identity)
-                new_entities.append(ZontPumpRunningBinarySensor(entry, obj.object_id))
+                factories[identity] = partial(
+                    ZontPumpRunningBinarySensor,
+                    entry,
+                    obj.object_id,
+                )
                 continue
             if isinstance(obj, ZontMixerData):
                 for description in MIXER_BINARY_SENSOR_DESCRIPTIONS:
                     identity = (obj.object_id, description.key)
-                    if identity in known_entities:
-                        continue
-                    known_entities.add(identity)
-                    new_entities.append(
-                        ZontMixerBinarySensor(
-                            entry,
-                            obj.object_id,
-                            description,
-                        )
+                    factories[identity] = partial(
+                        ZontMixerBinarySensor,
+                        entry,
+                        obj.object_id,
+                        description,
                     )
                 continue
             if isinstance(obj, ZontRelayData):
                 identity = (obj.object_id, "failed")
-                if identity in known_entities:
-                    continue
-                known_entities.add(identity)
-                new_entities.append(ZontRelayFailedBinarySensor(entry, obj.object_id))
+                factories[identity] = partial(
+                    ZontRelayFailedBinarySensor,
+                    entry,
+                    obj.object_id,
+                )
                 continue
             if (
                 not isinstance(obj, ZontRadioSensorData)
@@ -252,23 +244,27 @@ async def async_setup_entry(
             ):
                 continue
             identity = (obj.object_id, "radio_triggered")
-            if identity in known_entities:
-                continue
-            known_entities.add(identity)
-            new_entities.append(
-                ZontRadioTriggeredBinarySensor(
-                    entry,
-                    obj.object_id,
-                    obj.subtype,
-                )
+            factories[identity] = partial(
+                ZontRadioTriggeredBinarySensor,
+                entry,
+                obj.object_id,
+                obj.subtype,
             )
-        if new_entities:
-            async_add_entities(new_entities)
+        return factories
 
-    entry.async_on_unload(
-        entry.runtime_data.coordinator.async_add_listener(async_add_object_entities)
+    reconciler = ZontObjectEntityReconciler(
+        hass,
+        entry,
+        async_add_entities,
+        object_entity_factories,
     )
-    async_add_object_entities()
+    entry.async_on_unload(entry.runtime_data.object_entities.async_register(reconciler))
+    entry.async_on_unload(
+        entry.runtime_data.coordinator.async_add_listener(
+            reconciler.async_schedule_reconcile
+        )
+    )
+    await reconciler.async_reconcile()
 
 
 class ZontConnectedBinarySensor(ZontEntityMixin, BinarySensorEntity):

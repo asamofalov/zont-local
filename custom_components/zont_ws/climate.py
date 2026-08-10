@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
+from functools import partial
 from math import isfinite
 from typing import Any
 
@@ -42,6 +44,7 @@ from .heating_modes import (
     validated_off_mode_id,
 )
 from .object_import import object_import_configuration
+from .object_platform import ZontObjectEntityReconciler
 from .objects import ZontHeatingCircuitData, ZontHeatingCircuitMode
 
 TARGET_TEMPERATURE_STEP = 1.0
@@ -53,30 +56,39 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up ZONT consumer heating circuits."""
-    known_entities: set[int] = set()
-    import_configuration = object_import_configuration(entry.options)
 
     @callback
-    def async_add_object_entities() -> None:
-        """Add climate entities for newly discovered consumer circuits."""
-        new_entities: list[ClimateEntity] = []
+    def object_entity_factories() -> dict[int, Callable[[], ClimateEntity]]:
+        """Describe climate entities selected by current import options."""
+        factories: dict[int, Callable[[], ClimateEntity]] = {}
+        import_configuration = object_import_configuration(entry.options)
         for obj in entry.runtime_data.coordinator.data.objects.values():
             if (
                 not import_configuration.imports(obj.object_id)
                 or not isinstance(obj, ZontHeatingCircuitData)
                 or obj.subtype != CONSUMER_CIRCUIT_SUBTYPE
-                or obj.object_id in known_entities
             ):
                 continue
-            known_entities.add(obj.object_id)
-            new_entities.append(ZontConsumerClimate(entry, obj.object_id))
-        if new_entities:
-            async_add_entities(new_entities)
+            factories[obj.object_id] = partial(
+                ZontConsumerClimate,
+                entry,
+                obj.object_id,
+            )
+        return factories
 
-    entry.async_on_unload(
-        entry.runtime_data.coordinator.async_add_listener(async_add_object_entities)
+    reconciler = ZontObjectEntityReconciler(
+        hass,
+        entry,
+        async_add_entities,
+        object_entity_factories,
     )
-    async_add_object_entities()
+    entry.async_on_unload(entry.runtime_data.object_entities.async_register(reconciler))
+    entry.async_on_unload(
+        entry.runtime_data.coordinator.async_add_listener(
+            reconciler.async_schedule_reconcile
+        )
+    )
+    await reconciler.async_reconcile()
 
 
 class ZontConsumerClimate(ZontObjectCoordinatorEntity, ClimateEntity):
