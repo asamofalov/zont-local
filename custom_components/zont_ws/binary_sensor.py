@@ -17,6 +17,7 @@ from .entities.controller import (
     ZontEthernetConnectedBinarySensor,
     ZontWifiConnectedBinarySensor,
 )
+from .entities.digital_bus import ZontDigitalBusFaultBinarySensor
 from .entities.heating.states import (
     HEATING_CIRCUIT_BINARY_SENSOR_DESCRIPTIONS_BY_SUBTYPE,
     ZontHeatingCircuitBinarySensor,
@@ -29,6 +30,7 @@ from .object_import import object_import_configuration
 from .object_platform import ZontObjectEntityReconciler
 from .protocol.objects import (
     ZontAnalogInputData,
+    ZontDigitalBusAdapterData,
     ZontHeatingCircuitData,
     ZontMixerData,
     ZontPumpData,
@@ -106,6 +108,15 @@ async def async_setup_entry(
                     obj.object_id,
                     obj.subtype,
                 )
+                continue
+            if isinstance(obj, ZontDigitalBusAdapterData):
+                if obj.has_fault is not None:
+                    identity = (obj.object_id, "fault")
+                    factories[identity] = partial(
+                        ZontDigitalBusFaultBinarySensor,
+                        entry,
+                        obj.object_id,
+                    )
                 continue
             if isinstance(obj, ZontHeatingCircuitData):
                 descriptions = (

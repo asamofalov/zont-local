@@ -6,6 +6,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from homeassistant.components.binary_sensor import (
+    BinarySensorDeviceClass,
+    BinarySensorEntity,
+)
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -93,6 +97,36 @@ DIGITAL_BUS_SENSOR_DESCRIPTIONS = (
         value_fn=lambda adapter: adapter.error_code,
     ),
 )
+
+
+class ZontDigitalBusFaultBinarySensor(
+    ZontObjectCoordinatorEntity,
+    BinarySensorEntity,
+):
+    """Represent an explicit fault reported by a digital bus adapter."""
+
+    _attr_translation_key = "digital_bus_fault"
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        entry: ConfigEntry[ZontRuntimeData],
+        object_id: int,
+    ) -> None:
+        """Initialize a digital bus adapter fault sensor."""
+        super().__init__(entry, object_id, "fault", "fault")
+
+    @property
+    def available(self) -> bool:
+        """Return whether the adapter provides a fault source."""
+        return super().available and self.is_on is not None
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return whether the adapter state or error code reports a fault."""
+        obj = self.object_data
+        return obj.has_fault if isinstance(obj, ZontDigitalBusAdapterData) else None
 
 
 class ZontDigitalBusSensor(ZontObjectCoordinatorEntity, SensorEntity):

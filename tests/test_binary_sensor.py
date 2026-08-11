@@ -20,6 +20,9 @@ from custom_components.zont_ws.entities.controller import (
     ZontEthernetConnectedBinarySensor,
     ZontWifiConnectedBinarySensor,
 )
+from custom_components.zont_ws.entities.digital_bus import (
+    ZontDigitalBusFaultBinarySensor,
+)
 from custom_components.zont_ws.entities.heating.states import (
     HEATING_CIRCUIT_BINARY_SENSOR_DESCRIPTIONS_BY_SUBTYPE,
     HEATING_CIRCUIT_FAULT_DESCRIPTION,
@@ -57,10 +60,14 @@ from custom_components.zont_ws.protocol.mixer import (
 )
 from custom_components.zont_ws.protocol.objects import (
     ZontAnalogInputData,
+    ZontDigitalBusAdapterData,
+    ZontDigitalBusState,
+    ZontDigitalTemperatureSensorData,
     ZontHeatingCircuitData,
     ZontHeatingCircuitMode,
     ZontMixerData,
     ZontMixerDirection,
+    ZontNtcTemperatureSensorData,
     ZontObject,
     ZontPumpData,
     ZontRadioSensorData,
@@ -364,6 +371,92 @@ def test_analog_trigger_tracks_field_and_object_availability() -> None:
     assert entity.is_on
 
 
+@pytest.mark.parametrize(
+    ("state", "error_code", "available", "is_on"),
+    [
+        (ZontDigitalBusState.ERROR, 0, True, True),
+        (ZontDigitalBusState.RUNNING, 12, True, True),
+        (ZontDigitalBusState.OFF, 0, True, False),
+        (None, None, False, None),
+    ],
+)
+def test_digital_bus_fault_uses_documented_sources(
+    state: ZontDigitalBusState | None,
+    error_code: int | None,
+    available: bool,
+    is_on: bool | None,
+) -> None:
+    adapter = ZontDigitalBusAdapterData(
+        4097,
+        6,
+        "Navien",
+        state=state,
+        error_code=error_code,
+    )
+    entity = ZontDigitalBusFaultBinarySensor(_object_entry(adapter), 4097)
+
+    assert entity.available is available
+    assert entity.is_on is is_on
+    assert entity.device_class is BinarySensorDeviceClass.PROBLEM
+    assert entity.entity_category is EntityCategory.DIAGNOSTIC
+    assert entity.unique_id == "ABCDEF123456_4097_fault"
+    assert entity.suggested_object_id == "fault"
+
+
+def test_digital_bus_fault_tracks_object_availability() -> None:
+    adapter = ZontDigitalBusAdapterData(
+        4097,
+        6,
+        "Navien",
+        available=False,
+        state=ZontDigitalBusState.ERROR,
+        error_code=12,
+    )
+    entity = ZontDigitalBusFaultBinarySensor(_object_entry(adapter), 4097)
+
+    assert not entity.available
+    assert entity.is_on
+
+
+async def test_setup_adds_digital_bus_fault_after_first_source(
+    hass: HomeAssistant,
+) -> None:
+    adapter = ZontDigitalBusAdapterData(4097, 6, "Navien")
+    entry = _object_entry(adapter)
+    entry.add_to_hass(hass)
+    async_add_entities = MagicMock()
+
+    await async_setup_entry(hass, entry, async_add_entities)
+
+    assert async_add_entities.call_count == 1
+
+    entry.runtime_data.coordinator.data = ZontData(
+        controller=ZontControllerData(info=None),
+        objects=immutable_objects(
+            {
+                4097: ZontDigitalBusAdapterData(
+                    4097,
+                    6,
+                    "Navien",
+                    state=ZontDigitalBusState.RUNNING,
+                    error_code=0,
+                )
+            }
+        ),
+    )
+    listener = entry.runtime_data.coordinator.async_add_listener.call_args.args[0]
+    listener()
+    await hass.async_block_till_done()
+
+    entities = async_add_entities.call_args_list[1].args[0]
+    assert len(entities) == 1
+    assert isinstance(entities[0], ZontDigitalBusFaultBinarySensor)
+
+    listener()
+    await hass.async_block_till_done()
+    assert async_add_entities.call_count == 2
+
+
 async def test_setup_adds_analog_trigger_without_duplicates(
     hass: HomeAssistant,
 ) -> None:
@@ -502,6 +595,10 @@ async def test_setup_adds_pump_without_duplicates(hass: HomeAssistant) -> None:
 @pytest.mark.parametrize(
     ("key", "flags", "expected"),
     [
+        ("fault", 32, True),
+        ("fault", 64, True),
+        ("fault", 128, True),
+        ("fault", 0, False),
         ("sensor_fault", 32, True),
         ("sensor_fault", 0, False),
         ("output_fault", 64, True),
@@ -580,6 +677,7 @@ async def test_setup_adds_mixer_diagnostics_without_duplicates(
 
     entities = async_add_entities.call_args_list[1].args[0]
     assert {entity.entity_description.key for entity in entities} == {
+        "fault",
         "sensor_fault",
         "output_fault",
         "set_failed",
@@ -590,6 +688,50 @@ async def test_setup_adds_mixer_diagnostics_without_duplicates(
     listener = entry.runtime_data.coordinator.async_add_listener.call_args.args[0]
     listener()
     assert async_add_entities.call_count == 2
+
+
+@pytest.mark.parametrize(
+    "obj",
+    [
+        ZontAnalogInputData(20550, 0, "Аналоговый вход", available=False),
+        ZontDigitalTemperatureSensorData(
+            8196,
+            1,
+            "Цифровой датчик",
+            available=False,
+        ),
+        ZontNtcTemperatureSensorData(
+            20487,
+            27,
+            "NTC-датчик",
+            available=False,
+        ),
+        ZontRadioSensorData(
+            12001,
+            8,
+            "Радиодатчик",
+            available=False,
+            subtype=10,
+        ),
+        ZontPumpData(9044, 17, "Насос", available=False),
+    ],
+)
+async def test_setup_does_not_infer_fault_from_device_availability(
+    hass: HomeAssistant,
+    obj: ZontObject,
+) -> None:
+    entry = _object_entry(obj)
+    entry.add_to_hass(hass)
+    async_add_entities = MagicMock()
+
+    await async_setup_entry(hass, entry, async_add_entities)
+
+    entities = [
+        entity for call in async_add_entities.call_args_list for entity in call.args[0]
+    ]
+    assert all(
+        entity.suggested_object_id not in {"fault", "failed"} for entity in entities
+    )
 
 
 async def test_setup_skips_radio_trigger_for_other_subtypes(

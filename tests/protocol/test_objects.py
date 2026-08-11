@@ -571,6 +571,33 @@ def test_parse_complete_digital_bus_adapter() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("state", "error_code", "has_fault"),
+    [
+        (ZontDigitalBusState.ERROR, 0, True),
+        (ZontDigitalBusState.RUNNING, 7, True),
+        (ZontDigitalBusState.OFF, 0, False),
+        (ZontDigitalBusState.RUNNING, None, False),
+        (None, 0, False),
+        (None, None, None),
+    ],
+)
+def test_digital_bus_adapter_exposes_explicit_fault(
+    state: ZontDigitalBusState | None,
+    error_code: int | None,
+    has_fault: bool | None,
+) -> None:
+    adapter = ZontDigitalBusAdapterData(
+        4097,
+        6,
+        "Navien",
+        state=state,
+        error_code=error_code,
+    )
+
+    assert adapter.has_fault is has_fault
+
+
 def test_partial_update_preserves_absent_fields() -> None:
     previous = parse_digital_bus_adapter(
         {

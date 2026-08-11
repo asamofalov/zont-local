@@ -253,6 +253,12 @@
       "heating_fault": {
         "name": "Неисправность"
       },
+      "digital_bus_fault": {
+        "name": "Неисправность"
+      },
+      "mixer_fault": {
+        "name": "Неисправность"
+      },
       "mixer_sensor_fault": {
         "name": "Неисправность датчика"
       },

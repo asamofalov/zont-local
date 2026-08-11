@@ -91,6 +91,17 @@ class ZontDigitalBusAdapterData(ZontObjectData):
     state: ZontDigitalBusState | None = None
     error_code: int | None = None
 
+    @property
+    def has_fault(self) -> bool | None:
+        """Return whether the adapter reports an explicit boiler fault."""
+        if self.state is ZontDigitalBusState.ERROR or (
+            self.error_code is not None and self.error_code != 0
+        ):
+            return True
+        if self.state is not None or self.error_code is not None:
+            return False
+        return None
+
 
 @dataclass(frozen=True, slots=True)
 class ZontTemperatureSensorData(ZontObjectData):

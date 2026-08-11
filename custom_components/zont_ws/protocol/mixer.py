@@ -57,6 +57,11 @@ class ZontMixerInternalState:
         """Return whether the controller failed to set the mixer output."""
         return bool(self.state_flags & MIXER_FLAG_SET_FAILED)
 
+    @property
+    def has_fault(self) -> bool:
+        """Return whether any confirmed mixer fault is active."""
+        return self.has_sensor_fault or self.has_output_fault or self.has_set_failed
+
     def without_end_position(self) -> ZontMixerInternalState:
         """Clear stale limit flags when a new movement has begun."""
         return replace(self, state_flags=self.state_flags & ~_END_POSITION_FLAGS)

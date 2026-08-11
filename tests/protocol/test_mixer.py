@@ -42,6 +42,18 @@ def test_mixer_internal_state_exposes_supported_flags() -> None:
     assert state.has_sensor_fault
     assert state.has_output_fault
     assert state.has_set_failed
+    assert state.has_fault
+
+
+@pytest.mark.parametrize("flags", [32, 64, 128, 224])
+def test_mixer_internal_state_aggregates_fault_flags(flags: int) -> None:
+    assert ZontMixerInternalState(9078, ZontMixerDirection.IDLE, flags).has_fault
+
+
+def test_mixer_internal_state_without_fault_flags_is_healthy() -> None:
+    state = ZontMixerInternalState(9078, ZontMixerDirection.IDLE, 31)
+
+    assert not state.has_fault
 
 
 def test_mixer_internal_state_clears_only_end_position_flags() -> None:

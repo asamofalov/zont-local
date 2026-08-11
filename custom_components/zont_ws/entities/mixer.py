@@ -86,6 +86,13 @@ class ZontMixerBinarySensorEntityDescription(BinarySensorEntityDescription):
 
 MIXER_BINARY_SENSOR_DESCRIPTIONS = (
     ZontMixerBinarySensorEntityDescription(
+        key="fault",
+        translation_key="mixer_fault",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda state: state.has_fault,
+    ),
+    ZontMixerBinarySensorEntityDescription(
         key="sensor_fault",
         translation_key="mixer_sensor_fault",
         device_class=BinarySensorDeviceClass.PROBLEM,
