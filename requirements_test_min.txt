@@ -1,5 +1,6 @@
 # The first 2026.3 test plugin targets Home Assistant 2026.3.1. CI replaces
 # Home Assistant with the exact supported minimum after installing dependencies.
+colorlog==6.10.1
 pytest-homeassistant-custom-component==0.13.317
 pytest-cov==7.0.0
 coverage==7.10.6

@@ -119,9 +119,9 @@ config entry, `unique_id`, entity ID, действия и события. Есл
 изменения документации, тестов, `AGENTS.md` или рефакторинга без изменения
 поведения.
 
-Будущий публичный репозиторий — `asamofalov/zont-local`, GitHub code owner —
-`@asamofalov`. Не добавляйте эти значения, `documentation` и `issue_tracker` в
-manifest до фактического создания репозитория.
+Публичный репозиторий — `asamofalov/zont-local`, GitHub code owner —
+`@asamofalov`. Поля `documentation`, `issue_tracker` и `codeowners` в manifest
+должны указывать на этот репозиторий и его владельца.
 
 Тег выпуска имеет формат `vX.Y.Z`, а часть `X.Y.Z` должна точно совпадать с
 версией в manifest. Не перемещайте и не переиспользуйте опубликованные теги.
