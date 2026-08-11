@@ -1,0 +1,5 @@
+# The first 2026.3 test plugin targets Home Assistant 2026.3.1. CI replaces
+# Home Assistant with the exact supported minimum after installing dependencies.
+pytest-homeassistant-custom-component==0.13.317
+habluetooth==6.1.0
+bluetooth-data-tools==1.28.4

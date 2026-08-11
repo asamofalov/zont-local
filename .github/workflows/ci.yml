@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.14"
+  PYTHONASYNCIODEBUG: "1"
+
+jobs:
+  current:
+    name: Home Assistant 2026.8.0
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements_test.txt
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements_test.txt
+
+      - name: Verify Home Assistant version
+        run: >-
+          python -c "from importlib.metadata import version;
+          assert version('homeassistant') == '2026.8.0'"
+
+      - name: Run Ruff
+        run: ruff check .
+
+      - name: Check formatting
+        run: ruff format --check .
+
+      - name: Run tests
+        run: python -m pytest -q
+
+      - name: Check Home Assistant configuration
+        run: |
+          config_dir="$RUNNER_TEMP/zont-local-config"
+          mkdir -p "$config_dir/custom_components"
+          cp .devcontainer/config/configuration.yaml "$config_dir/configuration.yaml"
+          sed -i '/^default_config:$/d' "$config_dir/configuration.yaml"
+          ln -s "$GITHUB_WORKSPACE/custom_components/zont_local" "$config_dir/custom_components/zont_local"
+          python -m homeassistant --script check_config --config "$config_dir"
+
+  minimum:
+    name: Home Assistant 2026.3.0
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements_test_min.txt
+
+      - name: Install test dependencies
+        run: python -m pip install -r requirements_test_min.txt
+
+      - name: Install minimum Home Assistant version
+        run: >-
+          python -m pip install --no-deps --force-reinstall
+          homeassistant==2026.3.0
+
+      - name: Verify Home Assistant version
+        run: >-
+          python -c "from importlib.metadata import version;
+          assert version('homeassistant') == '2026.3.0'"
+
+      - name: Run tests
+        run: python -m pytest -q
+
+      - name: Check Home Assistant configuration
+        run: |
+          config_dir="$RUNNER_TEMP/zont-local-config"
+          mkdir -p "$config_dir/custom_components"
+          cp .devcontainer/config/configuration.yaml "$config_dir/configuration.yaml"
+          sed -i '/^default_config:$/d' "$config_dir/configuration.yaml"
+          ln -s "$GITHUB_WORKSPACE/custom_components/zont_local" "$config_dir/custom_components/zont_local"
+          python -m homeassistant --script check_config --config "$config_dir"

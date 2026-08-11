@@ -134,11 +134,39 @@ ruff format --check .
 python -m homeassistant --script check_config --config .devcontainer/config
 ```
 
+Минимальную поддерживаемую версию Home Assistant проверяйте в отдельном
+временном окружении внутри devcontainer:
+
+```bash
+(
+  min_ha_env=$(mktemp -d /tmp/zont-ha-2026.3.0-XXXXXX)
+  min_ha_config=$(mktemp -d /tmp/zont-ha-config-XXXXXX)
+  trap 'rm -rf "$min_ha_env" "$min_ha_config"' EXIT
+  python -m venv "$min_ha_env"
+  "$min_ha_env/bin/python" -m pip install -r requirements_test_min.txt
+  "$min_ha_env/bin/python" -m pip install --no-deps --force-reinstall homeassistant==2026.3.0
+  "$min_ha_env/bin/python" -c 'from importlib.metadata import version; assert version("homeassistant") == "2026.3.0"'
+  "$min_ha_env/bin/python" -m pytest -q
+  mkdir -p "$min_ha_config/custom_components"
+  cp .devcontainer/config/configuration.yaml "$min_ha_config/configuration.yaml"
+  sed -i '/^default_config:$/d' "$min_ha_config/configuration.yaml"
+  ln -s "$PWD/custom_components/zont_local" "$min_ha_config/custom_components/zont_local"
+  "$min_ha_env/bin/python" -m homeassistant --script check_config --config "$min_ha_config"
+)
+```
+
 Hassfest запускайте на хосте через официальный контейнер с каталогом проекта,
 подключённым только для чтения:
 
 ```bash
 docker run --rm -v "$PWD:/github/workspace:ro" ghcr.io/home-assistant/hassfest
+```
+
+Workflow-файлы GitHub Actions проверяйте на хосте через официальный контейнер
+actionlint:
+
+```bash
+docker run --rm -v "$PWD:/repo:ro" --workdir /repo rhysd/actionlint:1.7.12 -color
 ```
 
 Не исправляйте посторонние изменения в рабочем дереве. Перед передачей
