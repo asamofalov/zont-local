@@ -128,7 +128,7 @@ config entry, `unique_id`, entity ID, действия и события. Есл
 Перед завершением изменения выполните внутри devcontainer:
 
 ```bash
-python -m pytest -q
+python -m pytest -q --cov=custom_components.zont_local --cov-report=term-missing
 ruff check .
 ruff format --check .
 python -m homeassistant --script check_config --config .devcontainer/config

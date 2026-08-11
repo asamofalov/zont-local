@@ -47,8 +47,11 @@ jobs:
       - name: Check formatting
         run: ruff format --check .
 
-      - name: Run tests
-        run: python -m pytest -q
+      - name: Run tests with coverage
+        run: >-
+          python -m pytest -q
+          --cov=custom_components.zont_local
+          --cov-report=term-missing
 
       - name: Check Home Assistant configuration
         run: |
