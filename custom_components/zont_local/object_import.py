@@ -29,6 +29,7 @@ from .protocol.objects import (
     ZontPumpData,
     ZontRadioSensorData,
     ZontRelayData,
+    ZontSecurityZoneData,
 )
 
 
@@ -96,6 +97,8 @@ def importable_object_descriptor(obj: ZontObject) -> ZontImportableObject | None
         model = "Смеситель"
     elif isinstance(obj, ZontRelayData):
         model = "Реле"
+    elif isinstance(obj, ZontSecurityZoneData):
+        model = "Охранная зона"
     elif (
         isinstance(obj, ZontRadioSensorData)
         and obj.subtype in SUPPORTED_RADIO_SENSOR_SUBTYPES

@@ -22,6 +22,7 @@ from custom_components.zont_local.protocol.objects import (
     OBJECT_TYPE_PUMP,
     OBJECT_TYPE_RADIO_SENSOR,
     OBJECT_TYPE_RELAY,
+    OBJECT_TYPE_SECURITY_ZONE,
     ZontAnalogInputData,
     ZontDigitalBusAdapterData,
     ZontDigitalBusState,
@@ -35,6 +36,7 @@ from custom_components.zont_local.protocol.objects import (
     ZontPumpData,
     ZontRadioSensorData,
     ZontRelayData,
+    ZontSecurityZoneData,
     immutable_objects,
     parse_analog_input,
     parse_digital_bus_adapter,
@@ -45,6 +47,7 @@ from custom_components.zont_local.protocol.objects import (
     parse_pump,
     parse_radio_sensor,
     parse_relay,
+    parse_security_zone,
     parse_zont_object,
     unavailable_object,
 )
@@ -187,6 +190,88 @@ def test_partial_relay_update_preserves_identity() -> None:
     assert relay.name == "Реле"
     assert relay.available
     assert relay.output_active is False
+
+
+@pytest.mark.parametrize(
+    ("armed", "triggered"),
+    [(0, 0), (1, 0), (1, 1)],
+)
+def test_parse_complete_security_zone(armed: int, triggered: int) -> None:
+    zone = parse_security_zone(
+        {
+            "id": 10657,
+            "type": OBJECT_TYPE_SECURITY_ZONE,
+            "name": "Тестовая зона",
+            "s": armed,
+            "trig": triggered,
+        }
+    )
+
+    assert zone == ZontSecurityZoneData(
+        object_id=10657,
+        object_type=2,
+        name="Тестовая зона",
+        armed=bool(armed),
+        triggered=bool(triggered),
+    )
+    assert (
+        parse_zont_object(
+            {
+                "id": 10657,
+                "type": 2,
+                "name": "Тестовая зона",
+                "s": armed,
+                "trig": triggered,
+            }
+        )
+        == zone
+    )
+
+
+def test_partial_security_zone_update_preserves_other_state() -> None:
+    previous = ZontSecurityZoneData(
+        10657,
+        2,
+        "Тестовая зона",
+        armed=True,
+        triggered=False,
+    )
+
+    zone = parse_security_zone(
+        {"id": 10657, "trig": 1},
+        previous,
+        partial=True,
+    )
+
+    assert zone.available
+    assert zone.armed is True
+    assert zone.triggered is True
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"id": 10657, "type": 2, "name": "Зона", "s": 2, "trig": 0},
+        {"id": 10657, "type": 2, "name": "Зона", "s": 1, "trig": -1},
+        {"id": 10657, "type": 2, "name": "Зона", "s": 1},
+    ],
+)
+def test_invalid_complete_security_zone_is_unavailable(
+    payload: dict[str, object],
+) -> None:
+    previous = ZontSecurityZoneData(
+        10657,
+        2,
+        "Зона",
+        armed=False,
+        triggered=False,
+    )
+
+    zone = parse_security_zone(payload, previous)
+
+    assert not zone.available
+    assert zone.armed is False
+    assert zone.triggered is False
 
 
 def test_invalid_complete_relay_state_is_unavailable_and_preserves_value() -> None:

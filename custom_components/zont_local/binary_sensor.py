@@ -26,6 +26,7 @@ from .entities.mixer import MIXER_BINARY_SENSOR_DESCRIPTIONS, ZontMixerBinarySen
 from .entities.pump import ZontPumpRunningBinarySensor
 from .entities.radio import RADIO_TRIGGER_DEVICE_CLASSES, ZontRadioTriggeredBinarySensor
 from .entities.relay import ZontRelayFailedBinarySensor
+from .entities.security_zone import ZontSecurityZoneAlarmBinarySensor
 from .object_import import object_import_configuration
 from .object_platform import ZontObjectEntityReconciler
 from .protocol.objects import (
@@ -36,6 +37,7 @@ from .protocol.objects import (
     ZontPumpData,
     ZontRadioSensorData,
     ZontRelayData,
+    ZontSecurityZoneData,
 )
 from .runtime import ZontRuntimeData
 
@@ -156,6 +158,14 @@ async def async_setup_entry(
                 identity = (obj.object_id, "failed")
                 factories[identity] = partial(
                     ZontRelayFailedBinarySensor,
+                    entry,
+                    obj.object_id,
+                )
+                continue
+            if isinstance(obj, ZontSecurityZoneData):
+                identity = (obj.object_id, "security_zone_alarm")
+                factories[identity] = partial(
+                    ZontSecurityZoneAlarmBinarySensor,
                     entry,
                     obj.object_id,
                 )

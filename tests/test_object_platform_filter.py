@@ -6,6 +6,9 @@ from collections.abc import Awaitable, Callable
 from unittest.mock import MagicMock
 
 import pytest
+from custom_components.zont_local.alarm_control_panel import (
+    async_setup_entry as setup_alarm_control_panel,
+)
 from custom_components.zont_local.binary_sensor import async_setup_entry as setup_binary
 from custom_components.zont_local.climate import async_setup_entry as setup_climate
 from custom_components.zont_local.const import (
@@ -20,6 +23,7 @@ from custom_components.zont_local.protocol.objects import (
     ZontHeatingCircuitData,
     ZontPumpData,
     ZontRelayData,
+    ZontSecurityZoneData,
     immutable_objects,
 )
 from custom_components.zont_local.runtime import ZontRuntimeData
@@ -50,6 +54,11 @@ type SetupPlatform = Callable[..., Awaitable[None]]
             0,
         ),
         (setup_switch, ZontRelayData(1005, 14, "Реле"), 0),
+        (
+            setup_alarm_control_panel,
+            ZontSecurityZoneData(1006, 2, "Периметр"),
+            0,
+        ),
     ],
 )
 async def test_excluded_object_is_not_added_by_platform(

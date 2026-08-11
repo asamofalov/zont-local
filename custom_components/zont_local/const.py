@@ -36,6 +36,7 @@ SERVICE_SEND_BULK = "send_bulk"
 EVENT_MESSAGE = f"{DOMAIN}_event"
 
 PLATFORMS: tuple[Platform, ...] = (
+    Platform.ALARM_CONTROL_PANEL,
     Platform.BINARY_SENSOR,
     Platform.BUTTON,
     Platform.CLIMATE,

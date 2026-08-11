@@ -9,6 +9,7 @@ from types import MappingProxyType
 
 OBJECT_TYPE_ANALOG_INPUT = 0
 OBJECT_TYPE_DIGITAL_TEMPERATURE_SENSOR = 1
+OBJECT_TYPE_SECURITY_ZONE = 2
 OBJECT_TYPE_DIGITAL_BUS_ADAPTER = 6
 OBJECT_TYPE_RADIO_SENSOR = 8
 OBJECT_TYPE_RELAY = 14
@@ -21,6 +22,7 @@ ANALOG_INPUT_SUBTYPE_DISCRETE_NC = 20
 SUPPORTED_OBJECT_TYPES = (
     OBJECT_TYPE_ANALOG_INPUT,
     OBJECT_TYPE_DIGITAL_TEMPERATURE_SENSOR,
+    OBJECT_TYPE_SECURITY_ZONE,
     OBJECT_TYPE_DIGITAL_BUS_ADAPTER,
     OBJECT_TYPE_RADIO_SENSOR,
     OBJECT_TYPE_HEATING_CIRCUIT,
@@ -118,6 +120,14 @@ class ZontDigitalTemperatureSensorData(ZontTemperatureSensorData):
 
 
 @dataclass(frozen=True, slots=True)
+class ZontSecurityZoneData(ZontObjectData):
+    """Observed armed and alarm state of one security zone."""
+
+    armed: bool | None = None
+    triggered: bool | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ZontNtcTemperatureSensorData(ZontTemperatureSensorData):
     """Read-only state of an NTC temperature sensor."""
 
@@ -171,6 +181,7 @@ type ZontObject = (
     ZontAnalogInputData
     | ZontDigitalBusAdapterData
     | ZontDigitalTemperatureSensorData
+    | ZontSecurityZoneData
     | ZontNtcTemperatureSensorData
     | ZontRadioSensorData
     | ZontHeatingCircuitData

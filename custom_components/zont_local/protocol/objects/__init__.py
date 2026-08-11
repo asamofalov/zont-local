@@ -13,6 +13,7 @@ from .models import (
     OBJECT_TYPE_PUMP,
     OBJECT_TYPE_RADIO_SENSOR,
     OBJECT_TYPE_RELAY,
+    OBJECT_TYPE_SECURITY_ZONE,
     SUPPORTED_OBJECT_TYPES,
     ZontAnalogInputData,
     ZontDigitalBusAdapterData,
@@ -29,6 +30,7 @@ from .models import (
     ZontPumpData,
     ZontRadioSensorData,
     ZontRelayData,
+    ZontSecurityZoneData,
     ZontTemperatureSensorData,
     immutable_objects,
     unavailable_object,
@@ -43,6 +45,7 @@ from .parsers import (
     parse_pump,
     parse_radio_sensor,
     parse_relay,
+    parse_security_zone,
     parse_zont_object,
 )
 
@@ -59,6 +62,7 @@ __all__ = [
     "OBJECT_TYPE_PUMP",
     "OBJECT_TYPE_RADIO_SENSOR",
     "OBJECT_TYPE_RELAY",
+    "OBJECT_TYPE_SECURITY_ZONE",
     "SUPPORTED_OBJECT_TYPES",
     "ZontAnalogInputData",
     "ZontDigitalBusAdapterData",
@@ -75,6 +79,7 @@ __all__ = [
     "ZontPumpData",
     "ZontRadioSensorData",
     "ZontRelayData",
+    "ZontSecurityZoneData",
     "ZontTemperatureSensorData",
     "immutable_objects",
     "parse_analog_input",
@@ -86,6 +91,7 @@ __all__ = [
     "parse_pump",
     "parse_radio_sensor",
     "parse_relay",
+    "parse_security_zone",
     "parse_zont_object",
     "unavailable_object",
 ]

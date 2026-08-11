@@ -11,6 +11,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_SCAN_INTERVAL
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.debounce import Debouncer
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -26,6 +27,7 @@ from .data import ZontControllerData, ZontData
 from .protocol import (
     ZontClient,
     ZontConnectionError,
+    ZontProtocolError,
     ZontRequestTimeoutError,
 )
 from .protocol.controller import ZontControllerInfo
@@ -37,10 +39,12 @@ from .protocol.mixer import (
     immutable_mixer_states,
 )
 from .protocol.objects import (
+    OBJECT_TYPE_SECURITY_ZONE,
     SUPPORTED_OBJECT_TYPES,
     ZontMixerData,
     ZontMixerDirection,
     ZontObjectParseError,
+    ZontSecurityZoneData,
     immutable_objects,
     parse_zont_object,
     unavailable_object,
@@ -48,6 +52,7 @@ from .protocol.objects import (
 from .updater import ZontDataUpdater
 
 _LOGGER = logging.getLogger(__name__)
+_SECURITY_ZONE_PUSH_DEBOUNCE_SECONDS = 0.25
 
 
 def _scan_interval_seconds(value: object) -> int:
@@ -92,6 +97,14 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
         self._unsubscribe_messages: Callable[[], None] | None = None
         self._refresh_tasks: set[asyncio.Task[None]] = set()
         self._active_update_tasks: set[asyncio.Task[Any]] = set()
+        self._pending_security_zone_ids: set[int] = set()
+        self._security_zone_push_debouncer = Debouncer(
+            hass,
+            _LOGGER,
+            cooldown=_SECURITY_ZONE_PUSH_DEBOUNCE_SECONDS,
+            immediate=False,
+            function=self._async_refresh_pending_security_zones,
+        )
         self._off_mode_warning_active = False
         self._shutting_down = False
         self._shutdown_complete = False
@@ -130,6 +143,8 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
         if self._unsubscribe_messages is not None:
             self._unsubscribe_messages()
             self._unsubscribe_messages = None
+        self._security_zone_push_debouncer.async_shutdown()
+        self._pending_security_zone_ids.clear()
 
         await super().async_shutdown()
 
@@ -213,6 +228,73 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
         if not isinstance(payload, Mapping):
             return
         self._async_apply_object_payload(payload, partial=True)
+        self._async_schedule_security_zone_refresh(payload)
+
+    @callback
+    def _async_schedule_security_zone_refresh(
+        self,
+        payload: Mapping[str, object],
+    ) -> None:
+        """Coalesce zone reads after a trigger-bearing object push."""
+        object_id = payload.get("id")
+        triggered = payload.get("trig")
+        if (
+            type(object_id) is not int
+            or object_id < 0
+            or type(triggered) is not int
+            or triggered not in (0, 1)
+            or payload.get("type") == OBJECT_TYPE_SECURITY_ZONE
+            or isinstance(self.data.objects.get(object_id), ZontSecurityZoneData)
+        ):
+            return
+
+        zone_ids = {
+            obj.object_id
+            for obj in self.data.objects.values()
+            if isinstance(obj, ZontSecurityZoneData)
+        }
+        if not zone_ids:
+            return
+        self._pending_security_zone_ids.update(zone_ids)
+        self._security_zone_push_debouncer.async_schedule_call()
+
+    async def _async_refresh_pending_security_zones(self) -> None:
+        """Refresh all zones affected by coalesced trigger-bearing pushes."""
+        if self._shutting_down or self._shutdown_complete:
+            self._pending_security_zone_ids.clear()
+            return
+
+        task = asyncio.current_task()
+        if task is not None:
+            self._active_update_tasks.add(task)
+        try:
+            while self._pending_security_zone_ids:
+                zone_ids = tuple(sorted(self._pending_security_zone_ids))
+                self._pending_security_zone_ids.difference_update(zone_ids)
+                for object_id in zone_ids:
+                    if not isinstance(
+                        self.data.objects.get(object_id), ZontSecurityZoneData
+                    ):
+                        continue
+                    try:
+                        await self.async_refresh_object(object_id)
+                    except asyncio.CancelledError:
+                        raise
+                    except (ZontConnectionError, ZontRequestTimeoutError):
+                        _LOGGER.debug(
+                            "Unable to refresh ZONT security zones after an object "
+                            "trigger push because the connection was interrupted"
+                        )
+                        return
+                    except ZontProtocolError:
+                        _LOGGER.debug(
+                            "Unable to refresh ZONT security zone %s after an object "
+                            "trigger push",
+                            object_id,
+                        )
+        finally:
+            if task is not None:
+                self._active_update_tasks.discard(task)
 
     @callback
     def _async_apply_object_payload(

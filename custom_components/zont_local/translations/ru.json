@@ -277,6 +277,9 @@
       },
       "relay_failed": {
         "name": "Неисправность"
+      },
+      "security_zone_alarm": {
+        "name": "Тревога"
       }
     },
     "button": {
@@ -446,6 +449,9 @@
     },
     "relay_state_not_confirmed": {
       "message": "Контроллер принял команду для реле {id}, но не подтвердил новое состояние"
+    },
+    "security_zone_state_not_confirmed": {
+      "message": "Контроллер принял команду для охранной зоны {id}, но не подтвердил новое состояние"
     },
     "protocol_error": {
       "message": "Контроллер ZONT вернул некорректный ответ"

@@ -16,6 +16,7 @@ from .models import (
     OBJECT_TYPE_PUMP,
     OBJECT_TYPE_RADIO_SENSOR,
     OBJECT_TYPE_RELAY,
+    OBJECT_TYPE_SECURITY_ZONE,
     ZontAnalogInputData,
     ZontDigitalBusAdapterData,
     ZontDigitalBusState,
@@ -30,6 +31,7 @@ from .models import (
     ZontPumpData,
     ZontRadioSensorData,
     ZontRelayData,
+    ZontSecurityZoneData,
     ZontTemperatureSensorData,
 )
 
@@ -167,6 +169,58 @@ def parse_ntc_temperature_sensor(
         partial=partial,
         expected_object_type=OBJECT_TYPE_NTC_TEMPERATURE_SENSOR,
         data_class=ZontNtcTemperatureSensorData,
+    )
+
+
+def parse_security_zone(
+    payload: Mapping[str, Any],
+    previous: ZontSecurityZoneData | None = None,
+    *,
+    partial: bool = False,
+) -> ZontSecurityZoneData:
+    """Parse a full or partial security-zone state."""
+    object_id = _identity_int(payload, "id", previous.object_id if previous else None)
+    object_type = _identity_int(
+        payload,
+        "type",
+        previous.object_type if previous else None,
+    )
+    if object_type != OBJECT_TYPE_SECURITY_ZONE:
+        raise ZontObjectParseError("Object is not a security zone")
+
+    name = payload.get("name", previous.name if previous else None)
+    if not isinstance(name, str) or not name.strip():
+        raise ZontObjectParseError("Object name is missing")
+
+    armed = _optional_binary_state(
+        payload,
+        "s",
+        previous.armed if previous is not None else None,
+        partial,
+    )
+    triggered = _optional_binary_state(
+        payload,
+        "trig",
+        previous.triggered if previous is not None else None,
+        partial,
+    )
+    available = _object_available(
+        payload,
+        previous.available if previous is not None else None,
+        partial,
+        armed is not None and triggered is not None,
+    )
+    if not available and previous is not None:
+        armed = previous.armed
+        triggered = previous.triggered
+
+    return ZontSecurityZoneData(
+        object_id=object_id,
+        object_type=object_type,
+        name=name.strip(),
+        available=available,
+        armed=armed,
+        triggered=triggered,
     )
 
 
@@ -569,6 +623,13 @@ def parse_zont_object(
         return parse_analog_input(
             payload,
             previous_input,
+            partial=partial,
+        )
+    if object_type == OBJECT_TYPE_SECURITY_ZONE:
+        previous_zone = previous if isinstance(previous, ZontSecurityZoneData) else None
+        return parse_security_zone(
+            payload,
+            previous_zone,
             partial=partial,
         )
     if object_type == OBJECT_TYPE_RADIO_SENSOR:

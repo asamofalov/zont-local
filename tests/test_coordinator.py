@@ -44,6 +44,7 @@ from custom_components.zont_local.protocol.mixer import (
 )
 from custom_components.zont_local.protocol.objects import (
     OBJECT_TYPE_RELAY,
+    OBJECT_TYPE_SECURITY_ZONE,
     ZontAnalogInputData,
     ZontDigitalBusAdapterData,
     ZontDigitalBusState,
@@ -56,6 +57,7 @@ from custom_components.zont_local.protocol.objects import (
     ZontPumpData,
     ZontRadioSensorData,
     ZontRelayData,
+    ZontSecurityZoneData,
     immutable_objects,
 )
 from custom_components.zont_local.protocol.relay import (
@@ -73,18 +75,24 @@ class _ObjectIdsMock(AsyncMock):
     """Keep legacy discovery fixtures focused on their original object types."""
 
     relay_ids: list[int]
+    security_zone_ids: list[int]
 
     def __init__(self) -> None:
         """Initialize an object-ID mock with no relays."""
         super().__init__(return_value=[])
         self.relay_ids = []
+        self.security_zone_ids = []
 
     async def _execute_mock_call(self, *args: object, **kwargs: object) -> object:
-        if args and args[0] == OBJECT_TYPE_RELAY:
+        special_ids = {
+            OBJECT_TYPE_RELAY: self.relay_ids,
+            OBJECT_TYPE_SECURITY_ZONE: self.security_zone_ids,
+        }
+        if args and args[0] in special_ids:
             side_effect = self.side_effect
             return_value = self.return_value
             self.side_effect = None
-            self.return_value = list(self.relay_ids)
+            self.return_value = list(special_ids[int(args[0])])
             try:
                 return await super()._execute_mock_call(*args, **kwargs)
             finally:
@@ -250,6 +258,7 @@ async def test_refresh_builds_one_controller_snapshot(hass: HomeAssistant) -> No
     assert client.async_get_object_ids.await_args_list == [
         call(0),
         call(1),
+        call(2),
         call(6),
         call(8),
         call(16),
@@ -475,6 +484,30 @@ async def test_refresh_discovers_digital_bus_adapter(hass: HomeAssistant) -> Non
     client.async_get_object_state.assert_awaited_once_with(4097)
 
 
+async def test_refresh_discovers_security_zone(hass: HomeAssistant) -> None:
+    coordinator, client = _coordinator(hass)
+    client.async_send_system_command.side_effect = [
+        "#S224:1 0 1 0",
+        "#S6:123 0",
+    ]
+    client.async_get_object_ids.security_zone_ids = [10657]
+    client.async_get_object_state.return_value = {
+        "id": 10657,
+        "type": 2,
+        "name": "Тестовая зона",
+        "s": 1,
+        "trig": 1,
+    }
+
+    await coordinator.async_refresh()
+
+    zone = coordinator.data.objects[10657]
+    assert isinstance(zone, ZontSecurityZoneData)
+    assert zone.armed is True
+    assert zone.triggered is True
+    assert zone.available
+
+
 async def test_failed_object_becomes_unavailable_without_losing_values(
     hass: HomeAssistant,
 ) -> None:
@@ -619,6 +652,7 @@ async def test_refresh_discovers_temperature_sensor_and_adapter(
     assert client.async_get_object_ids.await_args_list == [
         call(0),
         call(1),
+        call(2),
         call(6),
         call(8),
         call(16),
@@ -718,6 +752,7 @@ async def test_refresh_discovers_analog_input_before_other_objects(
     assert client.async_get_object_ids.await_args_list == [
         call(0),
         call(1),
+        call(2),
         call(6),
         call(8),
         call(16),
@@ -846,6 +881,7 @@ async def test_refresh_discovers_radio_sensor(hass: HomeAssistant) -> None:
     assert client.async_get_object_ids.await_args_list == [
         call(0),
         call(1),
+        call(2),
         call(6),
         call(8),
         call(16),
@@ -1733,6 +1769,7 @@ async def test_refresh_discovers_ntc_temperature_sensor(
     assert client.async_get_object_ids.await_args_list == [
         call(0),
         call(1),
+        call(2),
         call(6),
         call(8),
         call(16),
@@ -2001,3 +2038,107 @@ async def test_start_and_shutdown_manage_message_listener(
 
     await coordinator.async_shutdown()
     unsubscribe.assert_called_once_with()
+
+
+async def test_trigger_push_coalesces_addressed_refreshes_for_all_security_zones(
+    hass: HomeAssistant,
+) -> None:
+    coordinator, client = _coordinator(hass)
+    coordinator.data = ZontData(
+        controller=ZontControllerData(info=None),
+        objects=immutable_objects(
+            {
+                4118: ZontAnalogInputData(
+                    4118,
+                    0,
+                    "HA - Тестовая дверь",
+                    subtype=20,
+                    value=0,
+                    unit_code=0,
+                    triggered=False,
+                ),
+                10657: ZontSecurityZoneData(
+                    10657,
+                    2,
+                    "Тестовая зона",
+                    armed=True,
+                    triggered=False,
+                ),
+                10658: ZontSecurityZoneData(
+                    10658,
+                    2,
+                    "Вторая зона",
+                    armed=False,
+                    triggered=False,
+                ),
+            }
+        ),
+    )
+    client.async_get_object_state.side_effect = [
+        {
+            "id": 10657,
+            "type": 2,
+            "name": "Тестовая зона",
+            "s": 1,
+            "trig": 1,
+        },
+        {
+            "id": 10658,
+            "type": 2,
+            "name": "Вторая зона",
+            "s": 0,
+            "trig": 0,
+        },
+    ]
+    coordinator._security_zone_push_debouncer.async_schedule_call = MagicMock()
+
+    for triggered in (0, 1, 1):
+        coordinator._async_message_received(
+            {
+                "id": 4118,
+                "type": 0,
+                "stype": 20,
+                "name": "HA - Тестовая дверь",
+                "v": 2,
+                "u": 0,
+                "a": 1,
+                "trig": triggered,
+            }
+        )
+
+    assert coordinator._pending_security_zone_ids == {10657, 10658}
+    await coordinator._async_refresh_pending_security_zones()
+
+    assert client.async_get_object_state.await_args_list == [call(10657), call(10658)]
+    assert coordinator.data.objects[10657].triggered is True
+    assert coordinator.data.objects[10658].armed is False
+    assert not coordinator._pending_security_zone_ids
+
+
+def test_direct_security_zone_push_does_not_schedule_redundant_refresh(
+    hass: HomeAssistant,
+) -> None:
+    coordinator, _ = _coordinator(hass)
+    coordinator.data = ZontData(
+        controller=ZontControllerData(info=None),
+        objects=immutable_objects(
+            {
+                10657: ZontSecurityZoneData(
+                    10657,
+                    2,
+                    "Тестовая зона",
+                    armed=False,
+                    triggered=False,
+                )
+            }
+        ),
+    )
+    coordinator._security_zone_push_debouncer.async_schedule_call = MagicMock()
+
+    coordinator._async_message_received({"id": 10657, "s": 1, "trig": 1})
+
+    zone = coordinator.data.objects[10657]
+    assert isinstance(zone, ZontSecurityZoneData)
+    assert zone.armed is True
+    assert zone.triggered is True
+    coordinator._security_zone_push_debouncer.async_schedule_call.assert_not_called()

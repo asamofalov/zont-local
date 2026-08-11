@@ -28,6 +28,7 @@ from custom_components.zont_local.protocol.objects import (
     ZontPumpData,
     ZontRadioSensorData,
     ZontRelayData,
+    ZontSecurityZoneData,
 )
 
 
@@ -50,6 +51,7 @@ from custom_components.zont_local.protocol.objects import (
             "Радиодатчик температуры и влажности",
         ),
         (ZontRelayData(10, 14, "Реле"), "Реле"),
+        (ZontSecurityZoneData(11, 2, "Периметр"), "Охранная зона"),
     ],
 )
 def test_importable_object_descriptor(obj: ZontObject, device_type: str) -> None:
