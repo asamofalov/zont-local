@@ -423,6 +423,54 @@ async def test_client_retries_a_recoverable_reconnect_failure(
 
 
 @pytest.mark.asyncio
+async def test_reconnect_log_excludes_raw_transport_error(
+    fake_hass: Any,
+    auth_error_callback: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    first_ws = auth_socket()
+    replacement_ws = auth_socket()
+    monkeypatch.setattr(
+        "custom_components.zont_local.protocol.client.RECONNECT_DELAYS", (0,)
+    )
+    client = make_client(
+        fake_hass,
+        FakeSession(
+            [
+                first_ws,
+                ClientError("ws://192.0.2.10/ws?password=secret-password"),
+                replacement_ws,
+            ]
+        ),  # type: ignore[arg-type]
+        "ws://192.0.2.10/ws",
+        ZontCredentials("secret-user", "secret-password"),
+        "entry",
+        "device",
+        auth_error_callback,
+    )
+    caplog.set_level(
+        logging.DEBUG,
+        logger="custom_components.zont_local.protocol.client",
+    )
+
+    await async_start_client(client)
+    await first_ws.close()
+    for _ in range(30):
+        if client.reconnect_count == 1:
+            break
+        await asyncio.sleep(0)
+
+    assert client.is_connected
+    assert "ZONT WebSocket outage details" in caplog.text
+    assert "close code None" in caplog.text
+    assert "192.0.2.10" not in caplog.text
+    assert "secret-user" not in caplog.text
+    assert "secret-password" not in caplog.text
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
 async def test_reconnect_authentication_failure_ends_supervision(
     fake_hass: Any,
     monkeypatch: pytest.MonkeyPatch,

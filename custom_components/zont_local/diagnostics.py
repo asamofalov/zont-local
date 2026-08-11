@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST
 from homeassistant.core import HomeAssistant
@@ -25,7 +26,10 @@ async def async_get_config_entry_diagnostics(
     status = coordinator.data.controller
     info = ZontControllerInfo.from_mapping(entry.data.get(CONF_CONTROLLER))
     return {
-        "config": {"host": entry.data[CONF_HOST]},
+        "config": async_redact_data(
+            {CONF_HOST: entry.data[CONF_HOST]},
+            {CONF_HOST},
+        ),
         "controller": (
             {
                 "model": info.model,

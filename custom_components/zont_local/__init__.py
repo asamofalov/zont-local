@@ -23,6 +23,7 @@ from .device import (
     async_sync_object_devices,
 )
 from .export import ZontExportManager
+from .issues import async_delete_entry_issues
 from .presentation import controller_device_name
 from .protocol import (
     ZontAuthenticationError,
@@ -158,6 +159,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ZontConfigEntry) -> boo
 
     await entry.runtime_data.async_shutdown()
     return True
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ZontConfigEntry) -> None:
+    """Remove Repair issues that belonged to a deleted config entry."""
+    async_delete_entry_issues(hass, entry)
 
 
 async def _async_entry_updated(

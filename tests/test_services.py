@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -68,6 +69,32 @@ async def test_send_command_returns_optional_response(hass: HomeAssistant) -> No
 
     assert response == {"response": {"id": 7, "cmdres": 0}}
     client.async_send_command.assert_awaited_once_with(7, "value")
+
+
+async def test_send_command_log_excludes_payload_and_response(
+    hass: HomeAssistant,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _, client = _loaded_entry(hass)
+    client.async_send_command.return_value = {
+        "id": 7,
+        "cmdres": 0,
+        "details": "secret-response",
+    }
+    async_setup_services(hass)
+    caplog.set_level(logging.DEBUG, logger="custom_components.zont_local.services")
+
+    await hass.services.async_call(
+        DOMAIN,
+        SERVICE_SEND_COMMAND,
+        {"id": 7, "cmd": "secret-command"},
+        blocking=True,
+    )
+
+    assert "id=7" in caplog.text
+    assert "result=0" in caplog.text
+    assert "secret-command" not in caplog.text
+    assert "secret-response" not in caplog.text
 
 
 async def test_send_bulk_is_sequential(hass: HomeAssistant) -> None:

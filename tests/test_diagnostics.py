@@ -66,7 +66,7 @@ async def test_diagnostics_exclude_credentials(hass: HomeAssistant) -> None:
     result = await async_get_config_entry_diagnostics(hass, entry)
 
     assert result == {
-        "config": {"host": "192.0.2.10"},
+        "config": {"host": "**REDACTED**"},
         "controller": {
             "model": "H1V02 PRO",
             "board_model": "700",
@@ -98,6 +98,7 @@ async def test_diagnostics_exclude_credentials(hass: HomeAssistant) -> None:
     }
     assert "secret-user" not in str(result)
     assert "secret-password" not in str(result)
+    assert "192.0.2.10" not in str(result)
     assert "ABCDEF123456" not in str(result)
     assert "02:00:00:00:00:01" not in str(result)
     assert "Test Operator" not in str(result)

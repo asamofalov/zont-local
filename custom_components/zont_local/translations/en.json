@@ -219,6 +219,10 @@
     "export_command_rejected": {
       "title": "ZONT rejected the export",
       "description": "The controller rejected writing to {target} (ID {target_id}). Check the object and relink it in the integration options if necessary."
+    },
+    "heating_off_mode_invalid": {
+      "title": "The heating turn-off mode is no longer suitable",
+      "description": "The selected ZONT mode is missing or no longer turns off all DHW and consumer circuits. Circuit on/off controls are temporarily unavailable. Select a suitable mode in the ZONT Local integration options."
     }
   },
   "services": {

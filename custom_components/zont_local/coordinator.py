@@ -24,6 +24,7 @@ from .const import (
     connection_signal,
 )
 from .data import ZontControllerData, ZontData
+from .issues import async_set_heating_off_mode_issue
 from .protocol import (
     ZontClient,
     ZontConnectionError,
@@ -105,7 +106,6 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
             immediate=False,
             function=self._async_refresh_pending_security_zones,
         )
-        self._off_mode_warning_active = False
         self._shutting_down = False
         self._shutdown_complete = False
 
@@ -130,6 +130,7 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
         self.update_interval = timedelta(
             seconds=_scan_interval_seconds(self._entry.options.get(CONF_SCAN_INTERVAL))
         )
+        self._async_update_off_mode_issue(self.data)
         self.async_update_listeners()
 
     async def async_shutdown(self) -> None:
@@ -212,7 +213,7 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
             raise UpdateFailed("Unable to update ZONT controller data") from err
         except ZontRequestTimeoutError as err:
             raise UpdateFailed("Unable to update ZONT controller data") from err
-        self._log_invalid_off_mode(updated)
+        self._async_update_off_mode_issue(updated)
         return updated
 
     async def async_refresh_object(self, object_id: int) -> bool:
@@ -366,25 +367,20 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
         self.async_update_listeners()
         return True
 
-    def _log_invalid_off_mode(self, data: ZontData) -> None:
-        """Log once while the configured mode no longer disables all circuits."""
+    def _async_update_off_mode_issue(self, data: ZontData) -> None:
+        """Expose a proven invalid off mode as an actionable Repair issue."""
+        circuit_ids = relevant_heating_circuit_ids(data.objects)
+        if (
+            not circuit_ids
+            or not data.heating_modes
+            or not circuit_ids.issubset(data.heating_states)
+        ):
+            return
+
         configured = self._entry.options.get(CONF_HEATING_OFF_MODE_ID)
-        if type(configured) is not int:
-            self._off_mode_warning_active = False
-            return
-        mode = data.heating_modes.get(configured)
-        valid = mode is not None and mode_disables_circuits(
-            mode,
-            relevant_heating_circuit_ids(data.objects),
-        )
-        if valid:
-            self._off_mode_warning_active = False
-            return
-        if self._off_mode_warning_active:
-            return
-        self._off_mode_warning_active = True
-        _LOGGER.warning(
-            "Configured ZONT off mode %s no longer disables all DHW and consumer "
-            "circuits; heating on/off controls are disabled until it is reconfigured",
-            configured,
+        mode = data.heating_modes.get(configured) if type(configured) is int else None
+        async_set_heating_off_mode_issue(
+            self.hass,
+            self._entry.entry_id,
+            invalid=mode is None or not mode_disables_circuits(mode, circuit_ids),
         )

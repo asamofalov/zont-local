@@ -35,8 +35,11 @@ async def async_close_websocket(ws: ClientWebSocketResponse | None) -> None:
         with suppress(Exception):
             await close_task
         raise
-    except Exception:  # pragma: no cover - aiohttp close is deliberately best effort
-        _LOGGER.debug("Error while closing ZONT WebSocket", exc_info=True)
+    except Exception as err:  # pragma: no cover - aiohttp close is best effort
+        _LOGGER.debug(
+            "Error while closing ZONT WebSocket (%s)",
+            type(err).__name__,
+        )
 
 
 async def async_open_websocket(

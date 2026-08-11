@@ -263,7 +263,7 @@ class ZontClient:
                 if error is None:
                     raise ZontConnectionError("The WebSocket reported an error")
                 raise ZontConnectionError(
-                    f"The WebSocket reported {type(error).__name__}: {error}"
+                    f"The WebSocket reported {type(error).__name__}"
                 ) from error
             if message.type is WSMsgType.BINARY:
                 raise ZontProtocolError("Binary WebSocket messages are not supported")
@@ -616,7 +616,6 @@ class ZontClient:
             _LOGGER.debug(
                 "ZONT request failed because the connection was lost: %s",
                 request_label,
-                exc_info=True,
             )
             raise
         except TimeoutError as err:
@@ -666,8 +665,7 @@ class ZontClient:
         _LOGGER.debug(
             "ZONT WebSocket outage details (%s): %s",
             category,
-            error,
-            exc_info=True,
+            _safe_outage_detail(error),
         )
         if not self._outage_logged:
             _LOGGER.warning(
@@ -742,3 +740,14 @@ def _system_command_label(command: str) -> str:
     ):
         return f"system command {normalized}"
     return "system command"
+
+
+def _safe_outage_detail(error: Exception) -> str:
+    """Return useful outage details without logging external error text."""
+    message = str(error)
+    close_prefix = "The WebSocket was closed by the controller (code "
+    if message.startswith(close_prefix) and message.endswith(")"):
+        close_code = message[len(close_prefix) : -1]
+        if close_code == "None" or close_code.isdecimal():
+            return f"{type(error).__name__} (close code {close_code})"
+    return type(error).__name__

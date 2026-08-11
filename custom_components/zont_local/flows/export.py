@@ -36,6 +36,7 @@ from ..export import (
     command_response_id,
     export_bindings,
     export_command,
+    export_issue_id,
     export_source_reference,
     export_target_matches,
     export_target_protocol_identity,
@@ -958,5 +959,5 @@ def _delete_export_issue(hass: HomeAssistant, binding: ZontExportBinding) -> Non
     ir.async_delete_issue(
         hass,
         DOMAIN,
-        f"{binding.kind.value}_export_{binding.target_id}",
+        export_issue_id(binding),
     )

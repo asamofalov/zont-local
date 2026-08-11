@@ -38,6 +38,7 @@ from .model import (
     command_response_id,
     export_bindings,
     export_command,
+    export_issue_id,
     export_target_matches,
 )
 from .source import (
@@ -167,7 +168,7 @@ class ZontExportManager:
                         ir.async_delete_issue(
                             self.hass,
                             DOMAIN,
-                            self._issue_id(binding),
+                            export_issue_id(binding),
                         )
 
         if self._started and self._bindings:
@@ -364,7 +365,7 @@ class ZontExportManager:
         ir.async_delete_issue(
             self.hass,
             DOMAIN,
-            self._issue_id(binding),
+            export_issue_id(binding),
         )
 
     @callback
@@ -380,7 +381,7 @@ class ZontExportManager:
         ir.async_create_issue(
             self.hass,
             DOMAIN,
-            self._issue_id(binding),
+            export_issue_id(binding),
             is_fixable=False,
             is_persistent=False,
             severity=ir.IssueSeverity.ERROR,
@@ -390,11 +391,6 @@ class ZontExportManager:
                 "target_id": str(binding.target_id),
             },
         )
-
-    @staticmethod
-    def _issue_id(binding: ZontExportBinding) -> str:
-        """Return one stable Repairs identifier per export target."""
-        return f"{binding.kind.value}_export_{binding.target_id}"
 
     @callback
     def _create_task(self, coroutine: Any, name: str) -> None:

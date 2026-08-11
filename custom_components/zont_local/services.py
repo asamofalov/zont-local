@@ -62,9 +62,14 @@ def async_setup_services(hass: HomeAssistant) -> None:
         client = _get_loaded_client(hass)
         command_id = call.data[ATTR_COMMAND_ID]
         command = call.data[ATTR_COMMAND]
-        _LOGGER.debug("Sending ZONT command id=%s cmd=%s", command_id, command)
+        _LOGGER.debug("Sending ZONT command id=%s", command_id)
         response = await _async_send(client, command_id, command)
-        _LOGGER.debug("Received ZONT response id=%s: %s", command_id, response)
+        result = response.get("cmdres")
+        _LOGGER.debug(
+            "ZONT command completed id=%s result=%s",
+            command_id,
+            result if type(result) is int else "invalid",
+        )
         if call.return_response:
             return {"response": response}
         return None
@@ -75,7 +80,7 @@ def async_setup_services(hass: HomeAssistant) -> None:
         for item in call.data[ATTR_COMMANDS]:
             command_id = item[ATTR_COMMAND_ID]
             command = item[ATTR_COMMAND]
-            _LOGGER.debug("Sending ZONT bulk command id=%s cmd=%s", command_id, command)
+            _LOGGER.debug("Sending ZONT bulk command id=%s", command_id)
             response = await _async_send(client, command_id, command)
             responses.append({"id": command_id, "response": response})
         if call.return_response:

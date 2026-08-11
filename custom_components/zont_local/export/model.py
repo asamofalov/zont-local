@@ -87,6 +87,11 @@ def export_target_ids(options: Mapping[str, Any]) -> frozenset[int]:
     return frozenset(binding.target_id for binding in export_bindings(options))
 
 
+def export_issue_id(binding: ZontExportBinding) -> str:
+    """Return the stable Repairs identifier for one export binding."""
+    return f"{binding.kind.value}_export_{binding.target_id}"
+
+
 def command_response_id(response: Mapping[str, Any]) -> int | None:
     """Return one unambiguous object ID from a command response."""
     lower = response.get("id")
