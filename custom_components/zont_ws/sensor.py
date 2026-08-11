@@ -23,7 +23,10 @@ from .entities.digital_bus import (
     DIGITAL_BUS_SENSOR_DESCRIPTIONS,
     ZontDigitalBusSensor,
 )
-from .entities.heating.diagnostics import ZontHeatingControlModeSensor
+from .entities.heating.states import (
+    ZontHeatingCalculatedWaterTemperatureSensor,
+    ZontHeatingControlModeSensor,
+)
 from .entities.mixer import ZontMixerStateSensor
 from .entities.radio import (
     RADIO_SENSOR_DESCRIPTIONS,
@@ -156,12 +159,15 @@ async def async_setup_entry(
                 isinstance(obj, ZontHeatingCircuitData)
                 and obj.subtype == CONSUMER_CIRCUIT_SUBTYPE
             ):
-                identity = (obj.object_id, "control_mode")
-                factories[identity] = partial(
-                    ZontHeatingControlModeSensor,
-                    entry,
-                    obj.object_id,
-                )
+                for key, factory in (
+                    ("control_mode", ZontHeatingControlModeSensor),
+                    (
+                        "calculated_water_temperature",
+                        ZontHeatingCalculatedWaterTemperatureSensor,
+                    ),
+                ):
+                    identity = (obj.object_id, key)
+                    factories[identity] = partial(factory, entry, obj.object_id)
                 continue
             if isinstance(obj, ZontMixerData):
                 identity = (obj.object_id, "state")

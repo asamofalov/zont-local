@@ -96,26 +96,30 @@ def test_parse_internal_state_target_sensor() -> None:
     )
 
     assert state.object_id == 9171
+    assert state.calculated_water_temperature == 36
     assert state.target_sensor_id == 4103
     assert state.status_register == 1
     assert state.applicable_mode_ids == (20501, 20504)
+    assert state.is_heating is True
     assert state.is_blocked is False
     assert state.has_sensor_fault is False
     assert state.is_summer_mode is False
 
 
 @pytest.mark.parametrize(
-    ("status_register", "blocked", "sensor_fault", "summer_mode"),
+    ("status_register", "heating", "blocked", "sensor_fault", "summer_mode"),
     [
-        (0, False, False, False),
-        (2, True, False, False),
-        (8, False, True, False),
-        (128, False, False, True),
-        (138, True, True, True),
+        (0, False, False, False, False),
+        (1, True, False, False, False),
+        (2, False, True, False, False),
+        (8, False, False, True, False),
+        (128, False, False, False, True),
+        (139, True, True, True, True),
     ],
 )
 def test_parse_internal_state_status_flags(
     status_register: int,
+    heating: bool,
     blocked: bool,
     sensor_fault: bool,
     summer_mode: bool,
@@ -125,6 +129,7 @@ def test_parse_internal_state_status_flags(
     )
 
     assert state.status_register == status_register
+    assert state.is_heating is heating
     assert state.is_blocked is blocked
     assert state.has_sensor_fault is sensor_fault
     assert state.is_summer_mode is summer_mode
@@ -135,6 +140,7 @@ def test_short_internal_state_keeps_control_data_without_status() -> None:
 
     assert state.target_sensor_id == 4104
     assert state.status_register is None
+    assert state.is_heating is None
     assert state.is_blocked is None
     assert state.has_sensor_fault is None
     assert state.is_summer_mode is None
@@ -143,6 +149,19 @@ def test_short_internal_state_keeps_control_data_without_status() -> None:
 def test_invalid_internal_status_register_is_rejected() -> None:
     with pytest.raises(ZontHeatingConfigParseError):
         parse_heating_circuit_internal_state("#Y20496$3160,3140,[],0,0,0,4104,-1")
+
+
+@pytest.mark.parametrize("value", ["0", "65535", "'invalid'", "-1"])
+def test_invalid_optional_calculated_temperature_keeps_internal_state(
+    value: str,
+) -> None:
+    state = parse_heating_circuit_internal_state(
+        f"#Y20496${value},3140,[],0,0,0,4104,1"
+    )
+
+    assert state.calculated_water_temperature is None
+    assert state.target_sensor_id == 4104
+    assert state.is_heating is True
 
 
 def test_parse_heating_mode_configuration() -> None:

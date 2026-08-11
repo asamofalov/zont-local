@@ -37,7 +37,11 @@ from custom_components.zont_ws.protocol.objects import (
     immutable_objects,
 )
 from custom_components.zont_ws.runtime import ZontRuntimeData
-from homeassistant.components.climate import ClimateEntityFeature, HVACMode
+from homeassistant.components.climate import (
+    ClimateEntityFeature,
+    HVACAction,
+    HVACMode,
+)
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
@@ -292,6 +296,50 @@ def test_climate_maps_observed_mode(
     )
 
     assert ZontConsumerClimate(entry, 20496).hvac_mode is expected
+
+
+@pytest.mark.parametrize(
+    ("mode", "status_register", "expected"),
+    [
+        (ZontHeatingCircuitMode.HEAT, 1, HVACAction.HEATING),
+        (ZontHeatingCircuitMode.HEAT, 0, HVACAction.IDLE),
+        (ZontHeatingCircuitMode.COOL, 1, HVACAction.COOLING),
+        (ZontHeatingCircuitMode.COOL, 0, HVACAction.IDLE),
+        (ZontHeatingCircuitMode.OFF, None, HVACAction.OFF),
+    ],
+)
+def test_climate_maps_internal_activity_to_hvac_action(
+    mode: ZontHeatingCircuitMode,
+    status_register: int | None,
+    expected: HVACAction,
+) -> None:
+    states = (
+        {
+            20496: ZontHeatingCircuitInternalState(
+                object_id=20496,
+                target_sensor_id=4104,
+                status_register=status_register,
+            )
+        }
+        if status_register is not None
+        else None
+    )
+    entry, _, _ = _entry(
+        {20496: _circuit(mode=mode)},
+        {20496: _control()},
+        states=states,
+    )
+
+    assert ZontConsumerClimate(entry, 20496).hvac_action is expected
+
+
+def test_climate_activity_is_unknown_without_internal_state() -> None:
+    entry, _, _ = _entry(
+        {20496: _circuit(mode=ZontHeatingCircuitMode.HEAT)},
+        {20496: _control()},
+    )
+
+    assert ZontConsumerClimate(entry, 20496).hvac_action is None
 
 
 def test_climate_is_read_only_without_valid_metadata() -> None:

@@ -27,6 +27,7 @@ DHW_CIRCUIT_SUBTYPE = 1
 CONSUMER_CIRCUIT_SUBTYPE = 3
 WEATHER_COMPENSATION_REQUEST_ONLY_FLAG = 128
 SLAVE_MODE_FLAG = 1_048_576
+CIRCUIT_STATE_HEATING_FLAG = 1
 CIRCUIT_STATE_BLOCKED_FLAG = 2
 CIRCUIT_STATE_SENSOR_FAULT_FLAG = 8
 CIRCUIT_STATE_SUMMER_MODE_FLAG = 128
@@ -94,12 +95,22 @@ class ZontHeatingCircuitConfiguration:
 
 @dataclass(frozen=True, slots=True)
 class ZontHeatingCircuitInternalState:
-    """Internal state reported for one consumer heating circuit."""
+    """Internal state reported for one supported heating circuit."""
 
     object_id: int
     target_sensor_id: int | None
     status_register: int | None
     applicable_mode_ids: tuple[int, ...] = ()
+    calculated_water_temperature: float | None = None
+
+    @property
+    def is_heating(self) -> bool | None:
+        """Return whether the circuit is currently requesting heat."""
+        return (
+            bool(self.status_register & CIRCUIT_STATE_HEATING_FLAG)
+            if self.status_register is not None
+            else None
+        )
 
     @property
     def is_blocked(self) -> bool | None:
@@ -235,6 +246,7 @@ def parse_heating_circuit_internal_state(
         )
     return ZontHeatingCircuitInternalState(
         object_id=object_id,
+        calculated_water_temperature=_optional_state_temperature(fields, 0),
         target_sensor_id=_optional_object_id(fields, 6),
         status_register=_non_negative_int(fields, 7) if len(fields) > 7 else None,
         applicable_mode_ids=(
@@ -571,5 +583,15 @@ def _non_negative_int_list(fields: tuple[Any, ...], index: int) -> tuple[int, ..
 def _configuration_temperature(fields: tuple[Any, ...], index: int) -> float | None:
     value = _optional_non_negative_int(fields, index)
     if value in (None, 0, 65_535):
+        return None
+    return value / 10 - 273
+
+
+def _optional_state_temperature(fields: tuple[Any, ...], index: int) -> float | None:
+    """Parse optional live temperature without rejecting the remaining state."""
+    if index >= len(fields):
+        return None
+    value = fields[index]
+    if type(value) is not int or value < 0 or value in (0, 65_535):
         return None
     return value / 10 - 273

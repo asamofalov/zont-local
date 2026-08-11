@@ -247,6 +247,9 @@
       "heating_summer_mode": {
         "name": "Летний режим"
       },
+      "heating": {
+        "name": "Нагрев"
+      },
       "heating_fault": {
         "name": "Неисправность"
       },
@@ -337,6 +340,9 @@
       },
       "digital_temperature": {
         "name": "Температура"
+      },
+      "heating_calculated_water_temperature": {
+        "name": "Расчётная температура теплоносителя"
       },
       "ntc_temperature": {
         "name": "Температура"

@@ -9,6 +9,7 @@ from typing import Any
 from homeassistant.components.climate import (
     ClimateEntity,
     ClimateEntityFeature,
+    HVACAction,
     HVACMode,
 )
 from homeassistant.config_entries import ConfigEntry
@@ -183,6 +184,31 @@ class ZontConsumerClimate(ZontObjectCoordinatorEntity, ClimateEntity):
             ZontHeatingCircuitMode.COOL: HVACMode.COOL,
             ZontHeatingCircuitMode.OFF: HVACMode.OFF,
         }[circuit.mode]
+
+    @property
+    def hvac_action(self) -> HVACAction | None:
+        """Return whether the circuit is actively heating or waiting."""
+        circuit = self._circuit
+        if circuit is None or circuit.mode is None:
+            return None
+        if circuit.mode is ZontHeatingCircuitMode.OFF:
+            return HVACAction.OFF
+        if circuit.mode not in (
+            ZontHeatingCircuitMode.HEAT,
+            ZontHeatingCircuitMode.COOL,
+        ):
+            return None
+
+        state = self.coordinator.data.heating_states.get(self._object_id)
+        if state is None or state.is_heating is None:
+            return None
+        if not state.is_heating:
+            return HVACAction.IDLE
+        return (
+            HVACAction.HEATING
+            if circuit.mode is ZontHeatingCircuitMode.HEAT
+            else HVACAction.COOLING
+        )
 
     @property
     def _off_mode_id(self) -> int | None:

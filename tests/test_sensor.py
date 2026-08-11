@@ -27,8 +27,9 @@ from custom_components.zont_ws.entities.digital_bus import (
     DIGITAL_BUS_SENSOR_DESCRIPTIONS,
     ZontDigitalBusSensor,
 )
-from custom_components.zont_ws.entities.heating.diagnostics import (
+from custom_components.zont_ws.entities.heating.states import (
     CONSUMER_CONTROL_MODE_STATES,
+    ZontHeatingCalculatedWaterTemperatureSensor,
     ZontHeatingControlModeSensor,
 )
 from custom_components.zont_ws.entities.mixer import ZontMixerStateSensor
@@ -52,7 +53,9 @@ from custom_components.zont_ws.protocol.controller import (
 from custom_components.zont_ws.protocol.heating_config import (
     ZontConsumerControlMode,
     ZontHeatingCircuitControlData,
+    ZontHeatingCircuitInternalState,
     immutable_heating_controls,
+    immutable_heating_states,
 )
 from custom_components.zont_ws.protocol.mixer import (
     ZontMixerInternalState,
@@ -81,6 +84,7 @@ from homeassistant.const import (
     UnitOfElectricPotential,
     UnitOfPressure,
     UnitOfSpeed,
+    UnitOfTemperature,
     UnitOfVolume,
     UnitOfVolumeFlowRate,
 )
@@ -91,6 +95,7 @@ def _entry(
     controller: ZontControllerData,
     objects: dict[int, ZontObject] | None = None,
     controls: dict[int, ZontHeatingCircuitControlData] | None = None,
+    heating_states: dict[int, ZontHeatingCircuitInternalState] | None = None,
     mixer_states: dict[int, ZontMixerInternalState] | None = None,
 ) -> MockConfigEntry:
     entry = MockConfigEntry(
@@ -105,6 +110,7 @@ def _entry(
         controller=controller,
         objects=immutable_objects(objects),
         heating_controls=immutable_heating_controls(controls),
+        heating_states=immutable_heating_states(heating_states),
         mixer_states=immutable_mixer_states(mixer_states),
     )
     coordinator.async_add_listener.return_value = lambda: None
@@ -783,6 +789,44 @@ def test_heating_control_mode_sensor_uses_resolved_enum() -> None:
     assert entity.device_info["identifiers"] == {(DOMAIN, "ABCDEF123456:object:9825")}
 
 
+@pytest.mark.parametrize(
+    ("temperature", "available"),
+    [(47.0, True), (35.0, True), (None, False)],
+)
+def test_calculated_water_temperature_sensor_uses_internal_state(
+    temperature: float | None,
+    available: bool,
+) -> None:
+    circuit = ZontHeatingCircuitData(
+        object_id=9825,
+        object_type=16,
+        name="Кабинет",
+        subtype=3,
+    )
+    state = ZontHeatingCircuitInternalState(
+        object_id=9825,
+        target_sensor_id=4110,
+        status_register=0,
+        calculated_water_temperature=temperature,
+    )
+    entry = _entry(
+        ZontControllerData(info=None),
+        {9825: circuit},
+        heating_states={9825: state},
+    )
+
+    entity = ZontHeatingCalculatedWaterTemperatureSensor(entry, 9825)
+
+    assert entity.available is available
+    assert entity.native_value == temperature
+    assert entity.device_class is SensorDeviceClass.TEMPERATURE
+    assert entity.native_unit_of_measurement is UnitOfTemperature.CELSIUS
+    assert entity.state_class is None
+    assert entity.entity_category is None
+    assert entity.unique_id == "ABCDEF123456_9825_calculated_water_temperature"
+    assert entity.suggested_object_id == "calculated_water_temperature"
+
+
 async def test_setup_adds_control_mode_only_for_consumer_circuit(hass) -> None:
     consumer = ZontHeatingCircuitData(9825, 16, "Кабинет", subtype=3)
     entry = _entry(ZontControllerData(info=None), {9825: consumer})
@@ -792,9 +836,11 @@ async def test_setup_adds_control_mode_only_for_consumer_circuit(hass) -> None:
     await async_setup_entry(hass, entry, async_add_entities)
 
     entities = async_add_entities.call_args_list[1].args[0]
-    assert len(entities) == 1
-    assert isinstance(entities[0], ZontHeatingControlModeSensor)
-    assert not entities[0].available
+    assert {type(entity) for entity in entities} == {
+        ZontHeatingControlModeSensor,
+        ZontHeatingCalculatedWaterTemperatureSensor,
+    }
+    assert all(not entity.available for entity in entities)
 
     listener = entry.runtime_data.coordinator.async_add_listener.call_args.args[0]
     listener()

@@ -20,9 +20,10 @@ from custom_components.zont_ws.entities.controller import (
     ZontEthernetConnectedBinarySensor,
     ZontWifiConnectedBinarySensor,
 )
-from custom_components.zont_ws.entities.heating.diagnostics import (
+from custom_components.zont_ws.entities.heating.states import (
     HEATING_CIRCUIT_BINARY_SENSOR_DESCRIPTIONS_BY_SUBTYPE,
     HEATING_CIRCUIT_FAULT_DESCRIPTION,
+    HEATING_CIRCUIT_HEATING_DESCRIPTION,
     ZontHeatingCircuitBinarySensor,
 )
 from custom_components.zont_ws.entities.mixer import (
@@ -57,6 +58,7 @@ from custom_components.zont_ws.protocol.mixer import (
 from custom_components.zont_ws.protocol.objects import (
     ZontAnalogInputData,
     ZontHeatingCircuitData,
+    ZontHeatingCircuitMode,
     ZontMixerData,
     ZontMixerDirection,
     ZontObject,
@@ -610,18 +612,23 @@ async def test_setup_skips_radio_trigger_for_other_subtypes(
 
 
 @pytest.mark.parametrize(
-    ("key", "device_class"),
+    ("key", "device_class", "entity_category"),
     [
-        ("weather_compensation", None),
-        ("blocked", BinarySensorDeviceClass.PROBLEM),
-        ("sensor_fault", BinarySensorDeviceClass.PROBLEM),
-        ("summer_mode", None),
-        ("fault", BinarySensorDeviceClass.PROBLEM),
+        ("weather_compensation", None, EntityCategory.DIAGNOSTIC),
+        ("blocked", BinarySensorDeviceClass.PROBLEM, EntityCategory.DIAGNOSTIC),
+        (
+            "sensor_fault",
+            BinarySensorDeviceClass.PROBLEM,
+            EntityCategory.DIAGNOSTIC,
+        ),
+        ("summer_mode", None, None),
+        ("fault", BinarySensorDeviceClass.PROBLEM, EntityCategory.DIAGNOSTIC),
     ],
 )
 def test_heating_circuit_binary_sensors_use_independent_sources(
     key: str,
     device_class: BinarySensorDeviceClass | None,
+    entity_category: EntityCategory | None,
 ) -> None:
     entry = _consumer_entry()
     description = next(
@@ -635,7 +642,7 @@ def test_heating_circuit_binary_sensors_use_independent_sources(
     assert entity.available
     assert entity.is_on
     assert entity.device_class is device_class
-    assert entity.entity_category is EntityCategory.DIAGNOSTIC
+    assert entity.entity_category is entity_category
     assert entity.entity_registry_enabled_default
     assert entity.unique_id == f"ABCDEF123456_9825_{key}"
     assert entity.suggested_object_id == key
@@ -729,7 +736,61 @@ def test_dhw_fault_tracks_object_availability() -> None:
     assert entity.is_on
 
 
-async def test_setup_adds_heating_diagnostics_by_circuit_subtype(
+@pytest.mark.parametrize(
+    ("mode", "status_register", "available", "is_on"),
+    [
+        (ZontHeatingCircuitMode.HEAT, 1, True, True),
+        (ZontHeatingCircuitMode.HEAT, 0, True, False),
+        (ZontHeatingCircuitMode.HEAT, None, False, None),
+        (ZontHeatingCircuitMode.OFF, None, True, False),
+    ],
+)
+def test_dhw_heating_uses_internal_activity(
+    mode: ZontHeatingCircuitMode,
+    status_register: int | None,
+    available: bool,
+    is_on: bool | None,
+) -> None:
+    dhw = ZontHeatingCircuitData(
+        8362,
+        16,
+        "ГВС",
+        subtype=1,
+        mode=mode,
+        fault=False,
+    )
+    entry = _object_entry(dhw)
+    entry.runtime_data.coordinator.data = ZontData(
+        controller=ZontControllerData(info=None),
+        objects=immutable_objects({8362: dhw}),
+        heating_states=immutable_heating_states(
+            {
+                8362: ZontHeatingCircuitInternalState(
+                    object_id=8362,
+                    target_sensor_id=4097,
+                    status_register=status_register,
+                )
+            }
+            if status_register is not None
+            else None
+        ),
+    )
+
+    entity = ZontHeatingCircuitBinarySensor(
+        entry,
+        8362,
+        HEATING_CIRCUIT_HEATING_DESCRIPTION,
+    )
+
+    assert entity.available is available
+    assert entity.is_on is is_on
+    assert entity.device_class is BinarySensorDeviceClass.RUNNING
+    assert entity.entity_category is None
+    assert entity.unique_id == "ABCDEF123456_8362_heating"
+    assert entity.suggested_object_id == "heating"
+
+
+async def test_setup_adds_heating_states_by_circuit_subtype(
     hass: HomeAssistant,
 ) -> None:
     entry = _consumer_entry()
@@ -760,9 +821,13 @@ async def test_setup_adds_heating_diagnostics_by_circuit_subtype(
     await async_setup_entry(hass, dhw_entry, dhw_add_entities)
 
     dhw_entities = dhw_add_entities.call_args_list[1].args[0]
-    assert len(dhw_entities) == 1
-    assert dhw_entities[0].entity_description.key == "fault"
-    assert dhw_entities[0].available
+    assert {entity.entity_description.key for entity in dhw_entities} == {
+        "heating",
+        "fault",
+    }
+    assert next(
+        entity for entity in dhw_entities if entity.entity_description.key == "fault"
+    ).available
 
     dhw_listener = dhw_entry.runtime_data.coordinator.async_add_listener.call_args.args[
         0

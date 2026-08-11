@@ -833,7 +833,10 @@ async def test_refresh_discovers_heating_circuit(hass: HomeAssistant) -> None:
     assert circuit.target_temperature == 60
     assert circuit.mode is ZontHeatingCircuitMode.HEAT
     assert circuit.available
-    assert coordinator.data.heating_states[8362].applicable_mode_ids == (
+    state = coordinator.data.heating_states[8362]
+    assert state.calculated_water_temperature == 60
+    assert state.is_heating is False
+    assert state.applicable_mode_ids == (
         20501,
         20504,
     )
@@ -877,6 +880,8 @@ async def test_refresh_resolves_consumer_water_range(hass: HomeAssistant) -> Non
     assert control.control_mode is ZontConsumerControlMode.WATER
     assert (control.min_temperature, control.max_temperature) == (41, 80)
     state = coordinator.data.heating_states[20496]
+    assert state.calculated_water_temperature == 43
+    assert state.is_heating is False
     assert state.is_blocked
     assert state.has_sensor_fault
     assert state.is_summer_mode

@@ -17,7 +17,7 @@ from .entities.controller import (
     ZontEthernetConnectedBinarySensor,
     ZontWifiConnectedBinarySensor,
 )
-from .entities.heating.diagnostics import (
+from .entities.heating.states import (
     HEATING_CIRCUIT_BINARY_SENSOR_DESCRIPTIONS_BY_SUBTYPE,
     ZontHeatingCircuitBinarySensor,
 )
