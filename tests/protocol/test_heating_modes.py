@@ -6,22 +6,22 @@ from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock
 
 import pytest
-from custom_components.zont_ws.protocol import (
+from custom_components.zont_local.protocol import (
     ZontCredentials,
     ZontProtocolError,
     ZontRequestTimeoutError,
 )
-from custom_components.zont_ws.protocol.heating_config import (
+from custom_components.zont_local.protocol.heating_config import (
     ZontHeatingCircuitInternalState,
     ZontHeatingModeConfiguration,
 )
-from custom_components.zont_ws.protocol.heating_modes import (
+from custom_components.zont_local.protocol.heating_modes import (
     ZontHeatingModeDiscovery,
     applicable_heating_modes,
     async_discover_heating_modes,
     async_discover_heating_modes_from_requests,
 )
-from custom_components.zont_ws.protocol.objects import ZontHeatingCircuitData
+from custom_components.zont_local.protocol.objects import ZontHeatingCircuitData
 
 
 def _circuit(object_id: int, subtype: int) -> ZontHeatingCircuitData:
@@ -122,7 +122,7 @@ async def test_discovery_reads_relevant_circuits_and_modes(monkeypatch) -> None:
         yield requests
 
     monkeypatch.setattr(
-        "custom_components.zont_ws.protocol.heating_modes.async_open_temporary_request_session",
+        "custom_components.zont_local.protocol.heating_modes.async_open_temporary_request_session",
         open_session,
     )
 

@@ -69,7 +69,7 @@ class ZontObjectEntityReconciler:
         self._scheduled_task = self._entry.async_create_background_task(
             self._hass,
             self.async_reconcile(),
-            "zont_ws object entity reconciliation",
+            "zont_local object entity reconciliation",
         )
         self._scheduled_task.add_done_callback(self._async_scheduled_task_done)
 

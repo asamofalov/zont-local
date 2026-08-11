@@ -5,11 +5,11 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from custom_components.zont_ws.coordinator import ZontDataUpdateCoordinator
-from custom_components.zont_ws.export import ZontTemperatureExportManager
-from custom_components.zont_ws.object_platform import ZontObjectEntityManager
-from custom_components.zont_ws.protocol import ZontClient
-from custom_components.zont_ws.runtime import ZontRuntimeData
+from custom_components.zont_local.coordinator import ZontDataUpdateCoordinator
+from custom_components.zont_local.export import ZontTemperatureExportManager
+from custom_components.zont_local.object_platform import ZontObjectEntityManager
+from custom_components.zont_local.protocol import ZontClient
+from custom_components.zont_local.runtime import ZontRuntimeData
 
 
 def _shutdown_mock(spec: type, name: str, calls: list[str]) -> MagicMock:

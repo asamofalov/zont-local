@@ -102,9 +102,7 @@ def async_apply_controller_info(
     """Persist refreshed controller data and update its registry entry."""
     title = controller_entry_title(info, entry.data[CONF_HOST])
     previous_auto_title = entry.data.get(CONF_AUTO_TITLE)
-    title_is_managed = (
-        entry.title == previous_auto_title or entry.title == "ZONT WebSocket"
-    )
+    title_is_managed = entry.title == previous_auto_title
     data = dict(entry.data)
     data[CONF_CONTROLLER] = info.as_dict()
     data[CONF_AUTO_TITLE] = title

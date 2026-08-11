@@ -1,4 +1,4 @@
-"""Diagnostics for the ZONT WebSocket integration."""
+"""Diagnostics for the ZONT Local integration."""
 
 from __future__ import annotations
 

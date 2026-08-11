@@ -5,7 +5,9 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-PROTOCOL_DIR = Path(__file__).parents[2] / "custom_components" / "zont_ws" / "protocol"
+PROTOCOL_DIR = (
+    Path(__file__).parents[2] / "custom_components" / "zont_local" / "protocol"
+)
 
 
 def test_protocol_package_does_not_import_home_assistant() -> None:

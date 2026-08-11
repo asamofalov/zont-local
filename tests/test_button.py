@@ -5,10 +5,10 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from custom_components.zont_ws.const import DOMAIN, connection_signal
-from custom_components.zont_ws.entities.controller import ZontRestartButton
-from custom_components.zont_ws.protocol import ZontClient, ZontConnectionError
-from custom_components.zont_ws.runtime import ZontRuntimeData
+from custom_components.zont_local.const import DOMAIN, connection_signal
+from custom_components.zont_local.entities.controller import ZontRestartButton
+from custom_components.zont_local.protocol import ZontClient, ZontConnectionError
+from custom_components.zont_local.runtime import ZontRuntimeData
 from homeassistant.components.button import ButtonDeviceClass
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
@@ -55,7 +55,7 @@ async def test_restart_button_sends_controller_command(hass: HomeAssistant) -> N
     entity.hass = hass
 
     with patch(
-        "custom_components.zont_ws.entities.controller.async_restart_controller",
+        "custom_components.zont_local.entities.controller.async_restart_controller",
         new=AsyncMock(),
     ) as restart:
         await entity.async_press()
@@ -72,7 +72,7 @@ async def test_restart_button_translates_connection_error(
 
     with (
         patch(
-            "custom_components.zont_ws.entities.controller.async_restart_controller",
+            "custom_components.zont_local.entities.controller.async_restart_controller",
             new=AsyncMock(side_effect=ZontConnectionError),
         ),
         pytest.raises(HomeAssistantError) as raised,

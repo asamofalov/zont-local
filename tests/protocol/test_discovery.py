@@ -5,12 +5,12 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
-from custom_components.zont_ws.protocol import ZontProtocolError
-from custom_components.zont_ws.protocol.discovery import (
+from custom_components.zont_local.protocol import ZontProtocolError
+from custom_components.zont_local.protocol.discovery import (
     ZontObjectDiscoveryError,
     async_discover_objects_from_requests,
 )
-from custom_components.zont_ws.protocol.objects import (
+from custom_components.zont_local.protocol.objects import (
     OBJECT_TYPE_DIGITAL_TEMPERATURE_SENSOR,
     OBJECT_TYPE_RADIO_SENSOR,
     SUPPORTED_OBJECT_TYPES,

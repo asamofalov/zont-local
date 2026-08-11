@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 from aiohttp import ClientError, WSMsgType
-from custom_components.zont_ws.protocol import (
+from custom_components.zont_local.protocol import (
     ZontAuthenticationError,
     ZontClient,
     ZontCommandTimeoutError,
@@ -21,7 +21,9 @@ from custom_components.zont_ws.protocol import (
     async_open_temporary_request_session,
     async_request_system_commands,
 )
-from custom_components.zont_ws.protocol.controller import async_refresh_controller_info
+from custom_components.zont_local.protocol.controller import (
+    async_refresh_controller_info,
+)
 
 
 class FakeMessage:
@@ -249,7 +251,7 @@ async def test_connection_timeout_covers_websocket_open(
 ) -> None:
     session = HangingSession()
     monkeypatch.setattr(
-        "custom_components.zont_ws.protocol.session.CONNECTION_TIMEOUT", 0.01
+        "custom_components.zont_local.protocol.session.CONNECTION_TIMEOUT", 0.01
     )
 
     with pytest.raises(ZontConnectionError) as raised:
@@ -270,7 +272,7 @@ async def test_connection_timeout_covers_authentication_response(
 ) -> None:
     ws = FakeWebSocket()
     monkeypatch.setattr(
-        "custom_components.zont_ws.protocol.session.CONNECTION_TIMEOUT", 0.01
+        "custom_components.zont_local.protocol.session.CONNECTION_TIMEOUT", 0.01
     )
 
     with pytest.raises(ZontConnectionError) as raised:
@@ -358,7 +360,7 @@ async def test_client_reconnects_after_initial_setup(
     first_ws = auth_socket()
     second_ws = auth_socket()
     monkeypatch.setattr(
-        "custom_components.zont_ws.protocol.client.RECONNECT_DELAYS", (0,)
+        "custom_components.zont_local.protocol.client.RECONNECT_DELAYS", (0,)
     )
     client = make_client(
         fake_hass,
@@ -394,7 +396,7 @@ async def test_client_retries_a_recoverable_reconnect_failure(
     first_ws = auth_socket()
     replacement_ws = auth_socket()
     monkeypatch.setattr(
-        "custom_components.zont_ws.protocol.client.RECONNECT_DELAYS", (0,)
+        "custom_components.zont_local.protocol.client.RECONNECT_DELAYS", (0,)
     )
     client = make_client(
         fake_hass,
@@ -427,7 +429,7 @@ async def test_reconnect_authentication_failure_ends_supervision(
     first_ws = auth_socket()
     rejected_ws = auth_socket(401)
     monkeypatch.setattr(
-        "custom_components.zont_ws.protocol.client.RECONNECT_DELAYS", (0,)
+        "custom_components.zont_local.protocol.client.RECONNECT_DELAYS", (0,)
     )
     client = make_client(
         fake_hass,
@@ -1036,7 +1038,7 @@ async def test_system_command_can_keep_connection_without_waiting_for_response(
     first_ws = auth_socket()
     second_ws = auth_socket()
     monkeypatch.setattr(
-        "custom_components.zont_ws.protocol.client.RECONNECT_DELAYS", (0,)
+        "custom_components.zont_local.protocol.client.RECONNECT_DELAYS", (0,)
     )
     client = make_client(
         fake_hass,

@@ -7,9 +7,9 @@ from collections.abc import Callable
 from typing import Any
 from unittest.mock import MagicMock
 
-from custom_components.zont_ws.connection import ZontConnectionManager
-from custom_components.zont_ws.const import DOMAIN, EVENT_MESSAGE, connection_signal
-from custom_components.zont_ws.protocol import ZontAuthenticationError
+from custom_components.zont_local.connection import ZontConnectionManager
+from custom_components.zont_local.const import DOMAIN, EVENT_MESSAGE, connection_signal
+from custom_components.zont_local.protocol import ZontAuthenticationError
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from pytest_homeassistant_custom_component.common import (
@@ -60,6 +60,8 @@ class FakeProtocolClient:
 async def test_manager_bridges_events_and_connection_dispatcher(
     hass: HomeAssistant,
 ) -> None:
+    assert EVENT_MESSAGE == "zont_local_event"
+
     entry = MockConfigEntry(domain=DOMAIN, data={})
     entry.add_to_hass(hass)
     client = FakeProtocolClient()

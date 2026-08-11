@@ -1,4 +1,4 @@
-"""Config flow for the ZONT WebSocket integration."""
+"""Config flow for the ZONT Local integration."""
 
 from __future__ import annotations
 
@@ -213,12 +213,12 @@ class _InitialConfigFlowSteps:
         )
 
 
-class ZontWsConfigFlow(
+class ZontLocalConfigFlow(
     _InitialConfigFlowSteps,
     config_entries.ConfigFlow,
     domain=DOMAIN,
 ):
-    """Handle a config flow for ZONT WebSocket."""
+    """Handle a config flow for ZONT Local."""
 
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
@@ -393,9 +393,9 @@ class ZontWsConfigFlow(
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> config_entries.OptionsFlow:
         """Create the options flow for controller behavior."""
-        from .flows.options import ZontWsOptionsFlow
+        from .flows.options import ZontLocalOptionsFlow
 
-        return ZontWsOptionsFlow()
+        return ZontLocalOptionsFlow()
 
 
 def _normalize_host(value: Any) -> str:
@@ -489,7 +489,7 @@ def _controller_matches_entry(
 def _entry_title_is_managed(entry: config_entries.ConfigEntry) -> bool:
     """Return whether the integration may replace the config entry title."""
     previous_title = entry.data.get(CONF_AUTO_TITLE)
-    return entry.title == previous_title or entry.title == "ZONT WebSocket"
+    return entry.title == previous_title
 
 
 def _user_schema(user_input: dict[str, Any] | None) -> vol.Schema:

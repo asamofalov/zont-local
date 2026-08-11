@@ -1,10 +1,10 @@
 {
-  "name": "ZONT WebSocket for Home Assistant",
+  "name": "ZONT Local for Home Assistant",
   "image": "mcr.microsoft.com/devcontainers/python:3.14-bookworm",
   "remoteUser": "vscode",
   "postCreateCommand": {
     "dependencies": "python -m pip install --user -r requirements_test.txt",
-    "integration": "mkdir -p .devcontainer/config/custom_components && ln -sfn ${containerWorkspaceFolder}/custom_components/zont_ws .devcontainer/config/custom_components/zont_ws"
+    "integration": "mkdir -p .devcontainer/config/custom_components && ln -sfn ${containerWorkspaceFolder}/custom_components/zont_local .devcontainer/config/custom_components/zont_local"
   },
   "forwardPorts": [8123],
   "portsAttributes": {

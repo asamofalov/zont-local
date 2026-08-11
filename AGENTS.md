@@ -2,8 +2,8 @@
 
 ## О проекте
 
-Это пользовательская интеграция ZONT WebSocket для Home Assistant. Исходный код
-интеграции находится в `custom_components/zont_ws`, автоматические тесты — в
+Это пользовательская интеграция ZONT Local для Home Assistant. Исходный код
+интеграции находится в `custom_components/zont_local`, автоматические тесты — в
 `tests`, локальная среда Home Assistant — в `.devcontainer`.
 
 ## Подход к архитектуре

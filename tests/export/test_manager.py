@@ -5,11 +5,11 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from custom_components.zont_ws.const import (
+from custom_components.zont_local.const import (
     CONF_TEMPERATURE_EXPORTS,
     DOMAIN,
 )
-from custom_components.zont_ws.export import (
+from custom_components.zont_local.export import (
     ZontExportSourceError,
     ZontExportSourceUnavailable,
     ZontTemperatureExportBinding,
@@ -19,7 +19,7 @@ from custom_components.zont_ws.export import (
     temperature_export_bindings,
     temperature_export_target_ids,
 )
-from custom_components.zont_ws.protocol import ZontClient
+from custom_components.zont_local.protocol import ZontClient
 from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.const import (
     ATTR_DEVICE_CLASS,

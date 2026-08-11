@@ -3,7 +3,7 @@ default_config:
 logger:
   default: info
   logs:
-    custom_components.zont_ws: debug
+    custom_components.zont_local: debug
 
 input_number:
   zont_test_temperature:

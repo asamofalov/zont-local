@@ -5,14 +5,14 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from custom_components.zont_ws import (
+from custom_components.zont_local import (
     _async_entry_updated,
     async_migrate_entry,
     async_setup_entry,
     async_unload_entry,
 )
-from custom_components.zont_ws.connection import ZontConnectionManager
-from custom_components.zont_ws.const import (
+from custom_components.zont_local.connection import ZontConnectionManager
+from custom_components.zont_local.const import (
     CONF_AUTO_IMPORT_NEW_OBJECTS,
     CONF_AUTO_TITLE,
     CONF_CONTROLLER,
@@ -23,29 +23,29 @@ from custom_components.zont_ws.const import (
     DOMAIN,
     connection_signal,
 )
-from custom_components.zont_ws.coordinator import (
+from custom_components.zont_local.coordinator import (
     ZontDataUpdateCoordinator,
 )
-from custom_components.zont_ws.data import ZontControllerData, ZontData
-from custom_components.zont_ws.device import (
+from custom_components.zont_local.data import ZontControllerData, ZontData
+from custom_components.zont_local.device import (
     async_cleanup_excluded_object_devices,
     async_sync_object_devices,
 )
-from custom_components.zont_ws.protocol import (
+from custom_components.zont_local.protocol import (
     ZontAuthenticationError,
     ZontClient,
     ZontConnectionError,
     ZontProtocolError,
 )
-from custom_components.zont_ws.protocol.controller import ZontControllerInfo
-from custom_components.zont_ws.protocol.heating_config import (
+from custom_components.zont_local.protocol.controller import ZontControllerInfo
+from custom_components.zont_local.protocol.heating_config import (
     ZontConsumerControlMode,
     ZontHeatingCircuitControlData,
     ZontHeatingCircuitInternalState,
     immutable_heating_controls,
     immutable_heating_states,
 )
-from custom_components.zont_ws.protocol.objects import (
+from custom_components.zont_local.protocol.objects import (
     ZontAnalogInputData,
     ZontDigitalBusAdapterData,
     ZontDigitalBusState,
@@ -59,7 +59,7 @@ from custom_components.zont_ws.protocol.objects import (
     ZontRelayData,
     immutable_objects,
 )
-from custom_components.zont_ws.runtime import ZontRuntimeData
+from custom_components.zont_local.runtime import ZontRuntimeData
 from homeassistant.config_entries import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.const import (
     CONF_HOST,
@@ -1424,7 +1424,7 @@ async def test_setup_refreshes_controller_information(hass: HomeAssistant) -> No
     with (
         patch.object(ZontConnectionManager, "async_start", new=async_start),
         patch(
-            "custom_components.zont_ws.updater.async_refresh_controller_info",
+            "custom_components.zont_local.updater.async_refresh_controller_info",
             new=AsyncMock(return_value=CONTROLLER_INFO),
         ) as refresh,
         patch.object(
@@ -1471,7 +1471,7 @@ async def test_failed_information_refresh_is_disabled_until_restart(
     with (
         patch.object(ZontConnectionManager, "async_start", new=async_start),
         patch(
-            "custom_components.zont_ws.updater.async_refresh_controller_info",
+            "custom_components.zont_local.updater.async_refresh_controller_info",
             new=AsyncMock(side_effect=ZontProtocolError),
         ) as refresh,
         patch.object(

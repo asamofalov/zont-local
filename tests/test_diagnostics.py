@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from custom_components.zont_ws.const import CONF_CONTROLLER, DOMAIN
-from custom_components.zont_ws.coordinator import (
+from custom_components.zont_local.const import CONF_CONTROLLER, DOMAIN
+from custom_components.zont_local.coordinator import (
     ZontDataUpdateCoordinator,
 )
-from custom_components.zont_ws.data import ZontControllerData, ZontData
-from custom_components.zont_ws.diagnostics import async_get_config_entry_diagnostics
-from custom_components.zont_ws.protocol import ZontClient
-from custom_components.zont_ws.protocol.controller import (
+from custom_components.zont_local.data import ZontControllerData, ZontData
+from custom_components.zont_local.diagnostics import async_get_config_entry_diagnostics
+from custom_components.zont_local.protocol import ZontClient
+from custom_components.zont_local.protocol.controller import (
     ZontCommunicationChannel,
     ZontControllerInfo,
     ZontGsmRegistrationState,
@@ -20,7 +20,7 @@ from custom_components.zont_ws.protocol.controller import (
     ZontServerStatus,
     ZontWifiStatus,
 )
-from custom_components.zont_ws.runtime import ZontRuntimeData
+from custom_components.zont_local.runtime import ZontRuntimeData
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry

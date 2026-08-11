@@ -1,8 +1,8 @@
-"""Constants for the ZONT WebSocket integration."""
+"""Constants for the ZONT Local integration."""
 
 from homeassistant.const import Platform
 
-DOMAIN = "zont_ws"
+DOMAIN = "zont_local"
 
 CONFIG_ENTRY_VERSION = 3
 CONF_CONTROLLER = "controller"

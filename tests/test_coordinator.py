@@ -7,18 +7,18 @@ from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
-from custom_components.zont_ws.const import (
+from custom_components.zont_local.const import (
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     MAX_SCAN_INTERVAL,
     MIN_SCAN_INTERVAL,
 )
-from custom_components.zont_ws.coordinator import (
+from custom_components.zont_local.coordinator import (
     ZontDataUpdateCoordinator,
 )
-from custom_components.zont_ws.data import ZontControllerData, ZontData
-from custom_components.zont_ws.protocol import ZontClient, ZontProtocolError
-from custom_components.zont_ws.protocol.controller import (
+from custom_components.zont_local.data import ZontControllerData, ZontData
+from custom_components.zont_local.protocol import ZontClient, ZontProtocolError
+from custom_components.zont_local.protocol.controller import (
     COMMAND_ETHERNET_INFO,
     COMMAND_GSM_INFO,
     COMMAND_SERVER_INFO,
@@ -28,16 +28,16 @@ from custom_components.zont_ws.protocol.controller import (
     ZontGsmRegistrationState,
     ZontPowerSource,
 )
-from custom_components.zont_ws.protocol.heating_config import (
+from custom_components.zont_local.protocol.heating_config import (
     ZontConsumerControlMode,
     ZontHeatingCircuitInternalState,
     immutable_heating_states,
 )
-from custom_components.zont_ws.protocol.mixer import (
+from custom_components.zont_local.protocol.mixer import (
     ZontMixerInternalState,
     immutable_mixer_states,
 )
-from custom_components.zont_ws.protocol.objects import (
+from custom_components.zont_local.protocol.objects import (
     OBJECT_TYPE_RELAY,
     ZontAnalogInputData,
     ZontDigitalBusAdapterData,
@@ -53,7 +53,7 @@ from custom_components.zont_ws.protocol.objects import (
     ZontRelayData,
     immutable_objects,
 )
-from custom_components.zont_ws.protocol.relay import (
+from custom_components.zont_local.protocol.relay import (
     ZontRelayConfiguration,
     ZontRelayInternalState,
     immutable_relay_configurations,

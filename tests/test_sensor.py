@@ -5,16 +5,16 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
-from custom_components.zont_ws.const import DOMAIN
-from custom_components.zont_ws.coordinator import (
+from custom_components.zont_local.const import DOMAIN
+from custom_components.zont_local.coordinator import (
     ZontDataUpdateCoordinator,
 )
-from custom_components.zont_ws.data import ZontControllerData, ZontData
-from custom_components.zont_ws.entities.analog_input import (
+from custom_components.zont_local.data import ZontControllerData, ZontData
+from custom_components.zont_local.entities.analog_input import (
     ANALOG_INPUT_UNITS,
     ZontAnalogInputValueSensor,
 )
-from custom_components.zont_ws.entities.controller import (
+from custom_components.zont_local.entities.controller import (
     CONNECTION_CHANNEL_STATES,
     ZontConnectionChannelSensor,
     ZontGsmRegistrationSensor,
@@ -23,26 +23,26 @@ from custom_components.zont_ws.entities.controller import (
     ZontSupplyVoltageSensor,
     ZontWifiSignalSensor,
 )
-from custom_components.zont_ws.entities.digital_bus import (
+from custom_components.zont_local.entities.digital_bus import (
     DIGITAL_BUS_SENSOR_DESCRIPTIONS,
     ZontDigitalBusSensor,
 )
-from custom_components.zont_ws.entities.heating.states import (
+from custom_components.zont_local.entities.heating.states import (
     CONSUMER_CONTROL_MODE_STATES,
     ZontHeatingCalculatedWaterTemperatureSensor,
     ZontHeatingControlModeSensor,
 )
-from custom_components.zont_ws.entities.mixer import ZontMixerStateSensor
-from custom_components.zont_ws.entities.radio import (
+from custom_components.zont_local.entities.mixer import ZontMixerStateSensor
+from custom_components.zont_local.entities.radio import (
     RADIO_SENSOR_DESCRIPTIONS,
     ZontRadioSensor,
 )
-from custom_components.zont_ws.entities.temperature import (
+from custom_components.zont_local.entities.temperature import (
     ZontDigitalTemperatureSensor,
     ZontNtcTemperatureSensor,
 )
-from custom_components.zont_ws.protocol import ZontClient
-from custom_components.zont_ws.protocol.controller import (
+from custom_components.zont_local.protocol import ZontClient
+from custom_components.zont_local.protocol.controller import (
     ZontCommunicationChannel,
     ZontGsmRegistrationState,
     ZontGsmStatus,
@@ -50,18 +50,18 @@ from custom_components.zont_ws.protocol.controller import (
     ZontServerStatus,
     ZontWifiStatus,
 )
-from custom_components.zont_ws.protocol.heating_config import (
+from custom_components.zont_local.protocol.heating_config import (
     ZontConsumerControlMode,
     ZontHeatingCircuitControlData,
     ZontHeatingCircuitInternalState,
     immutable_heating_controls,
     immutable_heating_states,
 )
-from custom_components.zont_ws.protocol.mixer import (
+from custom_components.zont_local.protocol.mixer import (
     ZontMixerInternalState,
     immutable_mixer_states,
 )
-from custom_components.zont_ws.protocol.objects import (
+from custom_components.zont_local.protocol.objects import (
     ZontAnalogInputData,
     ZontDigitalBusAdapterData,
     ZontDigitalBusState,
@@ -74,8 +74,8 @@ from custom_components.zont_ws.protocol.objects import (
     ZontRadioSensorData,
     immutable_objects,
 )
-from custom_components.zont_ws.runtime import ZontRuntimeData
-from custom_components.zont_ws.sensor import async_setup_entry
+from custom_components.zont_local.runtime import ZontRuntimeData
+from custom_components.zont_local.sensor import async_setup_entry
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 from homeassistant.const import (
     PERCENTAGE,

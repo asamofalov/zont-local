@@ -1,4 +1,4 @@
-"""Tests for the ZONT WebSocket config flow."""
+"""Tests for the ZONT Local config flow."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock
 
 import pytest
-from custom_components.zont_ws import config_flow as zont_config_flow
-from custom_components.zont_ws.const import (
+from custom_components.zont_local import config_flow as zont_config_flow
+from custom_components.zont_local.const import (
     CONF_AUTO_IMPORT_NEW_OBJECTS,
     CONF_AUTO_TITLE,
     CONF_CONTROLLER,
@@ -19,22 +19,22 @@ from custom_components.zont_ws.const import (
     DHW_DEFAULT_ON_TEMPERATURE,
     DOMAIN,
 )
-from custom_components.zont_ws.protocol import (
+from custom_components.zont_local.protocol import (
     ZontAuthenticationError,
     ZontClient,
     ZontConnectionError,
     ZontCredentials,
 )
-from custom_components.zont_ws.protocol.controller import (
+from custom_components.zont_local.protocol.controller import (
     ZontControllerInfo,
     ZontIdentificationError,
 )
-from custom_components.zont_ws.protocol.heating_config import (
+from custom_components.zont_local.protocol.heating_config import (
     ZontHeatingCircuitInternalState,
     ZontHeatingModeConfiguration,
 )
-from custom_components.zont_ws.protocol.heating_modes import ZontHeatingModeDiscovery
-from custom_components.zont_ws.protocol.objects import (
+from custom_components.zont_local.protocol.heating_modes import ZontHeatingModeDiscovery
+from custom_components.zont_local.protocol.objects import (
     ZontHeatingCircuitData,
 )
 from homeassistant import config_entries, data_entry_flow
@@ -100,7 +100,7 @@ def _mock_initial_discovery(monkeypatch, discovery=OFF_MODE_DISCOVERY) -> AsyncM
         return_value=(CONTROLLER_INFO, discovery, dict(discovery.circuits))
     )
     monkeypatch.setattr(
-        "custom_components.zont_ws.config_flow."
+        "custom_components.zont_local.config_flow."
         "_async_identify_and_discover_configuration",
         mock,
     )
@@ -322,7 +322,7 @@ async def test_user_flow_reports_connection_error(
     hass: HomeAssistant, monkeypatch
 ) -> None:
     monkeypatch.setattr(
-        "custom_components.zont_ws.config_flow."
+        "custom_components.zont_local.config_flow."
         "_async_identify_and_discover_configuration",
         AsyncMock(side_effect=ZontConnectionError),
     )
@@ -337,7 +337,7 @@ async def test_user_flow_reports_connection_error(
 
 async def test_user_flow_reports_invalid_auth(hass: HomeAssistant, monkeypatch) -> None:
     monkeypatch.setattr(
-        "custom_components.zont_ws.config_flow."
+        "custom_components.zont_local.config_flow."
         "_async_identify_and_discover_configuration",
         AsyncMock(side_effect=ZontAuthenticationError),
     )
@@ -354,7 +354,7 @@ async def test_user_flow_requires_controller_identification(
     hass: HomeAssistant, monkeypatch
 ) -> None:
     monkeypatch.setattr(
-        "custom_components.zont_ws.config_flow."
+        "custom_components.zont_local.config_flow."
         "_async_identify_and_discover_configuration",
         AsyncMock(side_effect=ZontIdentificationError),
     )
@@ -406,7 +406,7 @@ async def test_reconfigure_updates_connection_settings(
     entry.add_to_hass(hass)
     identify = AsyncMock(return_value=CONTROLLER_INFO)
     monkeypatch.setattr(
-        "custom_components.zont_ws.config_flow.async_identify_controller",
+        "custom_components.zont_local.config_flow.async_identify_controller",
         identify,
     )
 
@@ -444,7 +444,7 @@ async def test_reconfigure_keeps_password_and_custom_title(
     entry.add_to_hass(hass)
     identify = AsyncMock(return_value=CONTROLLER_INFO)
     monkeypatch.setattr(
-        "custom_components.zont_ws.config_flow.async_identify_controller",
+        "custom_components.zont_local.config_flow.async_identify_controller",
         identify,
     )
 
@@ -480,7 +480,7 @@ async def test_reconfigure_rejects_invalid_credentials(
     )
     entry.add_to_hass(hass)
     monkeypatch.setattr(
-        "custom_components.zont_ws.config_flow.async_identify_controller",
+        "custom_components.zont_local.config_flow.async_identify_controller",
         AsyncMock(side_effect=ZontAuthenticationError),
     )
 
@@ -538,7 +538,7 @@ async def test_reconfigure_rejects_invalid_connection_settings(
     entry.add_to_hass(hass)
     identify = AsyncMock(return_value=CONTROLLER_INFO)
     monkeypatch.setattr(
-        "custom_components.zont_ws.config_flow.async_identify_controller",
+        "custom_components.zont_local.config_flow.async_identify_controller",
         identify,
     )
 
@@ -568,7 +568,7 @@ async def test_reconfigure_rejects_different_controller(
     )
     entry.add_to_hass(hass)
     monkeypatch.setattr(
-        "custom_components.zont_ws.config_flow.async_identify_controller",
+        "custom_components.zont_local.config_flow.async_identify_controller",
         AsyncMock(
             return_value=ZontControllerInfo(
                 serial_number="123456ABCDEF",
@@ -606,7 +606,7 @@ async def test_reauth_updates_credentials(hass: HomeAssistant, monkeypatch) -> N
     )
     entry.add_to_hass(hass)
     monkeypatch.setattr(
-        "custom_components.zont_ws.config_flow.async_identify_controller",
+        "custom_components.zont_local.config_flow.async_identify_controller",
         AsyncMock(return_value=CONTROLLER_INFO),
     )
 

@@ -1,4 +1,4 @@
-"""Shared fixtures for ZONT WebSocket tests."""
+"""Shared fixtures for ZONT Local tests."""
 
 from __future__ import annotations
 

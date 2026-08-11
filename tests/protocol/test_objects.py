@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from custom_components.zont_ws.object_descriptions import (
+from custom_components.zont_local.object_descriptions import (
     ANALOG_INPUT_SUBTYPE_NAMES,
     HEATING_CIRCUIT_SUBTYPE_NAMES,
     RADIO_SENSOR_SUBTYPE_NAMES,
@@ -12,7 +12,7 @@ from custom_components.zont_ws.object_descriptions import (
     heating_circuit_model,
     radio_sensor_model,
 )
-from custom_components.zont_ws.protocol.objects import (
+from custom_components.zont_local.protocol.objects import (
     OBJECT_TYPE_ANALOG_INPUT,
     OBJECT_TYPE_DIGITAL_BUS_ADAPTER,
     OBJECT_TYPE_DIGITAL_TEMPERATURE_SENSOR,

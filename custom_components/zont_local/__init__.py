@@ -1,4 +1,4 @@
-"""ZONT WebSocket integration."""
+"""ZONT Local integration."""
 
 from __future__ import annotations
 

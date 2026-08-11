@@ -6,42 +6,42 @@ from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from custom_components.zont_ws.const import (
+from custom_components.zont_local.const import (
     CONF_DHW_ON_TEMPERATURE,
     CONF_HEATING_OFF_MODE_ID,
     DHW_DEFAULT_ON_TEMPERATURE,
     DOMAIN,
 )
-from custom_components.zont_ws.coordinator import (
+from custom_components.zont_local.coordinator import (
     ZontDataUpdateCoordinator,
 )
-from custom_components.zont_ws.data import ZontControllerData, ZontData
-from custom_components.zont_ws.entities.heating.water_heater import (
+from custom_components.zont_local.data import ZontControllerData, ZontData
+from custom_components.zont_local.entities.heating.water_heater import (
     MANUAL_OPERATION,
     MAX_TARGET_TEMPERATURE,
     MIN_TARGET_TEMPERATURE,
     TARGET_TEMPERATURE_STEP,
     ZontDhwWaterHeater,
 )
-from custom_components.zont_ws.protocol import (
+from custom_components.zont_local.protocol import (
     ZontClient,
     ZontCommandTimeoutError,
     ZontConnectionError,
     ZontProtocolError,
 )
-from custom_components.zont_ws.protocol.heating_config import (
+from custom_components.zont_local.protocol.heating_config import (
     ZontHeatingCircuitInternalState,
     ZontHeatingModeConfiguration,
     immutable_heating_modes,
     immutable_heating_states,
 )
-from custom_components.zont_ws.protocol.objects import (
+from custom_components.zont_local.protocol.objects import (
     ZontHeatingCircuitData,
     ZontHeatingCircuitMode,
     immutable_objects,
 )
-from custom_components.zont_ws.runtime import ZontRuntimeData
-from custom_components.zont_ws.water_heater import async_setup_entry
+from custom_components.zont_local.runtime import ZontRuntimeData
+from custom_components.zont_local.water_heater import async_setup_entry
 from homeassistant.components.water_heater import (
     STATE_OFF,
     STATE_ON,

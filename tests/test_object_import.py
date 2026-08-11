@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from custom_components.zont_ws.const import (
+from custom_components.zont_local.const import (
     CONF_AUTO_IMPORT_NEW_OBJECTS,
     CONF_EXCLUDED_OBJECT_IDS,
     CONF_EXPORT_SOURCE,
@@ -12,11 +12,11 @@ from custom_components.zont_ws.const import (
     CONF_IMPORTED_OBJECT_IDS,
     CONF_TEMPERATURE_EXPORTS,
 )
-from custom_components.zont_ws.object_import import (
+from custom_components.zont_local.object_import import (
     importable_object_descriptor,
     object_import_configuration,
 )
-from custom_components.zont_ws.protocol.objects import (
+from custom_components.zont_local.protocol.objects import (
     ZontAnalogInputData,
     ZontDigitalBusAdapterData,
     ZontDigitalTemperatureSensorData,

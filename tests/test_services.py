@@ -5,14 +5,14 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from custom_components.zont_ws.const import (
+from custom_components.zont_local.const import (
     DOMAIN,
     SERVICE_SEND_BULK,
     SERVICE_SEND_COMMAND,
 )
-from custom_components.zont_ws.protocol import ZontClient, ZontConnectionError
-from custom_components.zont_ws.runtime import ZontRuntimeData
-from custom_components.zont_ws.services import async_setup_services
+from custom_components.zont_local.protocol import ZontClient, ZontConnectionError
+from custom_components.zont_local.runtime import ZontRuntimeData
+from custom_components.zont_local.services import async_setup_services
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
@@ -40,6 +40,10 @@ def _loaded_entry(hass: HomeAssistant) -> tuple[MockConfigEntry, MagicMock]:
 
 async def test_service_without_entry_is_validation_error(hass: HomeAssistant) -> None:
     async_setup_services(hass)
+
+    assert DOMAIN == "zont_local"
+    assert hass.services.has_service("zont_local", SERVICE_SEND_COMMAND)
+    assert hass.services.has_service("zont_local", SERVICE_SEND_BULK)
 
     with pytest.raises(ServiceValidationError):
         await hass.services.async_call(

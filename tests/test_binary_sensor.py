@@ -5,60 +5,60 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
-from custom_components.zont_ws.binary_sensor import async_setup_entry
-from custom_components.zont_ws.const import DOMAIN, connection_signal
-from custom_components.zont_ws.coordinator import (
+from custom_components.zont_local.binary_sensor import async_setup_entry
+from custom_components.zont_local.const import DOMAIN, connection_signal
+from custom_components.zont_local.coordinator import (
     ZontDataUpdateCoordinator,
 )
-from custom_components.zont_ws.data import ZontControllerData, ZontData
-from custom_components.zont_ws.entities.analog_input import (
+from custom_components.zont_local.data import ZontControllerData, ZontData
+from custom_components.zont_local.entities.analog_input import (
     ZontAnalogInputTriggeredBinarySensor,
 )
-from custom_components.zont_ws.entities.controller import (
+from custom_components.zont_local.entities.controller import (
     ZontCloudConnectedBinarySensor,
     ZontConnectedBinarySensor,
     ZontEthernetConnectedBinarySensor,
     ZontWifiConnectedBinarySensor,
 )
-from custom_components.zont_ws.entities.digital_bus import (
+from custom_components.zont_local.entities.digital_bus import (
     ZontDigitalBusFaultBinarySensor,
 )
-from custom_components.zont_ws.entities.heating.states import (
+from custom_components.zont_local.entities.heating.states import (
     HEATING_CIRCUIT_BINARY_SENSOR_DESCRIPTIONS_BY_SUBTYPE,
     HEATING_CIRCUIT_FAULT_DESCRIPTION,
     HEATING_CIRCUIT_HEATING_DESCRIPTION,
     ZontHeatingCircuitBinarySensor,
 )
-from custom_components.zont_ws.entities.mixer import (
+from custom_components.zont_local.entities.mixer import (
     MIXER_BINARY_SENSOR_DESCRIPTIONS,
     ZontMixerBinarySensor,
 )
-from custom_components.zont_ws.entities.pump import ZontPumpRunningBinarySensor
-from custom_components.zont_ws.entities.radio import (
+from custom_components.zont_local.entities.pump import ZontPumpRunningBinarySensor
+from custom_components.zont_local.entities.radio import (
     ZontRadioTriggeredBinarySensor,
 )
-from custom_components.zont_ws.entities.relay import (
+from custom_components.zont_local.entities.relay import (
     ZontRelayFailedBinarySensor,
 )
-from custom_components.zont_ws.protocol import ZontClient
-from custom_components.zont_ws.protocol.controller import (
+from custom_components.zont_local.protocol import ZontClient
+from custom_components.zont_local.protocol.controller import (
     ZontCommunicationChannel,
     ZontEthernetStatus,
     ZontServerStatus,
     ZontWifiStatus,
 )
-from custom_components.zont_ws.protocol.heating_config import (
+from custom_components.zont_local.protocol.heating_config import (
     ZontConsumerControlMode,
     ZontHeatingCircuitControlData,
     ZontHeatingCircuitInternalState,
     immutable_heating_controls,
     immutable_heating_states,
 )
-from custom_components.zont_ws.protocol.mixer import (
+from custom_components.zont_local.protocol.mixer import (
     ZontMixerInternalState,
     immutable_mixer_states,
 )
-from custom_components.zont_ws.protocol.objects import (
+from custom_components.zont_local.protocol.objects import (
     ZontAnalogInputData,
     ZontDigitalBusAdapterData,
     ZontDigitalBusState,
@@ -74,11 +74,11 @@ from custom_components.zont_ws.protocol.objects import (
     ZontRelayData,
     immutable_objects,
 )
-from custom_components.zont_ws.protocol.relay import (
+from custom_components.zont_local.protocol.relay import (
     ZontRelayInternalState,
     immutable_relay_states,
 )
-from custom_components.zont_ws.runtime import ZontRuntimeData
+from custom_components.zont_local.runtime import ZontRuntimeData
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send

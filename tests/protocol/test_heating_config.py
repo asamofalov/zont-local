@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from custom_components.zont_ws.protocol.heating_config import (
+from custom_components.zont_local.protocol.heating_config import (
     AIR_MAX_TEMPERATURE,
     AIR_MIN_TEMPERATURE,
     SLAVE_MODE_FLAG,

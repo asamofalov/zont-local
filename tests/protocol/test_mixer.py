@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import pytest
-from custom_components.zont_ws.protocol.mixer import (
+from custom_components.zont_local.protocol.mixer import (
     ZontMixerInternalState,
     ZontMixerStateParseError,
     immutable_mixer_states,
     parse_mixer_internal_state,
 )
-from custom_components.zont_ws.protocol.objects import ZontMixerDirection
+from custom_components.zont_local.protocol.objects import ZontMixerDirection
 
 
 @pytest.mark.parametrize(

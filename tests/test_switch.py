@@ -5,29 +5,32 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from custom_components.zont_ws.const import DOMAIN
-from custom_components.zont_ws.coordinator import (
+from custom_components.zont_local.const import DOMAIN
+from custom_components.zont_local.coordinator import (
     ZontDataUpdateCoordinator,
 )
-from custom_components.zont_ws.data import ZontControllerData, ZontData
-from custom_components.zont_ws.entities.relay import ZontRelaySwitch
-from custom_components.zont_ws.protocol import (
+from custom_components.zont_local.data import ZontControllerData, ZontData
+from custom_components.zont_local.entities.relay import ZontRelaySwitch
+from custom_components.zont_local.protocol import (
     ZontClient,
     ZontCommandTimeoutError,
     ZontConnectionError,
     ZontProtocolError,
 )
-from custom_components.zont_ws.protocol.heating_commands import (
+from custom_components.zont_local.protocol.heating_commands import (
     ZontCommandRejectedError,
     ZontCommandStateError,
 )
-from custom_components.zont_ws.protocol.objects import ZontRelayData, immutable_objects
-from custom_components.zont_ws.protocol.relay import (
+from custom_components.zont_local.protocol.objects import (
+    ZontRelayData,
+    immutable_objects,
+)
+from custom_components.zont_local.protocol.relay import (
     ZontRelayConfiguration,
     immutable_relay_configurations,
 )
-from custom_components.zont_ws.runtime import ZontRuntimeData
-from custom_components.zont_ws.switch import async_setup_entry
+from custom_components.zont_local.runtime import ZontRuntimeData
+from custom_components.zont_local.switch import async_setup_entry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -118,7 +121,7 @@ async def test_relay_switch_sends_logical_commands() -> None:
     entity = ZontRelaySwitch(entry, 20488)
 
     with patch(
-        "custom_components.zont_ws.entities.relay.async_set_relay_state_and_confirm",
+        "custom_components.zont_local.entities.relay.async_set_relay_state_and_confirm",
         new=AsyncMock(),
     ) as set_state:
         await entity.async_turn_on()
@@ -160,7 +163,7 @@ async def test_relay_switch_translates_command_errors(
 
     with (
         patch(
-            "custom_components.zont_ws.entities.relay.async_set_relay_state_and_confirm",
+            "custom_components.zont_local.entities.relay.async_set_relay_state_and_confirm",
             new=AsyncMock(side_effect=error),
         ),
         pytest.raises(HomeAssistantError) as raised,

@@ -1,9 +1,9 @@
 """Tests for Home Assistant heating-mode option labels."""
 
-from custom_components.zont_ws.entities.heating.mode_options import (
+from custom_components.zont_local.entities.heating.mode_options import (
     heating_mode_options,
 )
-from custom_components.zont_ws.protocol.heating_config import (
+from custom_components.zont_local.protocol.heating_config import (
     ZontHeatingCircuitInternalState,
     ZontHeatingModeConfiguration,
 )

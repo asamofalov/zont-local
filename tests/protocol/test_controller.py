@@ -3,16 +3,16 @@
 from unittest.mock import AsyncMock
 
 import pytest
-from custom_components.zont_ws.presentation import (
+from custom_components.zont_local.presentation import (
     controller_device_name,
     controller_entry_title,
 )
-from custom_components.zont_ws.protocol import (
+from custom_components.zont_local.protocol import (
     ZontAuthenticationError,
     ZontConnectionError,
     ZontCredentials,
 )
-from custom_components.zont_ws.protocol.controller import (
+from custom_components.zont_local.protocol.controller import (
     COMMAND_RESTART,
     ZontCommunicationChannel,
     ZontControllerInfo,
@@ -300,7 +300,7 @@ async def test_identify_controller_uses_required_system_commands(monkeypatch) ->
         ]
     )
     monkeypatch.setattr(
-        "custom_components.zont_ws.protocol.controller.async_request_system_commands",
+        "custom_components.zont_local.protocol.controller.async_request_system_commands",
         request,
     )
     credentials = ZontCredentials("user", "password")
@@ -359,7 +359,7 @@ async def test_identify_controller_requires_both_valid_responses(
     responses: list[str],
 ) -> None:
     monkeypatch.setattr(
-        "custom_components.zont_ws.protocol.controller.async_request_system_commands",
+        "custom_components.zont_local.protocol.controller.async_request_system_commands",
         AsyncMock(return_value=responses),
     )
 
@@ -381,7 +381,7 @@ async def test_identify_controller_preserves_connection_errors(
     client_error: Exception,
 ) -> None:
     monkeypatch.setattr(
-        "custom_components.zont_ws.protocol.controller.async_request_system_commands",
+        "custom_components.zont_local.protocol.controller.async_request_system_commands",
         AsyncMock(side_effect=client_error),
     )
 

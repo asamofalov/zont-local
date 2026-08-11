@@ -1,4 +1,4 @@
-"""Options flow for the ZONT WebSocket integration."""
+"""Options flow for the ZONT Local integration."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ from .schemas import (
 _LOGGER = logging.getLogger(__name__)
 
 
-class ZontWsOptionsFlow(
+class ZontLocalOptionsFlow(
     _TemperatureExportOptionsFlowSteps,
     config_entries.OptionsFlow,
 ):

@@ -6,26 +6,26 @@ from collections.abc import Awaitable, Callable
 from unittest.mock import MagicMock
 
 import pytest
-from custom_components.zont_ws.binary_sensor import async_setup_entry as setup_binary
-from custom_components.zont_ws.climate import async_setup_entry as setup_climate
-from custom_components.zont_ws.const import (
+from custom_components.zont_local.binary_sensor import async_setup_entry as setup_binary
+from custom_components.zont_local.climate import async_setup_entry as setup_climate
+from custom_components.zont_local.const import (
     CONF_AUTO_IMPORT_NEW_OBJECTS,
     CONF_EXCLUDED_OBJECT_IDS,
     CONF_IMPORTED_OBJECT_IDS,
     DOMAIN,
 )
-from custom_components.zont_ws.data import ZontControllerData, ZontData
-from custom_components.zont_ws.protocol.objects import (
+from custom_components.zont_local.data import ZontControllerData, ZontData
+from custom_components.zont_local.protocol.objects import (
     ZontDigitalTemperatureSensorData,
     ZontHeatingCircuitData,
     ZontPumpData,
     ZontRelayData,
     immutable_objects,
 )
-from custom_components.zont_ws.runtime import ZontRuntimeData
-from custom_components.zont_ws.sensor import async_setup_entry as setup_sensor
-from custom_components.zont_ws.switch import async_setup_entry as setup_switch
-from custom_components.zont_ws.water_heater import (
+from custom_components.zont_local.runtime import ZontRuntimeData
+from custom_components.zont_local.sensor import async_setup_entry as setup_sensor
+from custom_components.zont_local.switch import async_setup_entry as setup_switch
+from custom_components.zont_local.water_heater import (
     async_setup_entry as setup_water_heater,
 )
 from homeassistant.core import HomeAssistant

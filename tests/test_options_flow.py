@@ -1,11 +1,11 @@
-"""Tests for the ZONT WebSocket options flow."""
+"""Tests for the ZONT Local options flow."""
 
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from custom_components.zont_ws.const import (
+from custom_components.zont_local.const import (
     CONF_AUTO_IMPORT_NEW_OBJECTS,
     CONF_AUTO_TITLE,
     CONF_CONTROLLER,
@@ -22,26 +22,26 @@ from custom_components.zont_ws.const import (
     MAX_SCAN_INTERVAL,
     MIN_SCAN_INTERVAL,
 )
-from custom_components.zont_ws.data import ZontControllerData, ZontData
-from custom_components.zont_ws.flows import discovery as zont_flow_discovery
-from custom_components.zont_ws.flows import export as zont_export_flow
-from custom_components.zont_ws.flows import options as zont_options_flow
-from custom_components.zont_ws.flows.schemas import (
+from custom_components.zont_local.data import ZontControllerData, ZontData
+from custom_components.zont_local.flows import discovery as zont_flow_discovery
+from custom_components.zont_local.flows import export as zont_export_flow
+from custom_components.zont_local.flows import options as zont_options_flow
+from custom_components.zont_local.flows.schemas import (
     _validate_dhw_on_temperature,
     _validate_scan_interval,
 )
-from custom_components.zont_ws.protocol import ZontClient
-from custom_components.zont_ws.protocol.controller import ZontControllerInfo
-from custom_components.zont_ws.protocol.heating_config import (
+from custom_components.zont_local.protocol import ZontClient
+from custom_components.zont_local.protocol.controller import ZontControllerInfo
+from custom_components.zont_local.protocol.heating_config import (
     ZontHeatingCircuitInternalState,
     ZontHeatingModeConfiguration,
 )
-from custom_components.zont_ws.protocol.heating_modes import ZontHeatingModeDiscovery
-from custom_components.zont_ws.protocol.objects import (
+from custom_components.zont_local.protocol.heating_modes import ZontHeatingModeDiscovery
+from custom_components.zont_local.protocol.objects import (
     ZontDigitalTemperatureSensorData,
     ZontHeatingCircuitData,
 )
-from custom_components.zont_ws.runtime import ZontRuntimeData
+from custom_components.zont_local.runtime import ZontRuntimeData
 from homeassistant import data_entry_flow
 from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.config_entries import ConfigEntryState, ConfigFlowResult

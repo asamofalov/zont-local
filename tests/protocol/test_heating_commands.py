@@ -5,8 +5,8 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from custom_components.zont_ws.protocol import ZontClient
-from custom_components.zont_ws.protocol.heating_commands import (
+from custom_components.zont_local.protocol import ZontClient
+from custom_components.zont_local.protocol.heating_commands import (
     ZontCommandRejectedError,
     async_set_heating_circuit_temperature,
     celsius_to_decikelvin,

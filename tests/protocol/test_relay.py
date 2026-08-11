@@ -5,17 +5,20 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from custom_components.zont_ws.coordinator import (
+from custom_components.zont_local.coordinator import (
     ZontDataUpdateCoordinator,
 )
-from custom_components.zont_ws.data import ZontControllerData, ZontData
-from custom_components.zont_ws.protocol import ZontClient
-from custom_components.zont_ws.protocol.heating_commands import (
+from custom_components.zont_local.data import ZontControllerData, ZontData
+from custom_components.zont_local.protocol import ZontClient
+from custom_components.zont_local.protocol.heating_commands import (
     ZontCommandRejectedError,
     ZontCommandStateError,
 )
-from custom_components.zont_ws.protocol.objects import ZontRelayData, immutable_objects
-from custom_components.zont_ws.protocol.relay import (
+from custom_components.zont_local.protocol.objects import (
+    ZontRelayData,
+    immutable_objects,
+)
+from custom_components.zont_local.protocol.relay import (
     ZontRelayConfiguration,
     ZontRelayInternalState,
     ZontRelayParseError,
@@ -25,7 +28,7 @@ from custom_components.zont_ws.protocol.relay import (
     parse_relay_internal_state,
     relay_logical_state,
 )
-from custom_components.zont_ws.relay_control import (
+from custom_components.zont_local.relay_control import (
     async_set_relay_state_and_confirm,
 )
 
