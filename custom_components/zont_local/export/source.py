@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from math import isfinite
 
-from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.const import (
     ATTR_DEVICE_CLASS,
@@ -22,15 +21,6 @@ from homeassistant.util.unit_conversion import TemperatureConverter
 
 from ..const import DOMAIN
 from .model import ZontExportKind, ZontExportValue
-
-OPENING_DEVICE_CLASSES = frozenset(
-    {
-        BinarySensorDeviceClass.DOOR,
-        BinarySensorDeviceClass.GARAGE_DOOR,
-        BinarySensorDeviceClass.OPENING,
-        BinarySensorDeviceClass.WINDOW,
-    }
-)
 
 
 class ZontExportSourceError(ValueError):
@@ -81,15 +71,12 @@ def export_temperature_from_state(state: State) -> float:
     return 0.0 if rounded == 0 else rounded
 
 
-def export_opening_from_state(state: State) -> bool:
-    """Validate one opening binary sensor and return whether it is open."""
-    if (
-        state.domain != "binary_sensor"
-        or state.attributes.get(ATTR_DEVICE_CLASS) not in OPENING_DEVICE_CLASSES
-    ):
-        raise ZontExportSourceError("Source is not an opening binary sensor")
+def export_binary_from_state(state: State) -> bool:
+    """Validate one binary sensor and return whether its state is on."""
+    if state.domain != "binary_sensor":
+        raise ZontExportSourceError("Source is not a binary sensor")
     if state.state in (STATE_UNKNOWN, STATE_UNAVAILABLE):
-        raise ZontExportSourceUnavailable("Source has no current opening state")
+        raise ZontExportSourceUnavailable("Source has no current binary state")
     if state.state == STATE_ON:
         return True
     if state.state == STATE_OFF:
@@ -106,8 +93,8 @@ def export_value_from_state(
         kind = ZontExportKind.TEMPERATURE
         value: ZontExportValue = export_temperature_from_state(state)
     elif state.domain == "binary_sensor":
-        kind = ZontExportKind.OPENING
-        value = export_opening_from_state(state)
+        kind = ZontExportKind.BINARY
+        value = export_binary_from_state(state)
     else:
         raise ZontExportSourceError("Source domain is not supported")
     if expected_kind is not None and kind is not expected_kind:

@@ -29,7 +29,7 @@ from ..const import (
     DOMAIN,
 )
 from ..export import (
-    OPENING_DEVICE_CLASSES,
+    BINARY_EXPORT_SUBTYPES,
     ZontExportBinding,
     ZontExportKind,
     ZontExportSourceError,
@@ -50,6 +50,7 @@ from ..protocol import (
 )
 from ..protocol.objects import (
     ANALOG_INPUT_SUBTYPE_DISCRETE_NC,
+    ANALOG_INPUT_SUBTYPE_DISCRETE_NO,
     ZontAnalogInputData,
     ZontDigitalTemperatureSensorData,
     ZontObject,
@@ -70,13 +71,24 @@ from .schemas import (
     FIELD_EXPORT_ENTITY_ID,
     FIELD_EXPORT_NAME,
     FIELD_EXPORT_TARGET_ID,
+    FIELD_EXPORT_TARGET_SUBTYPE,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 _EXPORT_KIND_LABELS = {
     ZontExportKind.TEMPERATURE: "Температура",
-    ZontExportKind.OPENING: "Открытие",
+    ZontExportKind.BINARY: "Бинарное состояние",
+}
+
+_BINARY_SUBTYPE_NAMES = {
+    ANALOG_INPUT_SUBTYPE_DISCRETE_NO: "НР",
+    ANALOG_INPUT_SUBTYPE_DISCRETE_NC: "НЗ",
+}
+
+_BINARY_SUBTYPE_OPTIONS = {
+    ANALOG_INPUT_SUBTYPE_DISCRETE_NO: "НР — сработка при состоянии off",
+    ANALOG_INPUT_SUBTYPE_DISCRETE_NC: "НЗ — сработка при состоянии on",
 }
 
 
@@ -130,7 +142,10 @@ class _ExportOptionsFlowSteps:
             errors["base"] = self._objects_error or ERROR_CANNOT_READ_DEVICES
         elif user_input is not None:
             name = str(user_input.get(FIELD_EXPORT_NAME, "")).strip()
-            if not name:
+            target_subtype = _selected_binary_subtype(
+                user_input.get(FIELD_EXPORT_TARGET_SUBTYPE)
+            )
+            if not name or (kind is ZontExportKind.BINARY and target_subtype is None):
                 errors["base"] = ERROR_INVALID_EXPORT_TARGET
             elif any(
                 obj.name.casefold() == name.casefold() for obj in self._objects.values()
@@ -143,6 +158,7 @@ class _ExportOptionsFlowSteps:
                     entity_id,
                     kind,
                     name,
+                    target_subtype,
                 )
                 if error is None:
                     assert binding is not None
@@ -156,16 +172,25 @@ class _ExportOptionsFlowSteps:
 
         state = self.hass.states.get(entity_id)
         default_name = f"HA - {state.name if state is not None else entity_id}"
+        schema: dict[vol.Marker, Any] = {
+            vol.Required(
+                FIELD_EXPORT_NAME,
+                default=default_name,
+            ): TextSelector()
+        }
+        if kind is ZontExportKind.BINARY:
+            schema[vol.Required(FIELD_EXPORT_TARGET_SUBTYPE)] = SelectSelector(
+                SelectSelectorConfig(
+                    options=[
+                        SelectOptionDict(value=str(subtype), label=label)
+                        for subtype, label in _BINARY_SUBTYPE_OPTIONS.items()
+                    ],
+                    custom_value=False,
+                )
+            )
         return self.async_show_form(
             step_id="export_create",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(
-                        FIELD_EXPORT_NAME,
-                        default=default_name,
-                    ): TextSelector()
-                }
-            ),
+            data_schema=vol.Schema(schema),
             errors=errors,
             description_placeholders={
                 "source": state.name if state else entity_id,
@@ -255,6 +280,7 @@ class _ExportOptionsFlowSteps:
                 kind,
                 target_id,
                 target.name,
+                _target_subtype(kind, target),
             )
             if error is None:
                 assert binding is not None
@@ -343,6 +369,7 @@ class _ExportOptionsFlowSteps:
                     binding.kind,
                     binding.target_id,
                     binding.target_name,
+                    binding.target_subtype,
                     ignored_target_id=binding.target_id,
                 )
                 if error is None:
@@ -445,6 +472,7 @@ class _ExportOptionsFlowSteps:
                 binding.kind,
                 target_id,
                 target.name,
+                _target_subtype(binding.kind, target),
                 ignored_target_id=binding.target_id,
             )
             if error is None:
@@ -564,6 +592,7 @@ async def _async_create_export(
     entity_id: str,
     kind: ZontExportKind,
     name: str,
+    target_subtype: int | None,
 ) -> tuple[ZontExportBinding | None, str | None]:
     """Create, verify and describe one new ZONT export target."""
     entity_id, _, error = _validate_export_source_selection(
@@ -579,7 +608,10 @@ async def _async_create_export(
         return None, ERROR_CANNOT_CONNECT
     try:
         _, value = validate_export_source(hass, entity_id, entry.entry_id, kind)
-        object_type, object_subtype = export_target_protocol_identity(kind)
+        object_type, object_subtype = export_target_protocol_identity(
+            kind,
+            target_subtype,
+        )
         command = export_command(kind, value)
         if object_subtype is None:
             response = await client.async_send_named_command(
@@ -608,12 +640,14 @@ async def _async_create_export(
         state = await client.async_get_object_state(target_id)
     except ZontExportSourceError:
         return None, ERROR_INVALID_EXPORT_SOURCE
+    except ValueError:
+        return None, ERROR_INVALID_EXPORT_TARGET
     except (ZontConnectionError, ZontRequestTimeoutError):
         return None, ERROR_CANNOT_CONNECT
     except ZontProtocolError:
         return None, ERROR_INVALID_EXPORT_TARGET
 
-    if not export_target_matches(kind, state):
+    if not export_target_matches(kind, state, target_subtype):
         return None, ERROR_INVALID_EXPORT_TARGET
     target_name = state.get("name")
     return (
@@ -624,6 +658,7 @@ async def _async_create_export(
             target_name.strip()
             if isinstance(target_name, str) and target_name.strip()
             else name,
+            target_subtype,
         ),
         None,
     )
@@ -636,6 +671,7 @@ async def _async_bind_existing_export(
     kind: ZontExportKind,
     target_id: int,
     target_name: str,
+    target_subtype: int | None,
     *,
     ignored_target_id: int | None = None,
 ) -> tuple[ZontExportBinding | None, str | None]:
@@ -660,7 +696,7 @@ async def _async_bind_existing_export(
         return None, ERROR_CANNOT_CONNECT
     try:
         state = await client.async_get_object_state(target_id)
-        if not export_target_matches(kind, state):
+        if not export_target_matches(kind, state, target_subtype):
             return None, ERROR_INVALID_EXPORT_TARGET
         _, value = validate_export_source(hass, entity_id, entry.entry_id, kind)
         response = await client.async_send_command(
@@ -689,6 +725,7 @@ async def _async_bind_existing_export(
             current_name.strip()
             if isinstance(current_name, str) and current_name.strip()
             else target_name,
+            target_subtype,
         ),
         None,
     )
@@ -720,9 +757,31 @@ def _available_targets(
         object_id: obj
         for object_id, obj in objects.items()
         if isinstance(obj, ZontAnalogInputData)
-        and obj.subtype == ANALOG_INPUT_SUBTYPE_DISCRETE_NC
+        and obj.subtype in BINARY_EXPORT_SUBTYPES
         and object_id not in used
     }
+
+
+def _target_subtype(kind: ZontExportKind, target: ZontObject) -> int | None:
+    """Return the subtype carried by a selected target."""
+    if kind is ZontExportKind.TEMPERATURE:
+        return None
+    return target.subtype if isinstance(target, ZontAnalogInputData) else None
+
+
+def _selected_binary_subtype(value: Any) -> int | None:
+    """Validate a subtype selected for a new binary target."""
+    if isinstance(value, bool):
+        return None
+    try:
+        subtype = int(value)
+    except (TypeError, ValueError):
+        return None
+    return (
+        subtype
+        if str(subtype) == str(value) and subtype in BINARY_EXPORT_SUBTYPES
+        else None
+    )
 
 
 def _selected_target_id(value: Any, valid_ids: frozenset[int]) -> int | None:
@@ -758,15 +817,8 @@ def _export_source_schema(
         filters.append(
             {"domain": "sensor", "device_class": SensorDeviceClass.TEMPERATURE}
         )
-    if kind in (None, ZontExportKind.OPENING):
-        filters.append(
-            {
-                "domain": "binary_sensor",
-                "device_class": sorted(
-                    device_class.value for device_class in OPENING_DEVICE_CLASSES
-                ),
-            }
-        )
+    if kind in (None, ZontExportKind.BINARY):
+        filters.append({"domain": "binary_sensor"})
     marker: vol.Marker = vol.Required(FIELD_EXPORT_ENTITY_ID)
     if default is not None:
         marker = vol.Required(FIELD_EXPORT_ENTITY_ID, default=default)
@@ -789,15 +841,10 @@ def _export_target_schema(
     default: int | None = None,
 ) -> vol.Schema:
     """Return a selector for compatible existing ZONT objects."""
-    target_type = (
-        "Цифровой датчик температуры"
-        if kind is ZontExportKind.TEMPERATURE
-        else "Дискретный вход НЗ"
-    )
     options = [
         SelectOptionDict(
             value=str(obj.object_id),
-            label=f"{target_type} - {obj.name} (ID {obj.object_id})",
+            label=f"{_target_type_label(obj)} - {obj.name} (ID {obj.object_id})",
         )
         for obj in sorted(
             targets.values(),
@@ -833,7 +880,7 @@ def _export_manage_schema(
             SelectOptionDict(
                 value=str(binding.target_id),
                 label=(
-                    f"{_EXPORT_KIND_LABELS[binding.kind]}: {source_name} → "
+                    f"{_binding_kind_label(binding)}: {source_name} → "
                     f"{binding.target_name} (ID {binding.target_id})"
                 ),
             )
@@ -845,6 +892,31 @@ def _export_manage_schema(
             )
         }
     )
+
+
+def _target_type_label(target: ZontObject) -> str:
+    """Return a concise protocol type label for a selectable target."""
+    if isinstance(target, ZontDigitalTemperatureSensorData):
+        return "Цифровой датчик температуры"
+    if isinstance(target, ZontAnalogInputData):
+        contact_type = _BINARY_SUBTYPE_NAMES.get(target.subtype)
+        return (
+            f"Дискретный вход {contact_type}"
+            if contact_type is not None
+            else "Дискретный вход"
+        )
+    return "Объект"
+
+
+def _binding_kind_label(binding: ZontExportBinding) -> str:
+    """Return a user-facing kind label for one stored binding."""
+    if binding.kind is ZontExportKind.BINARY:
+        subtype = _BINARY_SUBTYPE_NAMES.get(
+            binding.target_subtype,
+            "неизвестный тип",
+        )
+        return f"Бинарное состояние ({subtype})"
+    return _EXPORT_KIND_LABELS[binding.kind]
 
 
 def _options_with_export_bindings(

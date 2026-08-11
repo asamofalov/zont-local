@@ -54,6 +54,7 @@ ERROR_UNKNOWN = "unknown"
 FIELD_EXPORT_ENTITY_ID = "entity_id"
 FIELD_EXPORT_NAME = "name"
 FIELD_EXPORT_TARGET_ID = "target_id"
+FIELD_EXPORT_TARGET_SUBTYPE = "target_subtype"
 FIELD_EXPORT_BINDING_ID = "binding_id"
 
 

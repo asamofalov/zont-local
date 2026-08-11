@@ -12,23 +12,32 @@ from ..const import (
     CONF_EXPORT_SOURCE,
     CONF_EXPORT_TARGET_ID,
     CONF_EXPORT_TARGET_NAME,
+    CONF_EXPORT_TARGET_SUBTYPE,
     CONF_EXPORTS,
     EXPORT_BINARY_TIMEOUT,
 )
 from ..protocol.objects import (
     ANALOG_INPUT_SUBTYPE_DISCRETE_NC,
+    ANALOG_INPUT_SUBTYPE_DISCRETE_NO,
     OBJECT_TYPE_ANALOG_INPUT,
     OBJECT_TYPE_DIGITAL_TEMPERATURE_SENSOR,
 )
 
 type ZontExportValue = bool | float
 
+BINARY_EXPORT_SUBTYPES = frozenset(
+    {
+        ANALOG_INPUT_SUBTYPE_DISCRETE_NO,
+        ANALOG_INPUT_SUBTYPE_DISCRETE_NC,
+    }
+)
+
 
 class ZontExportKind(StrEnum):
     """Supported Home Assistant values exported to ZONT."""
 
     TEMPERATURE = "temperature"
-    OPENING = "opening"
+    BINARY = "binary"
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,15 +48,19 @@ class ZontExportBinding:
     source: str
     target_id: int
     target_name: str
+    target_subtype: int | None = None
 
     def as_dict(self) -> dict[str, str | int]:
         """Return the config-entry representation of the binding."""
-        return {
+        stored: dict[str, str | int] = {
             CONF_EXPORT_KIND: self.kind,
             CONF_EXPORT_SOURCE: self.source,
             CONF_EXPORT_TARGET_ID: self.target_id,
             CONF_EXPORT_TARGET_NAME: self.target_name,
         }
+        if self.target_subtype is not None:
+            stored[CONF_EXPORT_TARGET_SUBTYPE] = self.target_subtype
+        return stored
 
 
 def export_bindings(options: Mapping[str, Any]) -> tuple[ZontExportBinding, ...]:
@@ -88,8 +101,8 @@ def export_command(kind: ZontExportKind, value: ZontExportValue) -> str:
     """Return the confirmed ZONT command for one typed export value."""
     if kind is ZontExportKind.TEMPERATURE and type(value) is float:
         return export_temperature_command(value)
-    if kind is ZontExportKind.OPENING and type(value) is bool:
-        return export_opening_command(value)
+    if kind is ZontExportKind.BINARY and type(value) is bool:
+        return export_binary_command(value)
     raise ValueError("Export value does not match its kind")
 
 
@@ -98,29 +111,39 @@ def export_temperature_command(value: float) -> str:
     return f"1 {value:.1f}"
 
 
-def export_opening_command(is_open: bool) -> str:
-    """Return the confirmed virtual normally-closed input command."""
-    value = 20 if is_open else 0
+def export_binary_command(is_on: bool) -> str:
+    """Return the confirmed virtual discrete-input command."""
+    value = 20 if is_on else 0
     return f"0 {value} {EXPORT_BINARY_TIMEOUT}"
 
 
 def export_target_protocol_identity(
     kind: ZontExportKind,
+    target_subtype: int | None = None,
 ) -> tuple[int, int | None]:
     """Return the protocol type and optional subtype for an export kind."""
     if kind is ZontExportKind.TEMPERATURE:
         return OBJECT_TYPE_DIGITAL_TEMPERATURE_SENSOR, None
-    return OBJECT_TYPE_ANALOG_INPUT, ANALOG_INPUT_SUBTYPE_DISCRETE_NC
+    if target_subtype not in BINARY_EXPORT_SUBTYPES:
+        raise ValueError("Binary export subtype must be 19 or 20")
+    return OBJECT_TYPE_ANALOG_INPUT, target_subtype
 
 
 def export_target_matches(
     kind: ZontExportKind,
     response: Mapping[str, Any],
+    target_subtype: int | None = None,
 ) -> bool:
     """Return whether a state response identifies a compatible target."""
     if response.get("failed"):
         return False
-    object_type, object_subtype = export_target_protocol_identity(kind)
+    try:
+        object_type, object_subtype = export_target_protocol_identity(
+            kind,
+            target_subtype,
+        )
+    except ValueError:
+        return False
     response_type = response.get("type")
     if type(response_type) is not int or response_type != object_type:
         return False
@@ -144,6 +167,7 @@ def _binding_from_mapping(
     source = item.get(CONF_EXPORT_SOURCE)
     target_id = item.get(CONF_EXPORT_TARGET_ID)
     target_name = item.get(CONF_EXPORT_TARGET_NAME)
+    target_subtype = item.get(CONF_EXPORT_TARGET_SUBTYPE)
     if (
         not isinstance(source, str)
         or not source.strip()
@@ -153,9 +177,18 @@ def _binding_from_mapping(
         or not target_name.strip()
     ):
         return None
+    if kind is ZontExportKind.BINARY:
+        if (
+            type(target_subtype) is not int
+            or target_subtype not in BINARY_EXPORT_SUBTYPES
+        ):
+            return None
+    elif target_subtype is not None:
+        return None
     return ZontExportBinding(
         kind,
         source.strip(),
         target_id,
         target_name.strip(),
+        target_subtype,
     )

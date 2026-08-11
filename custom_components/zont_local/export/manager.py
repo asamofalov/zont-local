@@ -346,7 +346,11 @@ class ZontExportManager:
         except ZontProtocolError:
             self._set_issue(binding, "export_target_invalid")
             return False
-        if not export_target_matches(binding.kind, response):
+        if not export_target_matches(
+            binding.kind,
+            response,
+            binding.target_subtype,
+        ):
             self._set_issue(binding, "export_target_invalid")
             return False
         self._validated_targets.add(binding.target_id)

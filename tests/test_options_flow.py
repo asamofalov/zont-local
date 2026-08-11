@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import voluptuous as vol
 from custom_components.zont_local.const import (
     CONF_AUTO_IMPORT_NEW_OBJECTS,
     CONF_AUTO_TITLE,
@@ -15,6 +16,7 @@ from custom_components.zont_local.const import (
     CONF_EXPORT_SOURCE,
     CONF_EXPORT_TARGET_ID,
     CONF_EXPORT_TARGET_NAME,
+    CONF_EXPORT_TARGET_SUBTYPE,
     CONF_EXPORTS,
     CONF_HEATING_OFF_MODE_ID,
     CONF_IMPORTED_OBJECT_IDS,
@@ -24,6 +26,7 @@ from custom_components.zont_local.const import (
     MIN_SCAN_INTERVAL,
 )
 from custom_components.zont_local.data import ZontControllerData, ZontData
+from custom_components.zont_local.export import ZontExportKind
 from custom_components.zont_local.flows import discovery as zont_flow_discovery
 from custom_components.zont_local.flows import export as zont_export_flow
 from custom_components.zont_local.flows import options as zont_options_flow
@@ -46,7 +49,6 @@ from custom_components.zont_local.protocol.objects import (
 )
 from custom_components.zont_local.runtime import ZontRuntimeData
 from homeassistant import data_entry_flow
-from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.config_entries import ConfigEntryState, ConfigFlowResult
 from homeassistant.const import (
@@ -474,60 +476,79 @@ async def test_options_flow_creates_named_temperature_sensor(
     coordinator.async_request_refresh.assert_awaited_once()
 
 
-async def test_options_flow_creates_named_opening_sensor(
+async def test_options_flow_creates_named_binary_sensor(
     hass: HomeAssistant,
 ) -> None:
     entry, client, coordinator = _loaded_export_entry(hass, objects={})
     hass.states.async_set(
-        "binary_sensor.test_door",
+        "binary_sensor.test_motion",
         STATE_OFF,
-        {ATTR_DEVICE_CLASS: BinarySensorDeviceClass.DOOR},
+        {ATTR_DEVICE_CLASS: "motion"},
     )
     client.async_send_named_command.return_value = {"id": 4116, "cmdres": 0}
     client.async_get_object_state.return_value = {
         "id": 4116,
         "type": 0,
-        "stype": 20,
-        "name": "HA - Тестовая дверь",
-        "trig": 0,
+        "stype": 19,
+        "name": "HA - Тест движения",
+        "trig": 1,
     }
 
     result = await _open_export_options(hass, entry, "export_create_source")
     result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"entity_id": "binary_sensor.test_door"}
+        result["flow_id"], {"entity_id": "binary_sensor.test_motion"}
     )
     result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"name": "HA - Тестовая дверь"}
+        result["flow_id"],
+        {"name": "HA - Тест движения", "target_subtype": "19"},
     )
 
     assert result["type"] is data_entry_flow.FlowResultType.CREATE_ENTRY
     assert entry.options[CONF_EXPORTS] == [
         {
-            CONF_EXPORT_KIND: "opening",
-            CONF_EXPORT_SOURCE: "binary_sensor.test_door",
+            CONF_EXPORT_KIND: "binary",
+            CONF_EXPORT_SOURCE: "binary_sensor.test_motion",
             CONF_EXPORT_TARGET_ID: 4116,
-            CONF_EXPORT_TARGET_NAME: "HA - Тестовая дверь",
+            CONF_EXPORT_TARGET_NAME: "HA - Тест движения",
+            CONF_EXPORT_TARGET_SUBTYPE: 19,
         }
     ]
     assert entry.options[CONF_EXCLUDED_OBJECT_IDS] == [4116]
     client.async_send_named_command.assert_awaited_once_with(
-        "HA - Тестовая дверь",
+        "HA - Тест движения",
         0,
         "0 0 180",
-        object_subtype=20,
+        object_subtype=19,
     )
     client.async_get_object_state.assert_awaited_once_with(4116)
     coordinator.async_request_refresh.assert_awaited_once()
 
 
-async def test_options_flow_links_existing_opening_sensor(
+async def test_binary_export_creation_requires_explicit_contact_type(
+    hass: HomeAssistant,
+) -> None:
+    entry, _, _ = _loaded_export_entry(hass, objects={})
+    hass.states.async_set("binary_sensor.generic", STATE_OFF)
+
+    result = await _open_export_options(hass, entry, "export_create_source")
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"entity_id": "binary_sensor.generic"}
+    )
+
+    fields = {marker.schema: marker for marker in result["data_schema"].schema}
+    subtype = fields["target_subtype"]
+    assert isinstance(subtype, vol.Required)
+    assert subtype.default is vol.UNDEFINED
+
+
+async def test_options_flow_links_existing_binary_sensor(
     hass: HomeAssistant,
 ) -> None:
     target = ZontAnalogInputData(
         4116,
         0,
         "Дверь кабинета",
-        subtype=20,
+        subtype=19,
         value=0,
         triggered=False,
     )
@@ -536,21 +557,21 @@ async def test_options_flow_links_existing_opening_sensor(
         objects={target.object_id: target},
     )
     hass.states.async_set(
-        "binary_sensor.office_window",
+        "binary_sensor.office_connected",
         STATE_ON,
-        {ATTR_DEVICE_CLASS: BinarySensorDeviceClass.WINDOW},
+        {ATTR_DEVICE_CLASS: "connectivity"},
     )
     client.async_get_object_state.return_value = {
         "id": target.object_id,
         "type": 0,
-        "stype": 20,
+        "stype": 19,
         "name": target.name,
     }
     client.async_send_command.return_value = {"id": target.object_id, "cmdres": 0}
 
     result = await _open_export_options(hass, entry, "export_link")
     result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"entity_id": "binary_sensor.office_window"}
+        result["flow_id"], {"entity_id": "binary_sensor.office_connected"}
     )
     assert result["step_id"] == "export_link_target"
     result = await hass.config_entries.options.async_configure(
@@ -560,10 +581,141 @@ async def test_options_flow_links_existing_opening_sensor(
     result = await hass.config_entries.options.async_configure(result["flow_id"], {})
 
     assert result["type"] is data_entry_flow.FlowResultType.CREATE_ENTRY
-    assert entry.options[CONF_EXPORTS][0][CONF_EXPORT_KIND] == "opening"
+    assert entry.options[CONF_EXPORTS][0][CONF_EXPORT_KIND] == "binary"
+    assert entry.options[CONF_EXPORTS][0][CONF_EXPORT_TARGET_SUBTYPE] == 19
     client.async_get_object_state.assert_awaited_once_with(4116)
     client.async_send_command.assert_awaited_once_with(4116, "0 20 180")
     coordinator.async_request_refresh.assert_awaited_once()
+
+
+async def test_options_flow_rebinds_binary_export_and_updates_subtype(
+    hass: HomeAssistant,
+) -> None:
+    current = ZontAnalogInputData(4116, 0, "Дверь НЗ", subtype=20)
+    replacement = ZontAnalogInputData(4119, 0, "Дверь НР", subtype=19)
+    options = {
+        CONF_IMPORTED_OBJECT_IDS: [],
+        CONF_EXCLUDED_OBJECT_IDS: [4116],
+        CONF_AUTO_IMPORT_NEW_OBJECTS: True,
+        CONF_EXPORTS: [
+            {
+                CONF_EXPORT_KIND: "binary",
+                CONF_EXPORT_SOURCE: "binary_sensor.office_door",
+                CONF_EXPORT_TARGET_ID: 4116,
+                CONF_EXPORT_TARGET_NAME: current.name,
+                CONF_EXPORT_TARGET_SUBTYPE: 20,
+            }
+        ],
+    }
+    entry, client, coordinator = _loaded_export_entry(
+        hass,
+        objects={current.object_id: current, replacement.object_id: replacement},
+        options=options,
+    )
+    hass.states.async_set("binary_sensor.office_door", STATE_ON)
+    client.async_get_object_state.return_value = {
+        "id": replacement.object_id,
+        "type": 0,
+        "stype": 19,
+        "name": replacement.name,
+    }
+    client.async_send_command.return_value = {
+        "id": replacement.object_id,
+        "cmdres": 0,
+    }
+
+    result = await _open_export_options(hass, entry, "export_manage")
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"binding_id": "4116"}
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "export_rebind"}
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"target_id": "4119"}
+    )
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {})
+
+    assert result["type"] is data_entry_flow.FlowResultType.CREATE_ENTRY
+    assert entry.options[CONF_EXPORTS] == [
+        {
+            CONF_EXPORT_KIND: "binary",
+            CONF_EXPORT_SOURCE: "binary_sensor.office_door",
+            CONF_EXPORT_TARGET_ID: 4119,
+            CONF_EXPORT_TARGET_NAME: replacement.name,
+            CONF_EXPORT_TARGET_SUBTYPE: 19,
+        }
+    ]
+    assert entry.options[CONF_EXCLUDED_OBJECT_IDS] == [4116, 4119]
+    client.async_send_command.assert_awaited_once_with(4119, "0 20 180")
+    coordinator.async_request_refresh.assert_awaited_once()
+
+
+async def test_options_flow_changes_binary_source_and_preserves_subtype(
+    hass: HomeAssistant,
+) -> None:
+    target = ZontAnalogInputData(4119, 0, "Вход НР", subtype=19)
+    options = {
+        CONF_IMPORTED_OBJECT_IDS: [],
+        CONF_EXCLUDED_OBJECT_IDS: [4119],
+        CONF_AUTO_IMPORT_NEW_OBJECTS: True,
+        CONF_EXPORTS: [
+            {
+                CONF_EXPORT_KIND: "binary",
+                CONF_EXPORT_SOURCE: "binary_sensor.old_source",
+                CONF_EXPORT_TARGET_ID: 4119,
+                CONF_EXPORT_TARGET_NAME: target.name,
+                CONF_EXPORT_TARGET_SUBTYPE: 19,
+            }
+        ],
+    }
+    entry, client, _ = _loaded_export_entry(
+        hass,
+        objects={target.object_id: target},
+        options=options,
+    )
+    hass.states.async_set("binary_sensor.old_source", STATE_OFF)
+    hass.states.async_set("binary_sensor.new_source", STATE_ON)
+    client.async_get_object_state.return_value = {
+        "id": target.object_id,
+        "type": 0,
+        "stype": 19,
+        "name": target.name,
+    }
+    client.async_send_command.return_value = {"id": target.object_id, "cmdres": 0}
+
+    result = await _open_export_options(hass, entry, "export_manage")
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"binding_id": "4119"}
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "export_change_source"}
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"entity_id": "binary_sensor.new_source"}
+    )
+
+    assert result["type"] is data_entry_flow.FlowResultType.CREATE_ENTRY
+    binding = entry.options[CONF_EXPORTS][0]
+    assert binding[CONF_EXPORT_SOURCE] == "binary_sensor.new_source"
+    assert binding[CONF_EXPORT_TARGET_SUBTYPE] == 19
+    client.async_send_command.assert_awaited_once_with(4119, "0 20 180")
+
+
+def test_available_binary_targets_include_only_confirmed_subtypes() -> None:
+    objects = {
+        4118: ZontAnalogInputData(4118, 0, "Другой вход", subtype=3),
+        4119: ZontAnalogInputData(4119, 0, "Вход НР", subtype=19),
+        4120: ZontAnalogInputData(4120, 0, "Вход НЗ", subtype=20),
+    }
+
+    targets = zont_export_flow._available_targets(
+        objects,
+        (),
+        ZontExportKind.BINARY,
+    )
+
+    assert set(targets) == {4119, 4120}
 
 
 def test_removing_export_keeps_old_target_excluded() -> None:

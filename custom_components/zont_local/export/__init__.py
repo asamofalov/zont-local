@@ -2,22 +2,22 @@
 
 from .manager import ZontExportManager
 from .model import (
+    BINARY_EXPORT_SUBTYPES,
     ZontExportBinding,
     ZontExportKind,
     command_response_id,
+    export_binary_command,
     export_bindings,
     export_command,
-    export_opening_command,
     export_target_ids,
     export_target_matches,
     export_target_protocol_identity,
     export_temperature_command,
 )
 from .source import (
-    OPENING_DEVICE_CLASSES,
     ZontExportSourceError,
     ZontExportSourceUnavailable,
-    export_opening_from_state,
+    export_binary_from_state,
     export_source_reference,
     export_temperature_from_state,
     export_value_from_state,
@@ -26,7 +26,7 @@ from .source import (
 )
 
 __all__ = (
-    "OPENING_DEVICE_CLASSES",
+    "BINARY_EXPORT_SUBTYPES",
     "ZontExportBinding",
     "ZontExportKind",
     "ZontExportManager",
@@ -35,8 +35,8 @@ __all__ = (
     "command_response_id",
     "export_bindings",
     "export_command",
-    "export_opening_command",
-    "export_opening_from_state",
+    "export_binary_command",
+    "export_binary_from_state",
     "export_source_reference",
     "export_target_ids",
     "export_target_matches",
