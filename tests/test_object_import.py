@@ -6,11 +6,12 @@ import pytest
 from custom_components.zont_local.const import (
     CONF_AUTO_IMPORT_NEW_OBJECTS,
     CONF_EXCLUDED_OBJECT_IDS,
+    CONF_EXPORT_KIND,
     CONF_EXPORT_SOURCE,
     CONF_EXPORT_TARGET_ID,
     CONF_EXPORT_TARGET_NAME,
+    CONF_EXPORTS,
     CONF_IMPORTED_OBJECT_IDS,
-    CONF_TEMPERATURE_EXPORTS,
 )
 from custom_components.zont_local.object_import import (
     importable_object_descriptor,
@@ -113,8 +114,9 @@ def test_export_target_is_never_imported_as_a_zont_device() -> None:
         CONF_IMPORTED_OBJECT_IDS: [4110],
         CONF_EXCLUDED_OBJECT_IDS: [],
         CONF_AUTO_IMPORT_NEW_OBJECTS: True,
-        CONF_TEMPERATURE_EXPORTS: [
+        CONF_EXPORTS: [
             {
+                CONF_EXPORT_KIND: "temperature",
                 CONF_EXPORT_SOURCE: "sensor.office_temperature",
                 CONF_EXPORT_TARGET_ID: 4110,
                 CONF_EXPORT_TARGET_NAME: "Т Кабинет",

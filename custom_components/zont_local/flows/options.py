@@ -20,6 +20,7 @@ from ..const import (
     CONF_IMPORTED_OBJECT_IDS,
     DHW_DEFAULT_ON_TEMPERATURE,
 )
+from ..export import ZontExportKind
 from ..object_import import (
     ZontImportableObject,
     importable_object_descriptors,
@@ -30,7 +31,7 @@ from ..protocol.objects import (
     ZontObject,
 )
 from .discovery import _async_get_entry_objects, _async_get_entry_off_modes
-from .export import _TemperatureExportOptionsFlowSteps
+from .export import _ExportOptionsFlowSteps
 from .schemas import (
     ERROR_INVALID_DEVICE_SELECTION,
     ERROR_INVALID_DHW_ON_TEMPERATURE,
@@ -50,7 +51,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class ZontLocalOptionsFlow(
-    _TemperatureExportOptionsFlowSteps,
+    _ExportOptionsFlowSteps,
     config_entries.OptionsFlow,
 ):
     """Manage changeable ZONT integration behavior."""
@@ -64,6 +65,7 @@ class ZontLocalOptionsFlow(
         self._objects_error: str | None = None
         self._objects_loaded = False
         self._export_source_entity_id: str | None = None
+        self._export_source_kind: ZontExportKind | None = None
         self._export_target_id: int | None = None
         self._managed_export_target_id: int | None = None
 

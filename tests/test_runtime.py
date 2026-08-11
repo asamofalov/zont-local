@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from custom_components.zont_local.coordinator import ZontDataUpdateCoordinator
-from custom_components.zont_local.export import ZontTemperatureExportManager
+from custom_components.zont_local.export import ZontExportManager
 from custom_components.zont_local.object_platform import ZontObjectEntityManager
 from custom_components.zont_local.protocol import ZontClient
 from custom_components.zont_local.runtime import ZontRuntimeData
@@ -24,7 +24,7 @@ async def test_shutdown_releases_resources_in_dependency_order() -> None:
     client.async_stop = AsyncMock(side_effect=lambda: calls.append("client"))
     coordinator = _shutdown_mock(ZontDataUpdateCoordinator, "coordinator", calls)
     export_manager = _shutdown_mock(
-        ZontTemperatureExportManager,
+        ZontExportManager,
         "export_manager",
         calls,
     )
@@ -51,7 +51,7 @@ async def test_shutdown_continues_after_an_earlier_resource_fails() -> None:
     client.async_stop = AsyncMock(side_effect=lambda: calls.append("client"))
     coordinator = _shutdown_mock(ZontDataUpdateCoordinator, "coordinator", calls)
     export_manager = _shutdown_mock(
-        ZontTemperatureExportManager,
+        ZontExportManager,
         "export_manager",
         calls,
     )

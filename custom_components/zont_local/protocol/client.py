@@ -399,6 +399,8 @@ class ZontClient:
         object_type: int,
         command: ZontCommand,
         response_timeout: float = COMMAND_TIMEOUT,
+        *,
+        object_subtype: int | None = None,
     ) -> dict[str, Any]:
         """Send one object command addressed by name and return its response."""
         if not isinstance(name, str):
@@ -408,6 +410,10 @@ class ZontClient:
             raise ValueError("Object name must be non-empty text")
         if type(object_type) is not int or not 0 <= object_type <= 255:
             raise ValueError("Object type must be an integer from 0 to 255")
+        if object_subtype is not None and (
+            type(object_subtype) is not int or not 0 <= object_subtype <= 255
+        ):
+            raise ValueError("Object subtype must be an integer from 0 to 255")
 
         async with self._named_command_lock:
             ws = self._connected_websocket()
@@ -416,13 +422,16 @@ class ZontClient:
             )
             self._pending_named_command = future
             try:
+                payload: dict[str, Any] = {
+                    "name": normalized_name,
+                    "type": object_type,
+                    "cmd": command,
+                }
+                if object_subtype is not None:
+                    payload["stype"] = object_subtype
                 return await self._async_send_and_wait(
                     ws,
-                    {
-                        "name": normalized_name,
-                        "type": object_type,
-                        "cmd": command,
-                    },
+                    payload,
                     future,
                     response_timeout,
                     ZontCommandTimeoutError(

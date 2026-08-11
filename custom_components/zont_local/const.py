@@ -12,7 +12,8 @@ CONF_DHW_ON_TEMPERATURE = "dhw_on_temperature"
 CONF_IMPORTED_OBJECT_IDS = "imported_object_ids"
 CONF_EXCLUDED_OBJECT_IDS = "excluded_object_ids"
 CONF_AUTO_IMPORT_NEW_OBJECTS = "auto_import_new_objects"
-CONF_TEMPERATURE_EXPORTS = "temperature_exports"
+CONF_EXPORTS = "exports"
+CONF_EXPORT_KIND = "kind"
 CONF_EXPORT_SOURCE = "source"
 CONF_EXPORT_TARGET_ID = "target_id"
 CONF_EXPORT_TARGET_NAME = "target_name"
@@ -26,6 +27,7 @@ MIN_SCAN_INTERVAL = 10
 MAX_SCAN_INTERVAL = 120
 
 EXPORT_HEARTBEAT_INTERVAL = 120
+EXPORT_BINARY_TIMEOUT = 180
 
 SERVICE_SEND_COMMAND = "send_command"
 SERVICE_SEND_BULK = "send_bulk"

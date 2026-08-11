@@ -21,7 +21,7 @@ from .device import (
     async_cleanup_excluded_object_devices,
     async_sync_object_devices,
 )
-from .export import ZontTemperatureExportManager
+from .export import ZontExportManager
 from .presentation import controller_device_name
 from .protocol import (
     ZontAuthenticationError,
@@ -117,7 +117,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ZontConfigEntry) -> bool
             info,
         ),
     )
-    export_manager = ZontTemperatureExportManager(hass, entry, client)
+    export_manager = ZontExportManager(hass, entry, client)
     entry.runtime_data = ZontRuntimeData(
         client=client,
         coordinator=coordinator,

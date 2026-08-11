@@ -1,4 +1,4 @@
-"""Export Home Assistant temperature entities to ZONT objects."""
+"""Synchronize configured Home Assistant entities with ZONT objects."""
 
 from __future__ import annotations
 
@@ -33,12 +33,12 @@ from ..protocol import (
     ZontProtocolError,
     ZontRequestTimeoutError,
 )
-from ..protocol.objects import OBJECT_TYPE_DIGITAL_TEMPERATURE_SENSOR
 from .model import (
-    ZontTemperatureExportBinding,
+    ZontExportBinding,
     command_response_id,
-    export_temperature_command,
-    temperature_export_bindings,
+    export_bindings,
+    export_command,
+    export_target_matches,
 )
 from .source import (
     ZontExportSourceError,
@@ -48,8 +48,8 @@ from .source import (
 )
 
 
-class ZontTemperatureExportManager:
-    """Synchronize configured Home Assistant temperatures with ZONT."""
+class ZontExportManager:
+    """Synchronize configured Home Assistant entities with ZONT."""
 
     def __init__(
         self,
@@ -61,7 +61,7 @@ class ZontTemperatureExportManager:
         self.hass = hass
         self._entry = entry
         self._client = client
-        self._bindings = temperature_export_bindings(entry.options)
+        self._bindings = export_bindings(entry.options)
         self._resolved_sources: dict[int, str] = {}
         self._validated_targets: set[int] = set()
         self._active_targets: set[int] = set()
@@ -101,7 +101,7 @@ class ZontTemperatureExportManager:
         if self._client.is_connected:
             self._create_task(
                 self._async_sync_all(validate_targets=True),
-                "initial temperature export",
+                "initial export",
             )
 
     @callback
@@ -126,7 +126,7 @@ class ZontTemperatureExportManager:
                     self.hass,
                     self._async_heartbeat,
                     timedelta(seconds=EXPORT_HEARTBEAT_INTERVAL),
-                    name=f"{DOMAIN} temperature export heartbeat",
+                    name=f"{DOMAIN} export heartbeat",
                 ),
             )
         )
@@ -145,7 +145,7 @@ class ZontTemperatureExportManager:
 
     async def async_reconfigure(self, options: Mapping[str, Any]) -> None:
         """Apply changed export bindings without replacing the shared client."""
-        bindings = temperature_export_bindings(options)
+        bindings = export_bindings(options)
         if bindings == self._bindings:
             return
 
@@ -162,11 +162,13 @@ class ZontTemperatureExportManager:
             self._active_targets.difference_update(changed_targets)
             self._error_targets.difference_update(changed_targets)
             for target_id in changed_targets:
-                ir.async_delete_issue(
-                    self.hass,
-                    DOMAIN,
-                    self._issue_id(target_id),
-                )
+                for binding in (previous.get(target_id), updated.get(target_id)):
+                    if binding is not None:
+                        ir.async_delete_issue(
+                            self.hass,
+                            DOMAIN,
+                            self._issue_id(binding),
+                        )
 
         if self._started and self._bindings:
             self._async_start_subscriptions()
@@ -176,7 +178,7 @@ class ZontTemperatureExportManager:
         if self._started and self._bindings and self._client.is_connected:
             self._create_task(
                 self._async_sync_all(validate_targets=True),
-                "reconfigured temperature export",
+                "reconfigured export",
             )
 
     async def async_shutdown(self) -> None:
@@ -224,7 +226,7 @@ class ZontTemperatureExportManager:
             if self._resolved_sources.get(binding.target_id) == entity_id:
                 self._create_task(
                     self._async_sync_binding(binding, validate_target=False),
-                    f"temperature export {binding.target_id}",
+                    f"export {binding.target_id}",
                 )
 
     @callback
@@ -235,7 +237,7 @@ class ZontTemperatureExportManager:
         if previous != self._resolved_sources and self._client.is_connected:
             self._create_task(
                 self._async_sync_all(validate_targets=False),
-                "renamed temperature export source",
+                "renamed export source",
             )
 
     @callback
@@ -247,7 +249,7 @@ class ZontTemperatureExportManager:
             return
         self._create_task(
             self._async_sync_all(validate_targets=True),
-            "reconnected temperature export",
+            "reconnected export",
         )
 
     async def _async_heartbeat(self, _now: Any) -> None:
@@ -268,7 +270,7 @@ class ZontTemperatureExportManager:
 
     async def _async_sync_binding(
         self,
-        binding: ZontTemperatureExportBinding,
+        binding: ZontExportBinding,
         *,
         validate_target: bool,
     ) -> None:
@@ -285,7 +287,7 @@ class ZontTemperatureExportManager:
 
     async def _async_sync_binding_locked(
         self,
-        binding: ZontTemperatureExportBinding,
+        binding: ZontExportBinding,
         *,
         validate_target: bool,
     ) -> None:
@@ -300,10 +302,11 @@ class ZontTemperatureExportManager:
             self._set_issue(binding, "export_source_missing")
             return
         try:
-            value = validate_export_source(
+            _, value = validate_export_source(
                 self.hass,
                 entity_id,
                 self._entry.entry_id,
+                binding.kind,
             )
         except ZontExportSourceUnavailable:
             self._active_targets.discard(binding.target_id)
@@ -315,7 +318,7 @@ class ZontTemperatureExportManager:
         try:
             response = await self._client.async_send_command(
                 binding.target_id,
-                export_temperature_command(value),
+                export_command(binding.kind, value),
             )
         except (ZontConnectionError, ZontRequestTimeoutError):
             self._active_targets.discard(binding.target_id)
@@ -333,10 +336,8 @@ class ZontTemperatureExportManager:
             return
         self._mark_healthy(binding)
 
-    async def _async_validate_target(
-        self, binding: ZontTemperatureExportBinding
-    ) -> bool:
-        """Confirm that a target ID still identifies a type=1 object."""
+    async def _async_validate_target(self, binding: ZontExportBinding) -> bool:
+        """Confirm that a target ID still matches its export kind."""
         try:
             response = await self._client.async_get_object_state(binding.target_id)
         except (ZontConnectionError, ZontRequestTimeoutError):
@@ -345,32 +346,27 @@ class ZontTemperatureExportManager:
         except ZontProtocolError:
             self._set_issue(binding, "export_target_invalid")
             return False
-        object_type = response.get("type")
-        if (
-            response.get("failed")
-            or type(object_type) is not int
-            or object_type != OBJECT_TYPE_DIGITAL_TEMPERATURE_SENSOR
-        ):
+        if not export_target_matches(binding.kind, response):
             self._set_issue(binding, "export_target_invalid")
             return False
         self._validated_targets.add(binding.target_id)
         return True
 
     @callback
-    def _mark_healthy(self, binding: ZontTemperatureExportBinding) -> None:
+    def _mark_healthy(self, binding: ZontExportBinding) -> None:
         """Record a successful write and clear a previous structural issue."""
         self._active_targets.add(binding.target_id)
         self._error_targets.discard(binding.target_id)
         ir.async_delete_issue(
             self.hass,
             DOMAIN,
-            self._issue_id(binding.target_id),
+            self._issue_id(binding),
         )
 
     @callback
     def _set_issue(
         self,
-        binding: ZontTemperatureExportBinding,
+        binding: ZontExportBinding,
         translation_key: str,
     ) -> None:
         """Pause one broken binding and expose a single repair issue."""
@@ -380,7 +376,7 @@ class ZontTemperatureExportManager:
         ir.async_create_issue(
             self.hass,
             DOMAIN,
-            self._issue_id(binding.target_id),
+            self._issue_id(binding),
             is_fixable=False,
             is_persistent=False,
             severity=ir.IssueSeverity.ERROR,
@@ -392,9 +388,9 @@ class ZontTemperatureExportManager:
         )
 
     @staticmethod
-    def _issue_id(target_id: int) -> str:
+    def _issue_id(binding: ZontExportBinding) -> str:
         """Return one stable Repairs identifier per export target."""
-        return f"temperature_export_{target_id}"
+        return f"{binding.kind.value}_export_{binding.target_id}"
 
     @callback
     def _create_task(self, coroutine: Any, name: str) -> None:

@@ -17,8 +17,8 @@ from custom_components.zont_local.const import (
     CONF_AUTO_TITLE,
     CONF_CONTROLLER,
     CONF_EXCLUDED_OBJECT_IDS,
+    CONF_EXPORTS,
     CONF_IMPORTED_OBJECT_IDS,
-    CONF_TEMPERATURE_EXPORTS,
     CONFIG_ENTRY_VERSION,
     DOMAIN,
     connection_signal,
@@ -1567,7 +1567,7 @@ async def test_options_update_is_applied_without_reload(
         options={},
         connection_settings=("192.0.2.10", "user", "password"),
     )
-    updated_options = {CONF_TEMPERATURE_EXPORTS: []}
+    updated_options = {CONF_EXPORTS: []}
     hass.config_entries.async_update_entry(entry, options=updated_options)
 
     with patch.object(

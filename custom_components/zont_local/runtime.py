@@ -12,7 +12,7 @@ from .protocol import ZontClient
 if TYPE_CHECKING:
     from .connection import ZontConnectionManager
     from .coordinator import ZontDataUpdateCoordinator
-    from .export import ZontTemperatureExportManager
+    from .export import ZontExportManager
 
 
 @dataclass(slots=True)
@@ -21,7 +21,7 @@ class ZontRuntimeData:
 
     client: ZontClient
     coordinator: ZontDataUpdateCoordinator
-    export_manager: ZontTemperatureExportManager | None = None
+    export_manager: ZontExportManager | None = None
     object_entities: ZontObjectEntityManager = field(
         default_factory=ZontObjectEntityManager
     )

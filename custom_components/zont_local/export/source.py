@@ -1,13 +1,16 @@
-"""Resolve and validate Home Assistant temperature export sources."""
+"""Resolve and validate Home Assistant export sources."""
 
 from __future__ import annotations
 
 from math import isfinite
 
+from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.const import (
     ATTR_DEVICE_CLASS,
     ATTR_UNIT_OF_MEASUREMENT,
+    STATE_OFF,
+    STATE_ON,
     STATE_UNAVAILABLE,
     STATE_UNKNOWN,
     UnitOfTemperature,
@@ -18,6 +21,16 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.util.unit_conversion import TemperatureConverter
 
 from ..const import DOMAIN
+from .model import ZontExportKind, ZontExportValue
+
+OPENING_DEVICE_CLASSES = frozenset(
+    {
+        BinarySensorDeviceClass.DOOR,
+        BinarySensorDeviceClass.GARAGE_DOOR,
+        BinarySensorDeviceClass.OPENING,
+        BinarySensorDeviceClass.WINDOW,
+    }
+)
 
 
 class ZontExportSourceError(ValueError):
@@ -68,13 +81,48 @@ def export_temperature_from_state(state: State) -> float:
     return 0.0 if rounded == 0 else rounded
 
 
+def export_opening_from_state(state: State) -> bool:
+    """Validate one opening binary sensor and return whether it is open."""
+    if (
+        state.domain != "binary_sensor"
+        or state.attributes.get(ATTR_DEVICE_CLASS) not in OPENING_DEVICE_CLASSES
+    ):
+        raise ZontExportSourceError("Source is not an opening binary sensor")
+    if state.state in (STATE_UNKNOWN, STATE_UNAVAILABLE):
+        raise ZontExportSourceUnavailable("Source has no current opening state")
+    if state.state == STATE_ON:
+        return True
+    if state.state == STATE_OFF:
+        return False
+    raise ZontExportSourceError("Source has an invalid binary state")
+
+
+def export_value_from_state(
+    state: State,
+    expected_kind: ZontExportKind | None = None,
+) -> tuple[ZontExportKind, ZontExportValue]:
+    """Infer and validate an export kind and value from one entity state."""
+    if state.domain == "sensor":
+        kind = ZontExportKind.TEMPERATURE
+        value: ZontExportValue = export_temperature_from_state(state)
+    elif state.domain == "binary_sensor":
+        kind = ZontExportKind.OPENING
+        value = export_opening_from_state(state)
+    else:
+        raise ZontExportSourceError("Source domain is not supported")
+    if expected_kind is not None and kind is not expected_kind:
+        raise ZontExportSourceError("Source kind does not match the binding")
+    return kind, value
+
+
 @callback
 def validate_export_source(
     hass: HomeAssistant,
     entity_id: str,
     config_entry_id: str,
-) -> float:
-    """Validate a selectable source and return its Celsius temperature."""
+    expected_kind: ZontExportKind | None = None,
+) -> tuple[ZontExportKind, ZontExportValue]:
+    """Validate a selectable source and return its inferred kind and value."""
     registry_entry = er.async_get(hass).async_get(entity_id)
     if registry_entry is not None and (
         registry_entry.platform == DOMAIN
@@ -84,4 +132,4 @@ def validate_export_source(
     state = hass.states.get(entity_id)
     if state is None:
         raise ZontExportSourceError("Source entity does not exist")
-    return export_temperature_from_state(state)
+    return export_value_from_state(state, expected_kind)

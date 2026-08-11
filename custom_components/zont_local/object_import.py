@@ -11,7 +11,7 @@ from .const import (
     CONF_EXCLUDED_OBJECT_IDS,
     CONF_IMPORTED_OBJECT_IDS,
 )
-from .export import temperature_export_target_ids
+from .export import export_target_ids
 from .object_descriptions import (
     SUPPORTED_RADIO_SENSOR_SUBTYPES,
     analog_input_model,
@@ -128,7 +128,7 @@ def object_import_configuration(
     options: Mapping[str, Any],
 ) -> ZontObjectImportConfiguration:
     """Normalize stored options, preserving safe legacy import-all behavior."""
-    exported_ids = temperature_export_target_ids(options)
+    exported_ids = export_target_ids(options)
     if (
         CONF_IMPORTED_OBJECT_IDS not in options
         and CONF_EXCLUDED_OBJECT_IDS not in options

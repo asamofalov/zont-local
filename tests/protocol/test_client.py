@@ -588,6 +588,43 @@ async def test_named_command_is_serialized_and_correlated(
 
 
 @pytest.mark.asyncio
+async def test_named_command_includes_optional_object_subtype(
+    fake_hass: Any, auth_error_callback: Any
+) -> None:
+    ws = auth_socket()
+    client = make_client(
+        fake_hass,
+        FakeSession([ws]),  # type: ignore[arg-type]
+        "ws://controller/ws",
+        ZontCredentials("user", "password"),
+        "entry",
+        "device",
+        auth_error_callback,
+    )
+    await async_start_client(client)
+
+    command_task = asyncio.create_task(
+        client.async_send_named_command(
+            "HA - Дверь",
+            0,
+            "0 0 180",
+            object_subtype=20,
+        )
+    )
+    await asyncio.sleep(0)
+
+    assert ws.sent[-1] == {
+        "name": "HA - Дверь",
+        "type": 0,
+        "stype": 20,
+        "cmd": "0 0 180",
+    }
+    client._handle_incoming('{"id":4116,"cmdres":0}')
+    assert await command_task == {"id": 4116, "cmdres": 0}
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
 async def test_addressed_response_does_not_complete_named_command(
     fake_hass: Any, auth_error_callback: Any
 ) -> None:
