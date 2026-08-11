@@ -12,6 +12,7 @@ OBJECT_TYPE_DIGITAL_TEMPERATURE_SENSOR = 1
 OBJECT_TYPE_SECURITY_ZONE = 2
 OBJECT_TYPE_DIGITAL_BUS_ADAPTER = 6
 OBJECT_TYPE_RADIO_SENSOR = 8
+OBJECT_TYPE_USER_ELEMENT = 10
 OBJECT_TYPE_RELAY = 14
 OBJECT_TYPE_MIXER = 15
 OBJECT_TYPE_HEATING_CIRCUIT = 16
@@ -19,12 +20,23 @@ OBJECT_TYPE_PUMP = 17
 OBJECT_TYPE_NTC_TEMPERATURE_SENSOR = 27
 ANALOG_INPUT_SUBTYPE_DISCRETE_NO = 19
 ANALOG_INPUT_SUBTYPE_DISCRETE_NC = 20
+USER_ELEMENT_SUBTYPE_STATUS = 0
+USER_ELEMENT_SUBTYPE_SIMPLE_BUTTON = 1
+USER_ELEMENT_SUBTYPE_COMPLEX_BUTTON = 2
+SUPPORTED_USER_ELEMENT_SUBTYPES = frozenset(
+    {
+        USER_ELEMENT_SUBTYPE_STATUS,
+        USER_ELEMENT_SUBTYPE_SIMPLE_BUTTON,
+        USER_ELEMENT_SUBTYPE_COMPLEX_BUTTON,
+    }
+)
 SUPPORTED_OBJECT_TYPES = (
     OBJECT_TYPE_ANALOG_INPUT,
     OBJECT_TYPE_DIGITAL_TEMPERATURE_SENSOR,
     OBJECT_TYPE_SECURITY_ZONE,
     OBJECT_TYPE_DIGITAL_BUS_ADAPTER,
     OBJECT_TYPE_RADIO_SENSOR,
+    OBJECT_TYPE_USER_ELEMENT,
     OBJECT_TYPE_HEATING_CIRCUIT,
     OBJECT_TYPE_PUMP,
     OBJECT_TYPE_NTC_TEMPERATURE_SENSOR,
@@ -128,6 +140,15 @@ class ZontSecurityZoneData(ZontObjectData):
 
 
 @dataclass(frozen=True, slots=True)
+class ZontUserElementData(ZontObjectData):
+    """Observed state of one user-configured web element."""
+
+    subtype: int = 0
+    raw_state: int | float | None = None
+    text: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ZontNtcTemperatureSensorData(ZontTemperatureSensorData):
     """Read-only state of an NTC temperature sensor."""
 
@@ -182,6 +203,7 @@ type ZontObject = (
     | ZontDigitalBusAdapterData
     | ZontDigitalTemperatureSensorData
     | ZontSecurityZoneData
+    | ZontUserElementData
     | ZontNtcTemperatureSensorData
     | ZontRadioSensorData
     | ZontHeatingCircuitData

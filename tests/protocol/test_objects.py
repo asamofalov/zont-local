@@ -23,6 +23,10 @@ from custom_components.zont_local.protocol.objects import (
     OBJECT_TYPE_RADIO_SENSOR,
     OBJECT_TYPE_RELAY,
     OBJECT_TYPE_SECURITY_ZONE,
+    OBJECT_TYPE_USER_ELEMENT,
+    USER_ELEMENT_SUBTYPE_COMPLEX_BUTTON,
+    USER_ELEMENT_SUBTYPE_SIMPLE_BUTTON,
+    USER_ELEMENT_SUBTYPE_STATUS,
     ZontAnalogInputData,
     ZontDigitalBusAdapterData,
     ZontDigitalBusState,
@@ -37,6 +41,7 @@ from custom_components.zont_local.protocol.objects import (
     ZontRadioSensorData,
     ZontRelayData,
     ZontSecurityZoneData,
+    ZontUserElementData,
     immutable_objects,
     parse_analog_input,
     parse_digital_bus_adapter,
@@ -48,6 +53,7 @@ from custom_components.zont_local.protocol.objects import (
     parse_radio_sensor,
     parse_relay,
     parse_security_zone,
+    parse_user_element,
     parse_zont_object,
     unavailable_object,
 )
@@ -246,6 +252,104 @@ def test_partial_security_zone_update_preserves_other_state() -> None:
     assert zone.available
     assert zone.armed is True
     assert zone.triggered is True
+
+
+@pytest.mark.parametrize(
+    ("subtype", "state", "text"),
+    [
+        (USER_ELEMENT_SUBTYPE_STATUS, 0, "Закрыто"),
+        (USER_ELEMENT_SUBTYPE_SIMPLE_BUTTON, 255, "Выполнить"),
+        (USER_ELEMENT_SUBTYPE_COMPLEX_BUTTON, 1, "Включено"),
+        (3, 12.5, "12,5"),
+    ],
+)
+def test_parse_complete_user_element(
+    subtype: int,
+    state: int | float,
+    text: str,
+) -> None:
+    element = parse_user_element(
+        {
+            "id": 10676,
+            "type": OBJECT_TYPE_USER_ELEMENT,
+            "stype": subtype,
+            "name": "Элемент управления",
+            "s": state,
+            "t": text,
+        }
+    )
+
+    assert element == ZontUserElementData(
+        object_id=10676,
+        object_type=10,
+        name="Элемент управления",
+        subtype=subtype,
+        raw_state=state,
+        text=text,
+    )
+    assert (
+        parse_zont_object(
+            {
+                "id": 10676,
+                "type": 10,
+                "stype": subtype,
+                "name": "Элемент управления",
+                "s": state,
+                "t": text,
+            }
+        )
+        == element
+    )
+
+
+def test_partial_user_element_push_preserves_identity_and_updates_text() -> None:
+    previous = ZontUserElementData(
+        10691,
+        10,
+        "Сложная кнопка",
+        subtype=USER_ELEMENT_SUBTYPE_COMPLEX_BUTTON,
+        raw_state=0,
+        text="Выключено",
+    )
+
+    element = parse_user_element(
+        {"id": 10691, "s": 1, "t": "Включено"},
+        previous,
+        partial=True,
+    )
+
+    assert element.available
+    assert element.name == "Сложная кнопка"
+    assert element.subtype == USER_ELEMENT_SUBTYPE_COMPLEX_BUTTON
+    assert element.raw_state == 1
+    assert element.text == "Включено"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"id": 10705, "type": 10, "stype": 0, "name": "Статус", "s": 2},
+        {"id": 10676, "type": 10, "stype": 1, "name": "Кнопка", "s": 1},
+        {"id": 10691, "type": 10, "stype": 2, "name": "Переключатель"},
+    ],
+)
+def test_invalid_complete_user_element_is_unavailable(
+    payload: dict[str, object],
+) -> None:
+    previous = ZontUserElementData(
+        int(payload["id"]),
+        10,
+        str(payload["name"]),
+        subtype=int(payload["stype"]),
+        raw_state=0 if payload["stype"] != 1 else 255,
+        text="Предыдущее состояние",
+    )
+
+    element = parse_user_element(payload, previous)
+
+    assert not element.available
+    assert element.raw_state == previous.raw_state
+    assert element.text == previous.text
 
 
 @pytest.mark.parametrize(

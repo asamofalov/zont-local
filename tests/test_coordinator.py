@@ -45,6 +45,7 @@ from custom_components.zont_local.protocol.mixer import (
 from custom_components.zont_local.protocol.objects import (
     OBJECT_TYPE_RELAY,
     OBJECT_TYPE_SECURITY_ZONE,
+    OBJECT_TYPE_USER_ELEMENT,
     ZontAnalogInputData,
     ZontDigitalBusAdapterData,
     ZontDigitalBusState,
@@ -58,6 +59,7 @@ from custom_components.zont_local.protocol.objects import (
     ZontRadioSensorData,
     ZontRelayData,
     ZontSecurityZoneData,
+    ZontUserElementData,
     immutable_objects,
 )
 from custom_components.zont_local.protocol.relay import (
@@ -76,17 +78,20 @@ class _ObjectIdsMock(AsyncMock):
 
     relay_ids: list[int]
     security_zone_ids: list[int]
+    user_element_ids: list[int]
 
     def __init__(self) -> None:
         """Initialize an object-ID mock with no relays."""
         super().__init__(return_value=[])
         self.relay_ids = []
         self.security_zone_ids = []
+        self.user_element_ids = []
 
     async def _execute_mock_call(self, *args: object, **kwargs: object) -> object:
         special_ids = {
             OBJECT_TYPE_RELAY: self.relay_ids,
             OBJECT_TYPE_SECURITY_ZONE: self.security_zone_ids,
+            OBJECT_TYPE_USER_ELEMENT: self.user_element_ids,
         }
         if args and args[0] in special_ids:
             side_effect = self.side_effect
@@ -261,6 +266,7 @@ async def test_refresh_builds_one_controller_snapshot(hass: HomeAssistant) -> No
         call(2),
         call(6),
         call(8),
+        call(10),
         call(16),
         call(17),
         call(27),
@@ -508,6 +514,66 @@ async def test_refresh_discovers_security_zone(hass: HomeAssistant) -> None:
     assert zone.available
 
 
+async def test_refresh_discovers_user_element(hass: HomeAssistant) -> None:
+    coordinator, client = _coordinator(hass)
+    client.async_send_system_command.side_effect = [
+        "#S224:1 0 1 0",
+        "#S6:123 0",
+    ]
+    client.async_get_object_ids.user_element_ids = [10691]
+    client.async_get_object_state.return_value = {
+        "id": 10691,
+        "type": 10,
+        "stype": 2,
+        "name": "Элемент управления 2",
+        "s": 1,
+        "t": "Включено",
+    }
+
+    await coordinator.async_refresh()
+
+    element = coordinator.data.objects[10691]
+    assert isinstance(element, ZontUserElementData)
+    assert element.raw_state == 1
+    assert element.text == "Включено"
+    assert element.available
+
+
+def test_push_updates_user_element_state_and_text(hass: HomeAssistant) -> None:
+    coordinator, _ = _coordinator(hass)
+    coordinator.data = ZontData(
+        controller=ZontControllerData(info=None),
+        objects=immutable_objects(
+            {
+                10691: ZontUserElementData(
+                    10691,
+                    10,
+                    "Режим",
+                    subtype=2,
+                    raw_state=0,
+                    text="Выключено",
+                )
+            }
+        ),
+    )
+
+    coordinator._async_message_received(
+        {
+            "id": 10691,
+            "type": 10,
+            "stype": 2,
+            "name": "Режим",
+            "s": 1,
+            "t": "Включено",
+        }
+    )
+
+    element = coordinator.data.objects[10691]
+    assert isinstance(element, ZontUserElementData)
+    assert element.raw_state == 1
+    assert element.text == "Включено"
+
+
 async def test_failed_object_becomes_unavailable_without_losing_values(
     hass: HomeAssistant,
 ) -> None:
@@ -655,6 +721,7 @@ async def test_refresh_discovers_temperature_sensor_and_adapter(
         call(2),
         call(6),
         call(8),
+        call(10),
         call(16),
         call(17),
         call(27),
@@ -755,6 +822,7 @@ async def test_refresh_discovers_analog_input_before_other_objects(
         call(2),
         call(6),
         call(8),
+        call(10),
         call(16),
         call(17),
         call(27),
@@ -884,6 +952,7 @@ async def test_refresh_discovers_radio_sensor(hass: HomeAssistant) -> None:
         call(2),
         call(6),
         call(8),
+        call(10),
         call(16),
         call(17),
         call(27),
@@ -1772,6 +1841,7 @@ async def test_refresh_discovers_ntc_temperature_sensor(
         call(2),
         call(6),
         call(8),
+        call(10),
         call(16),
         call(17),
         call(27),

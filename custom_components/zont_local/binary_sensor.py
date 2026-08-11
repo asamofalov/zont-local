@@ -27,9 +27,11 @@ from .entities.pump import ZontPumpRunningBinarySensor
 from .entities.radio import RADIO_TRIGGER_DEVICE_CLASSES, ZontRadioTriggeredBinarySensor
 from .entities.relay import ZontRelayFailedBinarySensor
 from .entities.security_zone import ZontSecurityZoneAlarmBinarySensor
+from .entities.user_element import ZontUserElementStatusBinarySensor
 from .object_import import object_import_configuration
 from .object_platform import ZontObjectEntityReconciler
 from .protocol.objects import (
+    USER_ELEMENT_SUBTYPE_STATUS,
     ZontAnalogInputData,
     ZontDigitalBusAdapterData,
     ZontHeatingCircuitData,
@@ -38,6 +40,7 @@ from .protocol.objects import (
     ZontRadioSensorData,
     ZontRelayData,
     ZontSecurityZoneData,
+    ZontUserElementData,
 )
 from .runtime import ZontRuntimeData
 
@@ -166,6 +169,17 @@ async def async_setup_entry(
                 identity = (obj.object_id, "security_zone_alarm")
                 factories[identity] = partial(
                     ZontSecurityZoneAlarmBinarySensor,
+                    entry,
+                    obj.object_id,
+                )
+                continue
+            if (
+                isinstance(obj, ZontUserElementData)
+                and obj.subtype == USER_ELEMENT_SUBTYPE_STATUS
+            ):
+                identity = (obj.object_id, "user_element_status")
+                factories[identity] = partial(
+                    ZontUserElementStatusBinarySensor,
                     entry,
                     obj.object_id,
                 )

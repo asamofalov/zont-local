@@ -17,8 +17,10 @@ from .object_descriptions import (
     analog_input_model,
     heating_circuit_model,
     radio_sensor_model,
+    user_element_model,
 )
 from .protocol.objects import (
+    SUPPORTED_USER_ELEMENT_SUBTYPES,
     ZontAnalogInputData,
     ZontDigitalBusAdapterData,
     ZontDigitalTemperatureSensorData,
@@ -30,6 +32,7 @@ from .protocol.objects import (
     ZontRadioSensorData,
     ZontRelayData,
     ZontSecurityZoneData,
+    ZontUserElementData,
 )
 
 
@@ -99,6 +102,11 @@ def importable_object_descriptor(obj: ZontObject) -> ZontImportableObject | None
         model = "Реле"
     elif isinstance(obj, ZontSecurityZoneData):
         model = "Охранная зона"
+    elif (
+        isinstance(obj, ZontUserElementData)
+        and obj.subtype in SUPPORTED_USER_ELEMENT_SUBTYPES
+    ):
+        model = user_element_model(obj.subtype)
     elif (
         isinstance(obj, ZontRadioSensorData)
         and obj.subtype in SUPPORTED_RADIO_SENSOR_SUBTYPES

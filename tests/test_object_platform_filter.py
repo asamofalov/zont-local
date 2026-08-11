@@ -10,6 +10,7 @@ from custom_components.zont_local.alarm_control_panel import (
     async_setup_entry as setup_alarm_control_panel,
 )
 from custom_components.zont_local.binary_sensor import async_setup_entry as setup_binary
+from custom_components.zont_local.button import async_setup_entry as setup_button
 from custom_components.zont_local.climate import async_setup_entry as setup_climate
 from custom_components.zont_local.const import (
     CONF_AUTO_IMPORT_NEW_OBJECTS,
@@ -24,6 +25,7 @@ from custom_components.zont_local.protocol.objects import (
     ZontPumpData,
     ZontRelayData,
     ZontSecurityZoneData,
+    ZontUserElementData,
     immutable_objects,
 )
 from custom_components.zont_local.runtime import ZontRuntimeData
@@ -59,6 +61,9 @@ type SetupPlatform = Callable[..., Awaitable[None]]
             ZontSecurityZoneData(1006, 2, "Периметр"),
             0,
         ),
+        (setup_binary, ZontUserElementData(1007, 10, "Статус", subtype=0), 1),
+        (setup_button, ZontUserElementData(1008, 10, "Кнопка", subtype=1), 1),
+        (setup_switch, ZontUserElementData(1009, 10, "Режим", subtype=2), 0),
     ],
 )
 async def test_excluded_object_is_not_added_by_platform(

@@ -11,9 +11,14 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .entities.relay import ZontRelaySwitch
+from .entities.user_element import ZontUserElementSwitch
 from .object_import import object_import_configuration
 from .object_platform import ZontObjectEntityReconciler
-from .protocol.objects import ZontRelayData
+from .protocol.objects import (
+    USER_ELEMENT_SUBTYPE_COMPLEX_BUTTON,
+    ZontRelayData,
+    ZontUserElementData,
+)
 from .runtime import ZontRuntimeData
 
 PARALLEL_UPDATES = 0
@@ -28,19 +33,27 @@ async def async_setup_entry(
 
     @callback
     def object_entity_factories() -> dict[int, Callable[[], SwitchEntity]]:
-        """Describe relay switches selected by current import options."""
+        """Describe selected relay and user-element switches."""
         factories: dict[int, Callable[[], SwitchEntity]] = {}
         import_configuration = object_import_configuration(entry.options)
         for obj in entry.runtime_data.coordinator.data.objects.values():
-            if not import_configuration.imports(obj.object_id) or not isinstance(
-                obj, ZontRelayData
-            ):
+            if not import_configuration.imports(obj.object_id):
                 continue
-            factories[obj.object_id] = partial(
-                ZontRelaySwitch,
-                entry,
-                obj.object_id,
-            )
+            if isinstance(obj, ZontRelayData):
+                factories[obj.object_id] = partial(
+                    ZontRelaySwitch,
+                    entry,
+                    obj.object_id,
+                )
+            elif (
+                isinstance(obj, ZontUserElementData)
+                and obj.subtype == USER_ELEMENT_SUBTYPE_COMPLEX_BUTTON
+            ):
+                factories[obj.object_id] = partial(
+                    ZontUserElementSwitch,
+                    entry,
+                    obj.object_id,
+                )
         return factories
 
     reconciler = ZontObjectEntityReconciler(

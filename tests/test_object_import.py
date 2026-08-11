@@ -29,6 +29,7 @@ from custom_components.zont_local.protocol.objects import (
     ZontRadioSensorData,
     ZontRelayData,
     ZontSecurityZoneData,
+    ZontUserElementData,
 )
 
 
@@ -52,6 +53,15 @@ from custom_components.zont_local.protocol.objects import (
         ),
         (ZontRelayData(10, 14, "Реле"), "Реле"),
         (ZontSecurityZoneData(11, 2, "Периметр"), "Охранная зона"),
+        (
+            ZontUserElementData(12, 10, "Индикатор", subtype=0),
+            "Статус входа/выхода",
+        ),
+        (ZontUserElementData(13, 10, "Запуск", subtype=1), "Простая кнопка"),
+        (
+            ZontUserElementData(14, 10, "Режим", subtype=2),
+            "Сложная кнопка",
+        ),
     ],
 )
 def test_importable_object_descriptor(obj: ZontObject, device_type: str) -> None:
@@ -70,6 +80,7 @@ def test_importable_object_descriptor(obj: ZontObject, device_type: str) -> None
         ZontHeatingCircuitData(1, 16, "Котёл", subtype=0),
         ZontHeatingCircuitData(2, 16, "Охлаждение", subtype=2),
         ZontRadioSensorData(3, 8, "Розетка", subtype=17),
+        ZontUserElementData(4, 10, "Регулятор", subtype=3),
     ],
 )
 def test_unsupported_public_objects_have_no_descriptor(obj: ZontObject) -> None:

@@ -62,6 +62,14 @@ RADIO_SENSOR_SUBTYPE_NAMES = MappingProxyType(
     }
 )
 
+USER_ELEMENT_SUBTYPE_NAMES = MappingProxyType(
+    {
+        0: "Статус входа/выхода",
+        1: "Простая кнопка",
+        2: "Сложная кнопка",
+    }
+)
+
 SUPPORTED_RADIO_SENSOR_SUBTYPES = frozenset({5, 10, 11, 15, 18})
 
 
@@ -86,6 +94,14 @@ def heating_circuit_model(subtype: int) -> str:
     return HEATING_CIRCUIT_SUBTYPE_NAMES.get(
         subtype,
         f"Контур отопления (подтип {subtype})",
+    )
+
+
+def user_element_model(subtype: int) -> str:
+    """Return the confirmed display name for a user-element subtype."""
+    return USER_ELEMENT_SUBTYPE_NAMES.get(
+        subtype,
+        f"Пользовательский элемент (подтип {subtype})",
     )
 
 

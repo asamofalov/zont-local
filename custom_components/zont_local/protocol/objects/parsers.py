@@ -17,6 +17,10 @@ from .models import (
     OBJECT_TYPE_RADIO_SENSOR,
     OBJECT_TYPE_RELAY,
     OBJECT_TYPE_SECURITY_ZONE,
+    OBJECT_TYPE_USER_ELEMENT,
+    USER_ELEMENT_SUBTYPE_COMPLEX_BUTTON,
+    USER_ELEMENT_SUBTYPE_SIMPLE_BUTTON,
+    USER_ELEMENT_SUBTYPE_STATUS,
     ZontAnalogInputData,
     ZontDigitalBusAdapterData,
     ZontDigitalBusState,
@@ -33,6 +37,7 @@ from .models import (
     ZontRelayData,
     ZontSecurityZoneData,
     ZontTemperatureSensorData,
+    ZontUserElementData,
 )
 
 
@@ -221,6 +226,65 @@ def parse_security_zone(
         available=available,
         armed=armed,
         triggered=triggered,
+    )
+
+
+def parse_user_element(
+    payload: Mapping[str, Any],
+    previous: ZontUserElementData | None = None,
+    *,
+    partial: bool = False,
+) -> ZontUserElementData:
+    """Parse a full or partial user-element state."""
+    object_id = _identity_int(payload, "id", previous.object_id if previous else None)
+    object_type = _identity_int(
+        payload,
+        "type",
+        previous.object_type if previous else None,
+    )
+    if object_type != OBJECT_TYPE_USER_ELEMENT:
+        raise ZontObjectParseError("Object is not a user element")
+
+    name = payload.get("name", previous.name if previous else None)
+    if not isinstance(name, str) or not name.strip():
+        raise ZontObjectParseError("Object name is missing")
+
+    subtype = _identity_int(
+        payload,
+        "stype",
+        previous.subtype if previous else None,
+    )
+    raw_state = _optional_raw_number(
+        payload,
+        "s",
+        previous.raw_state if previous is not None else None,
+        partial,
+    )
+    text = _optional_string(
+        payload,
+        "t",
+        previous.text if previous is not None else None,
+        partial,
+    )
+    state_is_valid = _user_element_state_is_valid(subtype, raw_state)
+    available = _object_available(
+        payload,
+        previous.available if previous is not None else None,
+        partial,
+        state_is_valid,
+    )
+    if not available and previous is not None:
+        raw_state = previous.raw_state
+        text = previous.text
+
+    return ZontUserElementData(
+        object_id=object_id,
+        object_type=object_type,
+        name=name.strip(),
+        available=available,
+        subtype=subtype,
+        raw_state=raw_state,
+        text=text,
     )
 
 
@@ -632,6 +696,15 @@ def parse_zont_object(
             previous_zone,
             partial=partial,
         )
+    if object_type == OBJECT_TYPE_USER_ELEMENT:
+        previous_element = (
+            previous if isinstance(previous, ZontUserElementData) else None
+        )
+        return parse_user_element(
+            payload,
+            previous_element,
+            partial=partial,
+        )
     if object_type == OBJECT_TYPE_RADIO_SENSOR:
         previous_sensor = (
             previous if isinstance(previous, ZontRadioSensorData) else None
@@ -719,6 +792,50 @@ def _optional_number(
     ):
         return float(value)
     return None
+
+
+def _optional_raw_number(
+    payload: Mapping[str, Any],
+    key: str,
+    previous: int | float | None,
+    partial: bool,
+) -> int | float | None:
+    """Read a finite protocol number without changing its JSON type."""
+    if key not in payload:
+        return previous if partial else None
+    value = payload[key]
+    if (
+        isinstance(value, int | float)
+        and not isinstance(value, bool)
+        and isfinite(value)
+    ):
+        return value
+    return None
+
+
+def _optional_string(
+    payload: Mapping[str, Any],
+    key: str,
+    previous: str | None,
+    partial: bool,
+) -> str | None:
+    """Read an optional protocol string and preserve it for partial updates."""
+    if key not in payload:
+        return previous if partial else None
+    value = payload[key]
+    return value if isinstance(value, str) else None
+
+
+def _user_element_state_is_valid(
+    subtype: int,
+    raw_state: int | float | None,
+) -> bool:
+    """Return whether a user element has a valid state for its subtype."""
+    if subtype in (USER_ELEMENT_SUBTYPE_STATUS, USER_ELEMENT_SUBTYPE_COMPLEX_BUTTON):
+        return type(raw_state) is int and raw_state in (0, 1)
+    if subtype == USER_ELEMENT_SUBTYPE_SIMPLE_BUTTON:
+        return type(raw_state) is int and raw_state == 255
+    return raw_state is not None
 
 
 def _object_available(
