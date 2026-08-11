@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable, Mapping
+from time import monotonic
 
 from .data import ZontControllerData, ZontData
 from .protocol import (
@@ -54,6 +55,7 @@ _SOURCE_SUPPLY_VOLTAGE = "supply_voltage"
 _SOURCE_WIFI_STATUS = "wifi_status"
 _SOURCE_ETHERNET_STATUS = "ethernet_status"
 _SOURCE_GSM_STATUS = "gsm_status"
+_CONFIGURATION_REFRESH_INTERVAL = 15 * 60
 
 
 class ZontDataUpdater:
@@ -64,6 +66,7 @@ class ZontDataUpdater:
         client: ZontClient,
         initial_info: ZontControllerInfo | None,
         on_controller_info: Callable[[ZontControllerInfo], None],
+        monotonic_time: Callable[[], float] = monotonic,
     ) -> None:
         """Initialize protocol-backed source refreshers."""
         self._client = client
@@ -72,6 +75,8 @@ class ZontDataUpdater:
         self._object_error_types: set[int] = set()
         self._info_refresh_enabled = initial_info is not None
         self._info_refresh_needed = initial_info is not None
+        self._monotonic_time = monotonic_time
+        self._next_configuration_refresh_at: float | None = None
         self.heating_metadata = ZontHeatingMetadataRefresher(client)
         self.mixer_metadata = ZontMixerMetadataRefresher(client)
         self.relay_metadata = ZontRelayMetadataRefresher(client)
@@ -84,6 +89,7 @@ class ZontDataUpdater:
 
     def mark_configuration_stale(self) -> None:
         """Mark controller configuration metadata for refresh."""
+        self._next_configuration_refresh_at = None
         self.heating_metadata.mark_stale()
         self.relay_metadata.mark_stale()
 
@@ -91,6 +97,15 @@ class ZontDataUpdater:
         """Return a complete immutable snapshot using serialized requests."""
         if not self._client.is_connected:
             raise ZontConnectionError("The ZONT controller is disconnected")
+
+        refresh_started_at = self._monotonic_time()
+        configuration_refresh_due = (
+            self._next_configuration_refresh_at is None
+            or refresh_started_at >= self._next_configuration_refresh_at
+        )
+        if configuration_refresh_due:
+            self.heating_metadata.mark_stale()
+            self.relay_metadata.mark_stale()
 
         previous_controller = previous.controller
         info = await self._async_refresh_info(previous_controller.info)
@@ -112,6 +127,15 @@ class ZontDataUpdater:
             objects,
             previous.heating_modes,
         )
+
+        if (
+            configuration_refresh_due
+            and not self.heating_metadata.refresh_needed
+            and not self.relay_metadata.refresh_needed
+        ):
+            self._next_configuration_refresh_at = (
+                refresh_started_at + _CONFIGURATION_REFRESH_INTERVAL
+            )
 
         if not self._client.is_connected:
             raise ZontConnectionError("The ZONT controller disconnected during update")

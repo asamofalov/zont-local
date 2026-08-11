@@ -1078,6 +1078,7 @@ async def test_air_sensor_configuration_is_cached_but_state_is_refreshed(
         [],
         [],
         [],
+        [],
     ]
     client.async_get_object_state.side_effect = [
         {
@@ -1145,6 +1146,7 @@ async def test_failed_internal_state_read_clears_current_state_only(
         [],
         [],
         [20496],
+        [],
         [],
         [],
         [],
@@ -1222,22 +1224,6 @@ async def test_invalid_consumer_configuration_does_not_block_other_circuit(
     assert coordinator.data.heating_controls[20496].can_set_temperature
     assert set(coordinator.data.heating_states) == {9171, 20496}
     assert coordinator._updater.heating_metadata.refresh_needed
-
-
-async def test_configuration_reload_message_requests_immediate_refresh(
-    hass: HomeAssistant,
-) -> None:
-    coordinator, _ = _coordinator(hass)
-    coordinator._updater.heating_metadata = MagicMock()
-    coordinator._updater.relay_metadata = MagicMock()
-    coordinator.async_request_refresh = AsyncMock()
-
-    coordinator._async_message_received("CFG_RELOAD_REQ")
-    await hass.async_block_till_done()
-
-    coordinator._updater.heating_metadata.mark_stale.assert_called_once_with()
-    coordinator._updater.relay_metadata.mark_stale.assert_called_once_with()
-    coordinator.async_request_refresh.assert_awaited_once_with()
 
 
 async def test_reconnect_requests_debounced_refresh(hass: HomeAssistant) -> None:

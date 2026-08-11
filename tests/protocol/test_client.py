@@ -211,7 +211,7 @@ async def test_temporary_session_reads_ids_and_object_state() -> None:
         [
             FakeMessage(WSMsgType.TEXT, json.dumps({"auth": 200})),
             FakeMessage(WSMsgType.TEXT, json.dumps({"id": 7, "type": 1})),
-            FakeMessage(WSMsgType.TEXT, json.dumps("CFG_RELOAD_REQ")),
+            FakeMessage(WSMsgType.TEXT, json.dumps("UNRELATED_NOTICE")),
             FakeMessage(WSMsgType.TEXT, json.dumps({"ids": [8362, 20496]})),
             FakeMessage(WSMsgType.TEXT, json.dumps({"id": 8362, "type": 16})),
             FakeMessage(

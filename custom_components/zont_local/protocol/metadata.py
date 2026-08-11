@@ -144,23 +144,20 @@ class ZontRelayMetadataRefresher:
 
         force_configuration = self._relay_configuration_refresh_needed
         refresh_incomplete = False
-        configurations = (
-            {}
-            if force_configuration
-            else {
-                object_id: configuration
-                for object_id, configuration in self._relay_configurations.items()
-                if object_id in relay_ids
-            }
-        )
+        previous_configurations = {
+            object_id: configuration
+            for object_id, configuration in self._relay_configurations.items()
+            if object_id in relay_ids
+        }
+        refreshed_configurations = dict(previous_configurations)
         states: dict[int, ZontRelayInternalState] = {}
         for object_id in relay_ids:
-            if force_configuration or object_id not in configurations:
+            if force_configuration or object_id not in previous_configurations:
                 try:
                     response = await self._client.async_send_system_command(
                         f"#Z{object_id}?"
                     )
-                    configurations[object_id] = parse_relay_configuration(
+                    refreshed_configurations[object_id] = parse_relay_configuration(
                         response,
                         object_id,
                     )
@@ -170,7 +167,6 @@ class ZontRelayMetadataRefresher:
                     raise
                 except (ZontProtocolError, ZontRelayParseError):
                     refresh_incomplete = True
-                    configurations.pop(object_id, None)
                     self._log_relay_metadata_error("configuration", object_id)
                 else:
                     self._relay_metadata_errors.discard(("configuration", object_id))
@@ -189,6 +185,9 @@ class ZontRelayMetadataRefresher:
             else:
                 self._relay_metadata_errors.discard(("state", object_id))
 
+        configurations = (
+            previous_configurations if refresh_incomplete else refreshed_configurations
+        )
         self._relay_configurations = configurations
         self._relay_configuration_refresh_needed = refresh_incomplete
         return (
@@ -260,8 +259,27 @@ class ZontHeatingMetadataRefresher:
         controls: dict[int, ZontHeatingCircuitControlData] = {}
         states: dict[int, ZontHeatingCircuitInternalState] = {}
         modes = previous_modes
-        if force_configuration:
-            modes, modes_incomplete = await self._async_refresh_heating_modes()
+
+        try:
+            mode_ids = await self._client.async_get_object_ids(OBJECT_TYPE_HEATING_MODE)
+        except asyncio.CancelledError:
+            raise
+        except (ZontConnectionError, ZontRequestTimeoutError):
+            raise
+        except ZontProtocolError:
+            mode_ids = None
+            refresh_incomplete = True
+            self._log_heating_metadata_error("mode discovery", 0)
+        else:
+            self._heating_metadata_errors.discard(("mode discovery", 0))
+            if set(mode_ids) != set(previous_modes):
+                force_configuration = True
+
+        if force_configuration and mode_ids is not None:
+            modes, modes_incomplete = await self._async_refresh_heating_modes(
+                mode_ids,
+                previous_modes,
+            )
             refresh_incomplete |= modes_incomplete
         for object_id in sorted(circuit_ids):
             circuit = objects[object_id]
@@ -372,18 +390,10 @@ class ZontHeatingMetadataRefresher:
 
     async def _async_refresh_heating_modes(
         self,
+        mode_ids: list[int],
+        previous_modes: Mapping[int, ZontHeatingModeConfiguration],
     ) -> tuple[Mapping[int, ZontHeatingModeConfiguration], bool]:
-        """Discover current named heating modes and their circuit targets."""
-        try:
-            mode_ids = await self._client.async_get_object_ids(OBJECT_TYPE_HEATING_MODE)
-        except asyncio.CancelledError:
-            raise
-        except (ZontConnectionError, ZontRequestTimeoutError):
-            raise
-        except ZontProtocolError:
-            self._log_heating_metadata_error("mode discovery", 0)
-            return immutable_heating_modes(), True
-
+        """Refresh named heating modes without publishing a partial set."""
         modes: dict[int, ZontHeatingModeConfiguration] = {}
         refresh_incomplete = False
         for mode_id in mode_ids:
@@ -400,7 +410,8 @@ class ZontHeatingMetadataRefresher:
             else:
                 self._heating_metadata_errors.discard(("mode configuration", mode_id))
 
-        self._heating_metadata_errors.discard(("mode discovery", 0))
+        if refresh_incomplete:
+            return previous_modes, True
         return immutable_heating_modes(modes), refresh_incomplete
 
     @staticmethod

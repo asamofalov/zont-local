@@ -49,8 +49,6 @@ from .updater import ZontDataUpdater
 
 _LOGGER = logging.getLogger(__name__)
 
-_CONFIG_RELOAD_MESSAGE = "CFG_RELOAD_REQ"
-
 
 def _scan_interval_seconds(value: object) -> int:
     """Return a safe periodic control-poll interval."""
@@ -211,10 +209,6 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
     def _async_message_received(self, payload: object) -> None:
         """Merge an unsolicited supported object state into the snapshot."""
         if self._shutting_down or self._shutdown_complete:
-            return
-        if payload == _CONFIG_RELOAD_MESSAGE:
-            self._updater.mark_configuration_stale()
-            self._async_create_refresh_task("object configuration refresh")
             return
         if not isinstance(payload, Mapping):
             return
