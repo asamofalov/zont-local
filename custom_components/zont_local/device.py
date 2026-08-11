@@ -25,7 +25,6 @@ type ZontDeviceConfigEntry = ConfigEntry[ZontRuntimeData]
 def async_sync_object_devices(
     hass: HomeAssistant,
     entry: ZontDeviceConfigEntry,
-    controller_device_id: str,
 ) -> None:
     """Create or update devices represented by discovered ZONT objects."""
     controller_identifier = entry.unique_id or entry.entry_id
@@ -46,7 +45,7 @@ def async_sync_object_devices(
             name=obj.name,
             manufacturer=descriptor.manufacturer,
             model=descriptor.model,
-            via_device_id=controller_device_id,
+            via_device=(DOMAIN, controller_identifier),
         )
 
 

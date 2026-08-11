@@ -31,6 +31,13 @@ README, roadmap, архитектурная и протокольная доку
 файлов, ключи протокола и другие технические интерфейсы сохраняйте в принятом
 для них формате.
 
+Исключение — обязательный английский fallback
+`custom_components/zont_local/translations/en.json`. Он должен полностью
+повторять структуру `ru.json`, включая placeholders. Для custom integration не
+создавайте `strings.json` и не используйте build-time ссылки `[%key:...%]`.
+Названия и описания действий размещайте в разделе `services` обоих файлов
+переводов, а в `services.yaml` оставляйте только схему полей и selectors.
+
 Обновляйте документацию вместе с поведением, которое она описывает. Изменение
 границ, потока данных или порядка запуска и выгрузки требует актуализации
 `ARCHITECTURE.md`. Изменение публичного поведения требует актуализации README.
@@ -125,6 +132,13 @@ python -m pytest -q
 ruff check .
 ruff format --check .
 python -m homeassistant --script check_config --config .devcontainer/config
+```
+
+Hassfest запускайте на хосте через официальный контейнер с каталогом проекта,
+подключённым только для чтения:
+
+```bash
+docker run --rm -v "$PWD:/github/workspace:ro" ghcr.io/home-assistant/hassfest
 ```
 
 Не исправляйте посторонние изменения в рабочем дереве. Перед передачей

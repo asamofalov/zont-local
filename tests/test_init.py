@@ -224,7 +224,7 @@ async def test_digital_bus_adapter_is_registered_as_child_device(
     )
     entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontClient), coordinator)
 
-    async_sync_object_devices(hass, entry, controller.id)
+    async_sync_object_devices(hass, entry)
 
     adapter = registry.async_get_device(
         identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:4097")}
@@ -242,7 +242,7 @@ async def test_digital_bus_adapter_is_registered_as_child_device(
             {4097: ZontDigitalBusAdapterData(4097, 6, "Новый Navien")}
         ),
     )
-    async_sync_object_devices(hass, entry, controller.id)
+    async_sync_object_devices(hass, entry)
 
     adapter = registry.async_get(adapter.id)
     assert adapter is not None
@@ -265,7 +265,7 @@ async def test_only_selected_child_devices_are_registered(
     )
     entry.add_to_hass(hass)
     registry = dr.async_get(hass)
-    controller = registry.async_get_or_create(
+    registry.async_get_or_create(
         config_entry_id=entry.entry_id,
         identifiers={(DOMAIN, SERIAL_NUMBER)},
         name="ZONT H1V02 PRO",
@@ -282,7 +282,7 @@ async def test_only_selected_child_devices_are_registered(
     )
     entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontClient), coordinator)
 
-    async_sync_object_devices(hass, entry, controller.id)
+    async_sync_object_devices(hass, entry)
 
     assert registry.async_get_device(
         identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:4097")}
@@ -316,13 +316,13 @@ async def test_excluded_devices_and_entities_are_removed_from_registries(
         config_entry_id=entry.entry_id,
         identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:4097")},
         name="Navien",
-        via_device_id=controller.id,
+        via_device=(DOMAIN, SERIAL_NUMBER),
     )
     excluded = device_registry.async_get_or_create(
         config_entry_id=entry.entry_id,
         identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:8196")},
         name="Улица",
-        via_device_id=controller.id,
+        via_device=(DOMAIN, SERIAL_NUMBER),
     )
     entity_registry = er.async_get(hass)
     selected_entity = entity_registry.async_get_or_create(
@@ -385,7 +385,7 @@ async def test_analog_input_is_registered_as_typed_child_device(
     )
     entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontClient), coordinator)
 
-    async_sync_object_devices(hass, entry, controller.id)
+    async_sync_object_devices(hass, entry)
 
     analog_input = registry.async_get_device(
         identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:20550")}
@@ -407,7 +407,7 @@ async def test_unknown_analog_subtype_has_fallback_device_model(
     )
     entry.add_to_hass(hass)
     registry = dr.async_get(hass)
-    controller = registry.async_get_or_create(
+    registry.async_get_or_create(
         config_entry_id=entry.entry_id,
         identifiers={(DOMAIN, SERIAL_NUMBER)},
         name="ZONT H1V02 PRO",
@@ -428,7 +428,7 @@ async def test_unknown_analog_subtype_has_fallback_device_model(
     )
     entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontClient), coordinator)
 
-    async_sync_object_devices(hass, entry, controller.id)
+    async_sync_object_devices(hass, entry)
 
     analog_input = registry.async_get_device(
         identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:20550")}
@@ -635,7 +635,7 @@ async def test_temperature_sensor_is_registered_as_child_device(
     )
     entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontClient), coordinator)
 
-    async_sync_object_devices(hass, entry, controller.id)
+    async_sync_object_devices(hass, entry)
 
     sensor = registry.async_get_device(
         identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:4107")}
@@ -678,7 +678,7 @@ async def test_ntc_sensor_is_registered_as_child_device(
     )
     entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontClient), coordinator)
 
-    async_sync_object_devices(hass, entry, controller.id)
+    async_sync_object_devices(hass, entry)
 
     sensor = registry.async_get_device(
         identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:20487")}
@@ -723,7 +723,7 @@ async def test_supported_radio_sensor_is_registered_as_typed_child_device(
     )
     entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontClient), coordinator)
 
-    async_sync_object_devices(hass, entry, controller.id)
+    async_sync_object_devices(hass, entry)
 
     sensor = registry.async_get_device(
         identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:12001")}
@@ -775,7 +775,7 @@ async def test_supported_heating_circuits_are_registered_as_child_devices(
     )
     entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontClient), coordinator)
 
-    async_sync_object_devices(hass, entry, controller.id)
+    async_sync_object_devices(hass, entry)
 
     circuit = registry.async_get_device(
         identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:8362")}
@@ -816,7 +816,7 @@ async def test_pump_is_registered_as_child_device(hass: HomeAssistant) -> None:
     )
     entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontClient), coordinator)
 
-    async_sync_object_devices(hass, entry, controller.id)
+    async_sync_object_devices(hass, entry)
 
     pump = registry.async_get_device(
         identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:9044")}
@@ -857,7 +857,7 @@ async def test_mixer_is_registered_as_child_device(hass: HomeAssistant) -> None:
     )
     entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontClient), coordinator)
 
-    async_sync_object_devices(hass, entry, controller.id)
+    async_sync_object_devices(hass, entry)
 
     mixer = registry.async_get_device(
         identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:9078")}
@@ -891,7 +891,7 @@ async def test_relay_is_registered_as_child_device(hass: HomeAssistant) -> None:
     )
     entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontClient), coordinator)
 
-    async_sync_object_devices(hass, entry, controller.id)
+    async_sync_object_devices(hass, entry)
 
     relay = registry.async_get_device(
         identifiers={(DOMAIN, f"{SERIAL_NUMBER}:object:20488")}
@@ -913,7 +913,7 @@ async def test_unsupported_radio_subtype_is_not_registered(
     )
     entry.add_to_hass(hass)
     registry = dr.async_get(hass)
-    controller = registry.async_get_or_create(
+    registry.async_get_or_create(
         config_entry_id=entry.entry_id,
         identifiers={(DOMAIN, SERIAL_NUMBER)},
         name="ZONT H1V02 PRO",
@@ -934,7 +934,7 @@ async def test_unsupported_radio_subtype_is_not_registered(
     )
     entry.runtime_data = ZontRuntimeData(MagicMock(spec=ZontClient), coordinator)
 
-    async_sync_object_devices(hass, entry, controller.id)
+    async_sync_object_devices(hass, entry)
 
     assert (
         registry.async_get_device(

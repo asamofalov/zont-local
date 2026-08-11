@@ -11,7 +11,7 @@ import pytest
 from custom_components.zont_local.connection import ZontConnectionManager
 from custom_components.zont_local.const import DOMAIN, EVENT_MESSAGE, connection_signal
 from custom_components.zont_local.protocol import ZontAuthenticationError
-from homeassistant.core import CoreState, HomeAssistant
+from homeassistant.core import CoreState, HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
@@ -69,10 +69,15 @@ async def test_manager_bridges_events_and_connection_dispatcher(
     manager = ZontConnectionManager(hass, entry, client, "device")  # type: ignore[arg-type]
     events = async_capture_events(hass, EVENT_MESSAGE)
     connection_states: list[bool] = []
+
+    @callback
+    def record_connection_state(connected: bool) -> None:
+        connection_states.append(connected)
+
     remove_dispatcher = async_dispatcher_connect(
         hass,
         connection_signal(entry.entry_id),
-        connection_states.append,
+        record_connection_state,
     )
 
     await manager.async_start()
@@ -104,10 +109,15 @@ async def test_manager_ignores_disconnect_during_home_assistant_shutdown(
     client = FakeProtocolClient()
     manager = ZontConnectionManager(hass, entry, client, "device")  # type: ignore[arg-type]
     connection_states: list[bool] = []
+
+    @callback
+    def record_connection_state(connected: bool) -> None:
+        connection_states.append(connected)
+
     remove_dispatcher = async_dispatcher_connect(
         hass,
         connection_signal(entry.entry_id),
-        connection_states.append,
+        record_connection_state,
     )
 
     await manager.async_start()

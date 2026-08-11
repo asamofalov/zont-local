@@ -1,0 +1,488 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to ZONT Local",
+        "description": "Enter the controller's local IP address and credentials.",
+        "data": {
+          "host": "IP address",
+          "username": "Username",
+          "password": "Password"
+        }
+      },
+      "heating_mode": {
+        "title": "ZONT Local settings",
+        "description": "Select the ZONT mode that turns off all DHW and consumer circuits, the DHW turn-on temperature used after restarting Home Assistant, and the full refresh interval.",
+        "data": {
+          "heating_off_mode_id": "Turn-off mode",
+          "dhw_on_temperature": "DHW turn-on temperature",
+          "scan_interval": "Full refresh interval"
+        },
+        "data_description": {
+          "scan_interval": "Live changes arrive immediately over WebSocket. A shorter interval increases the controller load."
+        }
+      },
+      "devices": {
+        "title": "Import devices",
+        "description": "Select the ZONT devices to add to Home Assistant. The controller and its general diagnostic entities are always added.",
+        "data": {
+          "imported_object_ids": "Devices",
+          "auto_import_new_objects": "Automatically import new devices"
+        },
+        "data_description": {
+          "auto_import_new_objects": "Explicitly excluded devices will not be added again. This option applies only to previously unknown objects."
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure the ZONT Local connection",
+        "description": "Change the IP address or username. Leave the password field empty to keep the current password.",
+        "data": {
+          "host": "IP address",
+          "username": "Username",
+          "password": "New password"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Reauthenticate ZONT Local",
+        "description": "The controller rejected the stored credentials. Enter the current credentials.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Unable to connect to the controller",
+      "cannot_read_devices": "Unable to retrieve the ZONT device list",
+      "cannot_identify": "The controller did not return its serial number or model information",
+      "cannot_read_modes": "Unable to read the heating mode configuration",
+      "different_controller": "A different ZONT controller was found at this address",
+      "invalid_auth": "Invalid username or password",
+      "invalid_dhw_on_temperature": "Enter a DHW turn-on temperature from 5 to 75 °C",
+      "invalid_device_selection": "Select devices only from the provided list",
+      "invalid_host": "Enter a valid IPv4 or IPv6 address",
+      "invalid_off_mode": "The selected mode can no longer turn off all circuits",
+      "invalid_scan_interval": "Enter a full refresh interval from 10 to 120 seconds",
+      "no_off_mode": "No mode with a zero setpoint for all DHW and consumer circuits was found",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "no_off_mode": "No ZONT mode that turns off all DHW and consumer circuits was found. Create or correct such a mode in ZONT and add the integration again.",
+      "reauth_successful": "Reauthentication successful",
+      "reconfigure_successful": "Connection settings updated"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "ZONT Local settings",
+        "menu_options": {
+          "general": "General settings",
+          "devices": "Import devices",
+          "exports": "Export to ZONT"
+        }
+      },
+      "general": {
+        "title": "ZONT Local settings",
+        "description": "Select the ZONT mode with a zero setpoint for all DHW and consumer circuits, the DHW turn-on temperature, and the full refresh interval.",
+        "data": {
+          "heating_off_mode_id": "Turn-off mode",
+          "dhw_on_temperature": "DHW turn-on temperature",
+          "scan_interval": "Full refresh interval"
+        },
+        "data_description": {
+          "scan_interval": "Live changes arrive immediately over WebSocket. A shorter interval increases the controller load."
+        }
+      },
+      "devices": {
+        "title": "Import devices",
+        "description": "Select the ZONT devices to add to Home Assistant. An empty list leaves only the controller and its general entities.",
+        "data": {
+          "imported_object_ids": "Devices",
+          "auto_import_new_objects": "Automatically import new devices"
+        },
+        "data_description": {
+          "auto_import_new_objects": "Explicitly excluded devices remain excluded. New supported objects will be added without restarting Home Assistant."
+        }
+      },
+      "exports": {
+        "title": "Export to ZONT",
+        "menu_options": {
+          "export_create_source": "Create a new ZONT sensor",
+          "export_link": "Link an existing ZONT sensor",
+          "export_manage": "Manage links"
+        }
+      },
+      "export_create_source": {
+        "title": "New ZONT sensor",
+        "description": "Select a Home Assistant temperature sensor or binary sensor whose value should be sent to ZONT.",
+        "data": {
+          "entity_id": "Source"
+        }
+      },
+      "export_create": {
+        "title": "Create a ZONT sensor",
+        "description": "A compatible ZONT object of type “{kind}” will be created for {source}. The object will remain in the controller if the link is later removed.",
+        "data": {
+          "name": "Name in ZONT",
+          "target_subtype": "ZONT input type"
+        }
+      },
+      "export_link": {
+        "title": "Link an existing sensor",
+        "description": "Select a Home Assistant temperature sensor or binary sensor.",
+        "data": {
+          "entity_id": "Source"
+        }
+      },
+      "export_link_target": {
+        "title": "Select a ZONT sensor",
+        "description": "Select a compatible ZONT object for an export of type “{kind}”.",
+        "data": {
+          "target_id": "ZONT sensor"
+        }
+      },
+      "export_link_confirm": {
+        "title": "Confirm link",
+        "description": "The value of {source} will be written to {target} (ID {target_id}) and updated regularly. Make sure that the selected ZONT object is intended for external data."
+      },
+      "export_manage": {
+        "title": "Manage exports",
+        "description": "Select the link to change or remove.",
+        "data": {
+          "binding_id": "Link"
+        }
+      },
+      "export_manage_action": {
+        "title": "Change link",
+        "menu_options": {
+          "export_change_source": "Change Home Assistant source",
+          "export_rebind": "Select another ZONT sensor",
+          "export_delete": "Remove link"
+        }
+      },
+      "export_change_source": {
+        "title": "Change source",
+        "description": "Select a new source of type “{kind}” for {target} (ID {target_id}). Its current value will be sent before saving.",
+        "data": {
+          "entity_id": "Source"
+        }
+      },
+      "export_rebind": {
+        "title": "Change ZONT sensor",
+        "description": "Select a new ZONT object for this link.",
+        "data": {
+          "target_id": "ZONT sensor"
+        }
+      },
+      "export_rebind_confirm": {
+        "title": "Confirm new target",
+        "description": "The value of {source} will be written to {target} (ID {target_id}). The previous object will remain in ZONT and will not be imported into Home Assistant automatically."
+      },
+      "export_delete": {
+        "title": "Remove link",
+        "description": "Data transfer to {target} (ID {target_id}) will stop. The object will remain in ZONT and in the list of devices excluded from import."
+      }
+    },
+    "error": {
+      "cannot_connect": "Unable to connect to the controller",
+      "cannot_read_devices": "Unable to retrieve the ZONT device list",
+      "cannot_read_modes": "Unable to read the heating mode configuration",
+      "invalid_auth": "Invalid username or password",
+      "invalid_dhw_on_temperature": "Enter a DHW turn-on temperature from 5 to 75 °C",
+      "invalid_device_selection": "Select devices only from the provided list",
+      "invalid_off_mode": "The selected mode can no longer turn off all circuits",
+      "invalid_scan_interval": "Enter a full refresh interval from 10 to 120 seconds",
+      "invalid_export_source": "Select a supported Home Assistant temperature sensor or binary sensor with an available state",
+      "invalid_export_target": "The selected ZONT object is unavailable or does not match the source type",
+      "duplicate_export_source": "This Home Assistant sensor is already used by another link",
+      "duplicate_export_target": "This ZONT object is already used by another link",
+      "export_command_rejected": "The controller rejected writing to the selected object",
+      "export_name_in_use": "An object with this name already exists. Link the existing sensor instead",
+      "no_off_mode": "No mode with a zero setpoint for all DHW and consumer circuits was found",
+      "unknown": "Unexpected error"
+    }
+  },
+  "issues": {
+    "export_source_missing": {
+      "title": "ZONT export source not found",
+      "description": "The Home Assistant source for {target} (ID {target_id}) was removed. Change or remove the link in the ZONT integration options."
+    },
+    "export_source_invalid": {
+      "title": "ZONT export source is no longer compatible",
+      "description": "The Home Assistant source for {target} (ID {target_id}) no longer matches the link type. Change or remove the link."
+    },
+    "export_target_invalid": {
+      "title": "ZONT export target not found",
+      "description": "The object {target} (ID {target_id}) is missing or no longer matches the link type. Select another target or remove the link."
+    },
+    "export_command_rejected": {
+      "title": "ZONT rejected the export",
+      "description": "The controller rejected writing to {target} (ID {target_id}). Check the object and relink it in the integration options if necessary."
+    }
+  },
+  "services": {
+    "send_command": {
+      "name": "Send command",
+      "description": "Sends one generic command over the persistent ZONT WebSocket connection.",
+      "fields": {
+        "id": {
+          "name": "Command ID",
+          "description": "ZONT command identifier."
+        },
+        "cmd": {
+          "name": "Command",
+          "description": "Command value, for example “1 22.5” or “2957”."
+        }
+      }
+    },
+    "send_bulk": {
+      "name": "Send multiple commands",
+      "description": "Sends multiple generic ZONT commands in sequence.",
+      "fields": {
+        "commands": {
+          "name": "Commands",
+          "description": "A non-empty list of objects with id and cmd fields."
+        }
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "connected": {
+        "name": "Connection"
+      },
+      "cloud_connected": {
+        "name": "ZONT cloud connection"
+      },
+      "wifi_connected": {
+        "name": "Wi-Fi connection"
+      },
+      "ethernet_connected": {
+        "name": "Ethernet connection"
+      },
+      "analog_triggered": {
+        "name": "Triggered"
+      },
+      "radio_triggered": {
+        "name": "Triggered"
+      },
+      "heating_weather_compensation": {
+        "name": "Weather compensation"
+      },
+      "heating_blocked": {
+        "name": "Circuit blocked"
+      },
+      "heating_sensor_fault": {
+        "name": "Sensor fault"
+      },
+      "heating_summer_mode": {
+        "name": "Summer mode"
+      },
+      "heating": {
+        "name": "Heating"
+      },
+      "heating_fault": {
+        "name": "Fault"
+      },
+      "digital_bus_fault": {
+        "name": "Fault"
+      },
+      "mixer_fault": {
+        "name": "Fault"
+      },
+      "mixer_sensor_fault": {
+        "name": "Sensor fault"
+      },
+      "mixer_output_fault": {
+        "name": "Output fault"
+      },
+      "mixer_set_failed": {
+        "name": "Set failed"
+      },
+      "relay_failed": {
+        "name": "Fault"
+      },
+      "security_zone_alarm": {
+        "name": "Alarm"
+      }
+    },
+    "button": {
+      "restart": {
+        "name": "Restart"
+      }
+    },
+    "sensor": {
+      "connection_channel": {
+        "name": "Connection channel",
+        "state": {
+          "none": "No active channel",
+          "gsm": "GSM",
+          "wifi": "Wi-Fi",
+          "ethernet": "Ethernet",
+          "gsm_wifi": "GSM + Wi-Fi",
+          "gsm_ethernet": "GSM + Ethernet",
+          "wifi_ethernet": "Wi-Fi + Ethernet",
+          "gsm_wifi_ethernet": "GSM + Wi-Fi + Ethernet"
+        }
+      },
+      "supply_voltage": {
+        "name": "Supply voltage"
+      },
+      "power_source": {
+        "name": "Power source",
+        "state": {
+          "main": "Mains power",
+          "battery": "Battery"
+        }
+      },
+      "gsm_registration": {
+        "name": "GSM registration",
+        "state": {
+          "not_registered": "Not registered",
+          "home_network": "Home network",
+          "searching": "Searching",
+          "rejected": "Registration rejected",
+          "unknown": "Unknown",
+          "roaming": "Roaming"
+        }
+      },
+      "wifi_signal": {
+        "name": "Wi-Fi signal strength"
+      },
+      "gsm_signal": {
+        "name": "GSM signal strength"
+      },
+      "digital_bus_flow_temperature": {
+        "name": "Flow temperature"
+      },
+      "digital_bus_dhw_temperature": {
+        "name": "DHW temperature"
+      },
+      "digital_bus_return_temperature": {
+        "name": "Return temperature"
+      },
+      "digital_bus_modulation": {
+        "name": "Modulation"
+      },
+      "digital_bus_pressure": {
+        "name": "System pressure"
+      },
+      "digital_bus_state": {
+        "name": "State",
+        "state": {
+          "off": "Off",
+          "running": "Running",
+          "error": "Error"
+        }
+      },
+      "digital_bus_error_code": {
+        "name": "Error code"
+      },
+      "digital_temperature": {
+        "name": "Temperature"
+      },
+      "heating_calculated_water_temperature": {
+        "name": "Calculated water temperature"
+      },
+      "ntc_temperature": {
+        "name": "Temperature"
+      },
+      "analog_value": {
+        "name": "Value"
+      },
+      "radio_temperature": {
+        "name": "Temperature"
+      },
+      "radio_humidity": {
+        "name": "Humidity"
+      },
+      "radio_battery_voltage": {
+        "name": "Battery voltage"
+      },
+      "radio_signal_strength": {
+        "name": "Signal strength"
+      },
+      "heating_control_mode": {
+        "name": "Control method",
+        "state": {
+          "air": "Air temperature",
+          "air_pid": "Air temperature with PID",
+          "water": "Water temperature"
+        }
+      },
+      "mixer_state": {
+        "name": "State",
+        "state": {
+          "idle": "Idle",
+          "opening": "Opening",
+          "closing": "Closing",
+          "fully_open": "Fully open",
+          "fully_closed": "Fully closed"
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "cannot_connect": {
+      "message": "Unable to connect to the ZONT controller"
+    },
+    "invalid_auth": {
+      "message": "The ZONT controller rejected the credentials"
+    },
+    "entry_not_configured": {
+      "message": "The ZONT integration is not configured"
+    },
+    "entry_not_loaded": {
+      "message": "The ZONT configuration entry is not loaded"
+    },
+    "controller_offline": {
+      "message": "The ZONT controller is not connected"
+    },
+    "command_timeout": {
+      "message": "The ZONT controller did not respond to command {id}"
+    },
+    "command_rejected": {
+      "message": "The ZONT controller rejected the command for object {id}"
+    },
+    "temperature_out_of_range": {
+      "message": "Enter a temperature from {min_temperature} to {max_temperature} °C"
+    },
+    "temperature_control_unavailable": {
+      "message": "Temperature control is unavailable for this circuit because the controller did not return a supported configuration"
+    },
+    "heating_hvac_mode_unavailable": {
+      "message": "This circuit operating mode is not supported"
+    },
+    "heating_preset_mode_unavailable": {
+      "message": "Preset “{preset_mode}” is unavailable for this circuit"
+    },
+    "heating_operation_mode_unavailable": {
+      "message": "DHW operation mode “{operation_mode}” is unavailable for this circuit"
+    },
+    "heating_off_mode_unavailable": {
+      "message": "The configured turn-off mode is unavailable for this circuit"
+    },
+    "heating_turn_on_unavailable": {
+      "message": "Unable to determine a safe state for turning on the circuit"
+    },
+    "heating_state_not_confirmed": {
+      "message": "The controller accepted the command for object {id} but did not confirm the new state"
+    },
+    "relay_control_unavailable": {
+      "message": "Relay control is unavailable because the controller did not return the inverted-mode configuration"
+    },
+    "relay_state_not_confirmed": {
+      "message": "The controller accepted the command for relay {id} but did not confirm the new state"
+    },
+    "security_zone_state_not_confirmed": {
+      "message": "The controller accepted the command for security zone {id} but did not confirm the new state"
+    },
+    "user_element_state_not_confirmed": {
+      "message": "The controller accepted the command for user element {id} but did not confirm the new state"
+    },
+    "protocol_error": {
+      "message": "The ZONT controller returned an invalid response"
+    }
+  }
+}
