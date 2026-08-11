@@ -50,8 +50,6 @@ async def async_get_config_entry_diagnostics(
         },
         "data": {
             "last_update_success": coordinator.last_update_success,
-            "disabled_sources": coordinator.disabled_sources,
-            "unsupported_sources": coordinator.unsupported_sources,
             "cloud_connected": (
                 status.server_status.cloud_connected
                 if status.server_status is not None

@@ -323,7 +323,7 @@ async def test_identify_controller_uses_required_system_commands(monkeypatch) ->
         "ws://192.0.2.10/ws",
         credentials,
         ("#S54?", "#S7?"),
-        response_timeout=3.0,
+        response_timeout=5.0,
     )
 
 
@@ -341,8 +341,8 @@ async def test_identify_controller_reuses_authenticated_request_session() -> Non
     assert [
         call.args for call in requests.async_send_system_command.await_args_list
     ] == [
-        ("#S54?", 3.0),
-        ("#S7?", 3.0),
+        ("#S54?", 5.0),
+        ("#S7?", 5.0),
     ]
 
 

@@ -17,7 +17,11 @@ from custom_components.zont_local.coordinator import (
     ZontDataUpdateCoordinator,
 )
 from custom_components.zont_local.data import ZontControllerData, ZontData
-from custom_components.zont_local.protocol import ZontClient, ZontProtocolError
+from custom_components.zont_local.protocol import (
+    ZontClient,
+    ZontProtocolError,
+    ZontRequestTimeoutError,
+)
 from custom_components.zont_local.protocol.controller import (
     COMMAND_ETHERNET_INFO,
     COMMAND_GSM_INFO,
@@ -25,6 +29,7 @@ from custom_components.zont_local.protocol.controller import (
     COMMAND_SUPPLY_VOLTAGE,
     COMMAND_WIFI_INFO,
     ZontCommunicationChannel,
+    ZontControllerInfo,
     ZontGsmRegistrationState,
     ZontPowerSource,
 )
@@ -117,15 +122,17 @@ class _SystemCommandMock(AsyncMock):
 
 
 _OPTIONAL_STATUS_CALLS = [
-    call(COMMAND_WIFI_INFO, response_timeout=3.0),
-    call(COMMAND_ETHERNET_INFO, response_timeout=3.0),
-    call(COMMAND_GSM_INFO, response_timeout=3.0),
+    call(COMMAND_WIFI_INFO, response_timeout=5.0),
+    call(COMMAND_ETHERNET_INFO, response_timeout=5.0),
+    call(COMMAND_GSM_INFO, response_timeout=5.0),
 ]
 
 
 def _coordinator(
     hass: HomeAssistant,
     scan_interval: object | None = None,
+    initial_info: ZontControllerInfo | None = None,
+    on_controller_info: MagicMock | None = None,
 ) -> tuple[ZontDataUpdateCoordinator, MagicMock]:
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -144,8 +151,8 @@ def _coordinator(
         hass,
         entry,
         client,
-        initial_info=None,
-        on_controller_info=MagicMock(),
+        initial_info=initial_info,
+        on_controller_info=on_controller_info or MagicMock(),
     )
     return coordinator, client
 
@@ -236,8 +243,8 @@ async def test_refresh_builds_one_controller_snapshot(hass: HomeAssistant) -> No
     assert status.server_status.channel_state == "gsm_wifi"
     assert status.supply_voltage == 12.3
     assert client.async_send_system_command.await_args_list == [
-        call(COMMAND_SERVER_INFO, response_timeout=3.0),
-        call(COMMAND_SUPPLY_VOLTAGE, response_timeout=3.0),
+        call(COMMAND_SERVER_INFO, response_timeout=5.0),
+        call(COMMAND_SUPPLY_VOLTAGE, response_timeout=5.0),
         *_OPTIONAL_STATUS_CALLS,
     ]
     assert client.async_get_object_ids.await_args_list == [
@@ -253,13 +260,14 @@ async def test_refresh_builds_one_controller_snapshot(hass: HomeAssistant) -> No
     ]
 
 
-async def test_invalid_source_is_disabled_without_breaking_others(
+async def test_unavailable_source_is_retried_during_next_update(
     hass: HomeAssistant,
 ) -> None:
     coordinator, client = _coordinator(hass)
     client.async_send_system_command.side_effect = [
         "#S224:!",
         "#S6:123 0",
+        "#S224:1 0 1 0",
         "#S6:124 0",
     ]
 
@@ -267,15 +275,101 @@ async def test_invalid_source_is_disabled_without_breaking_others(
     await coordinator.async_refresh()
 
     assert coordinator.last_update_success
-    assert coordinator.data.controller.server_status is None
+    assert coordinator.data.controller.server_status is not None
+    assert coordinator.data.controller.server_status.cloud_connected
     assert coordinator.data.controller.supply_voltage == 12.4
-    assert coordinator.disabled_sources == ("server_status",)
     assert client.async_send_system_command.await_args_list == [
-        call(COMMAND_SERVER_INFO, response_timeout=3.0),
-        call(COMMAND_SUPPLY_VOLTAGE, response_timeout=3.0),
+        call(COMMAND_SERVER_INFO, response_timeout=5.0),
+        call(COMMAND_SUPPLY_VOLTAGE, response_timeout=5.0),
         *_OPTIONAL_STATUS_CALLS,
-        call(COMMAND_SUPPLY_VOLTAGE, response_timeout=3.0),
+        call(COMMAND_SERVER_INFO, response_timeout=5.0),
+        call(COMMAND_SUPPLY_VOLTAGE, response_timeout=5.0),
+        *_OPTIONAL_STATUS_CALLS,
     ]
+
+
+async def test_malformed_source_is_retried_during_next_update(
+    hass: HomeAssistant,
+) -> None:
+    coordinator, client = _coordinator(hass)
+    client.async_send_system_command.side_effect = [
+        "#S224:not-a-status",
+        "#S6:123 0",
+        "#S224:1 0 1 0",
+        "#S6:124 0",
+    ]
+
+    await coordinator.async_refresh()
+    assert coordinator.last_update_success
+    assert coordinator.data.controller.server_status is None
+
+    await coordinator.async_refresh()
+
+    assert coordinator.last_update_success
+    assert coordinator.data.controller.server_status is not None
+    assert coordinator.data.controller.server_status.cloud_connected
+    commands = [
+        awaited.args[0] for awaited in client.async_send_system_command.await_args_list
+    ]
+    assert commands.count(COMMAND_SERVER_INFO) == 2
+
+
+async def test_timed_out_source_is_retried_after_failed_update(
+    hass: HomeAssistant,
+) -> None:
+    coordinator, client = _coordinator(hass)
+    client.async_send_system_command.side_effect = [
+        ZontRequestTimeoutError("temporary timeout"),
+        "#S224:1 0 1 0",
+        "#S6:123 0",
+    ]
+
+    await coordinator.async_refresh()
+    assert not coordinator.last_update_success
+
+    await coordinator.async_refresh()
+
+    assert coordinator.last_update_success
+    assert coordinator.data.controller.server_status is not None
+    assert coordinator.data.controller.supply_voltage == 12.3
+    commands = [
+        awaited.args[0] for awaited in client.async_send_system_command.await_args_list
+    ]
+    assert commands.count(COMMAND_SERVER_INFO) == 2
+
+
+async def test_controller_information_timeout_is_retried(
+    hass: HomeAssistant,
+) -> None:
+    old_info = ZontControllerInfo(
+        serial_number="ABCDEF123456",
+        model="H1V02 PRO",
+        board_model="700",
+        firmware_version="624",
+    )
+    on_controller_info = MagicMock()
+    coordinator, client = _coordinator(
+        hass,
+        initial_info=old_info,
+        on_controller_info=on_controller_info,
+    )
+    client.async_send_system_command.side_effect = [
+        ZontRequestTimeoutError("temporary timeout"),
+        "#S7:H1V02_PRO 700 625",
+        "#S224:1 0 1 0",
+        "#S6:123 0",
+    ]
+
+    await coordinator.async_refresh()
+    assert not coordinator.last_update_success
+    assert coordinator.data.controller.info == old_info
+
+    await coordinator.async_refresh()
+
+    assert coordinator.last_update_success
+    assert coordinator.data.controller.info is not None
+    assert coordinator.data.controller.info.firmware_version == "625"
+    on_controller_info.assert_called_once_with(coordinator.data.controller.info)
 
 
 async def test_refresh_builds_extended_controller_status(hass: HomeAssistant) -> None:
@@ -309,12 +403,11 @@ async def test_refresh_builds_extended_controller_status(hass: HomeAssistant) ->
     assert status.gsm_status is not None
     assert status.gsm_status.registration is ZontGsmRegistrationState.SEARCHING
     assert status.gsm_status.signal_percent == 0
-    assert coordinator.unsupported_sources == ("ethernet_status",)
     commands = [
         awaited.args[0] for awaited in client.async_send_system_command.await_args_list
     ]
     assert commands.count(COMMAND_WIFI_INFO) == 2
-    assert commands.count(COMMAND_ETHERNET_INFO) == 1
+    assert commands.count(COMMAND_ETHERNET_INFO) == 2
     assert commands.count(COMMAND_GSM_INFO) == 2
 
 
@@ -886,8 +979,8 @@ async def test_refresh_resolves_consumer_water_range(hass: HomeAssistant) -> Non
     assert state.has_sensor_fault
     assert state.is_summer_mode
     assert client.async_send_system_command.await_args_list == [
-        call(COMMAND_SERVER_INFO, response_timeout=3.0),
-        call(COMMAND_SUPPLY_VOLTAGE, response_timeout=3.0),
+        call(COMMAND_SERVER_INFO, response_timeout=5.0),
+        call(COMMAND_SUPPLY_VOLTAGE, response_timeout=5.0),
         *_OPTIONAL_STATUS_CALLS,
         call("#Z20496?"),
         call("#Y20496?"),
@@ -1137,14 +1230,26 @@ async def test_configuration_reload_message_requests_immediate_refresh(
     coordinator, _ = _coordinator(hass)
     coordinator._updater.heating_metadata = MagicMock()
     coordinator._updater.relay_metadata = MagicMock()
-    coordinator.async_refresh = AsyncMock()
+    coordinator.async_request_refresh = AsyncMock()
 
     coordinator._async_message_received("CFG_RELOAD_REQ")
     await hass.async_block_till_done()
 
     coordinator._updater.heating_metadata.mark_stale.assert_called_once_with()
     coordinator._updater.relay_metadata.mark_stale.assert_called_once_with()
-    coordinator.async_refresh.assert_awaited_once_with()
+    coordinator.async_request_refresh.assert_awaited_once_with()
+
+
+async def test_reconnect_requests_debounced_refresh(hass: HomeAssistant) -> None:
+    coordinator, _ = _coordinator(hass)
+    coordinator._updater.mark_connection_stale = MagicMock()
+    coordinator.async_request_refresh = AsyncMock()
+
+    coordinator._async_connection_changed(True)
+    await hass.async_block_till_done()
+
+    coordinator._updater.mark_connection_stale.assert_called_once_with()
+    coordinator.async_request_refresh.assert_awaited_once_with()
 
 
 async def test_push_merges_partial_heating_circuit_state(
@@ -1321,8 +1426,8 @@ async def test_refresh_discovers_pump(hass: HomeAssistant) -> None:
     assert pump.running
     client.async_get_object_state.assert_awaited_once_with(9044)
     assert client.async_send_system_command.await_args_list == [
-        call(COMMAND_SERVER_INFO, response_timeout=3.0),
-        call(COMMAND_SUPPLY_VOLTAGE, response_timeout=3.0),
+        call(COMMAND_SERVER_INFO, response_timeout=5.0),
+        call(COMMAND_SUPPLY_VOLTAGE, response_timeout=5.0),
         *_OPTIONAL_STATUS_CALLS,
     ]
 
@@ -1380,8 +1485,8 @@ async def test_refresh_discovers_mixer_and_internal_state(
     assert state.is_fully_closed
     assert not state.is_fully_open
     assert client.async_send_system_command.await_args_list == [
-        call(COMMAND_SERVER_INFO, response_timeout=3.0),
-        call(COMMAND_SUPPLY_VOLTAGE, response_timeout=3.0),
+        call(COMMAND_SERVER_INFO, response_timeout=5.0),
+        call(COMMAND_SUPPLY_VOLTAGE, response_timeout=5.0),
         *_OPTIONAL_STATUS_CALLS,
         call("#Y9078?"),
     ]
@@ -1899,7 +2004,7 @@ async def test_start_and_shutdown_manage_message_listener(
     coordinator, client = _coordinator(hass)
     unsubscribe = MagicMock()
     client.async_add_message_listener.return_value = unsubscribe
-    coordinator.async_refresh = AsyncMock()
+    coordinator.async_request_refresh = AsyncMock()
 
     coordinator.async_start()
     await hass.async_block_till_done()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections import deque
 from contextlib import suppress
 from typing import Any
@@ -1183,6 +1184,46 @@ async def test_system_command_timeout_invalidates_connection(
         await client.async_send_system_command("#S7?", response_timeout=0.01)
 
     assert ws.closed
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("command", "expected_label"),
+    [
+        ("#S198?", "system command #S198?"),
+        ("#S217=mqtt://secret.invalid", "system command"),
+    ],
+)
+async def test_system_command_timeout_logs_safe_request_label(
+    fake_hass: Any,
+    auth_error_callback: Any,
+    caplog: pytest.LogCaptureFixture,
+    command: str,
+    expected_label: str,
+) -> None:
+    ws = auth_socket()
+    client = make_client(
+        fake_hass,
+        FakeSession([ws]),  # type: ignore[arg-type]
+        "ws://controller/ws",
+        ZontCredentials("user", "password"),
+        "entry",
+        "device",
+        auth_error_callback,
+    )
+    await async_start_client(client)
+    caplog.set_level(
+        logging.DEBUG,
+        logger="custom_components.zont_local.protocol.client",
+    )
+
+    with pytest.raises(ZontRequestTimeoutError):
+        await client.async_send_system_command(command, response_timeout=0.01)
+
+    assert expected_label in caplog.text
+    assert "secret.invalid" not in caplog.text
+    assert "password" not in caplog.text
     await client.async_stop()
 
 

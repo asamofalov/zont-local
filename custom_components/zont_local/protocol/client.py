@@ -161,8 +161,8 @@ class ZontClient:
                         ws = await self._async_open_replacement_connection()
                     except asyncio.CancelledError:
                         raise
-                    except ZontAuthenticationError:
-                        self._record_error("authentication")
+                    except ZontAuthenticationError as err:
+                        self._record_error("authentication", err)
                         raise
 
                     if ws is None:
@@ -194,11 +194,11 @@ class ZontClient:
             ws = await _async_open_websocket(
                 self._session, self._url, self._credentials
             )
-        except ZontProtocolError:
-            self._record_error("protocol")
+        except ZontProtocolError as err:
+            self._record_error("protocol", err)
             return None
-        except ZontConnectionError:
-            self._record_error("connection")
+        except ZontConnectionError as err:
+            self._record_error("connection", err)
             return None
 
         if self._stop.is_set():
@@ -219,10 +219,10 @@ class ZontClient:
             await self._async_reader_loop(ws)
         except asyncio.CancelledError:
             raise
-        except ZontProtocolError:
-            self._record_error("protocol")
-        except ZontConnectionError:
-            self._record_error("connection")
+        except ZontProtocolError as err:
+            self._record_error("protocol", err)
+        except ZontConnectionError as err:
+            self._record_error("connection", err)
         finally:
             if self._ws is ws:
                 self._ws = None
@@ -252,9 +252,19 @@ class ZontClient:
                 WSMsgType.CLOSE,
                 WSMsgType.CLOSED,
                 WSMsgType.CLOSING,
-                WSMsgType.ERROR,
             ):
-                raise ZontConnectionError("The WebSocket was closed")
+                close_code = getattr(ws, "close_code", None)
+                raise ZontConnectionError(
+                    f"The WebSocket was closed by the controller (code {close_code})"
+                )
+            if message.type is WSMsgType.ERROR:
+                exception_method = getattr(ws, "exception", None)
+                error = exception_method() if callable(exception_method) else None
+                if error is None:
+                    raise ZontConnectionError("The WebSocket reported an error")
+                raise ZontConnectionError(
+                    f"The WebSocket reported {type(error).__name__}: {error}"
+                ) from error
             if message.type is WSMsgType.BINARY:
                 raise ZontProtocolError("Binary WebSocket messages are not supported")
 
@@ -386,6 +396,7 @@ class ZontClient:
                     future,
                     response_timeout,
                     ZontCommandTimeoutError(f"No response for command {command_id}"),
+                    f"object command {command_id}",
                 )
             finally:
                 if self._pending_commands.get(command_id) is future:
@@ -437,6 +448,7 @@ class ZontClient:
                     ZontCommandTimeoutError(
                         f"No response for named command {normalized_name!r}"
                     ),
+                    f"named object command type {object_type}",
                 )
             finally:
                 if self._pending_named_command is future:
@@ -468,6 +480,7 @@ class ZontClient:
                     ZontRequestTimeoutError(
                         f"No object ID response for type {object_type}"
                     ),
+                    f"object IDs type {object_type}",
                 )
             finally:
                 if self._pending_ids is future:
@@ -499,6 +512,7 @@ class ZontClient:
                     ZontRequestTimeoutError(
                         f"No state response for object {object_id}"
                     ),
+                    f"object state {object_id}",
                 )
             finally:
                 if self._pending_states.get(object_id) is future:
@@ -526,6 +540,7 @@ class ZontClient:
                     future,
                     response_timeout,
                     ZontRequestTimeoutError("No response for system command"),
+                    _system_command_label(command),
                 )
             finally:
                 if self._pending_scmd is future:
@@ -587,6 +602,7 @@ class ZontClient:
         future: asyncio.Future[T],
         response_timeout: float,
         timeout_error: ZontRequestTimeoutError,
+        request_label: str,
     ) -> T:
         """Send a request and invalidate its connection on cancellation or timeout."""
         try:
@@ -596,7 +612,19 @@ class ZontClient:
         except asyncio.CancelledError:
             await self._async_invalidate_connection(ws)
             raise
+        except ZontConnectionError:
+            _LOGGER.debug(
+                "ZONT request failed because the connection was lost: %s",
+                request_label,
+                exc_info=True,
+            )
+            raise
         except TimeoutError as err:
+            _LOGGER.debug(
+                "ZONT request timed out after %.1f seconds: %s",
+                response_timeout,
+                request_label,
+            )
             await self._async_invalidate_connection(ws)
             raise timeout_error from err
 
@@ -632,12 +660,19 @@ class ZontClient:
         with suppress(TimeoutError):
             await asyncio.wait_for(self._stop.wait(), timeout=delay)
 
-    def _record_error(self, category: str) -> None:
+    def _record_error(self, category: str, error: Exception) -> None:
         """Record an outage without repeatedly filling the log."""
         self._last_error = category
+        _LOGGER.debug(
+            "ZONT WebSocket outage details (%s): %s",
+            category,
+            error,
+            exc_info=True,
+        )
         if not self._outage_logged:
             _LOGGER.warning(
-                "ZONT WebSocket connection lost; reconnecting in the background"
+                "ZONT WebSocket connection lost (%s); reconnecting in the background",
+                category,
             )
             self._outage_logged = True
 
@@ -695,3 +730,15 @@ def _message_id(response: Mapping[str, Any]) -> int | None:
     if type(upper_id) is int:
         return upper_id
     return None
+
+
+def _system_command_label(command: str) -> str:
+    """Return a diagnostic label without exposing command values."""
+    normalized = command.strip()
+    if (
+        normalized.startswith("#")
+        and normalized.endswith("?")
+        and normalized[1:-1].isalnum()
+    ):
+        return f"system command {normalized}"
+    return "system command"

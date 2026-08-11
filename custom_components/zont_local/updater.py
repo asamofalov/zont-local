@@ -68,24 +68,13 @@ class ZontDataUpdater:
         """Initialize protocol-backed source refreshers."""
         self._client = client
         self._on_controller_info = on_controller_info
-        self._disabled_sources: set[str] = set()
-        self._unsupported_sources: set[str] = set()
+        self._source_error_sources: set[str] = set()
         self._object_error_types: set[int] = set()
         self._info_refresh_enabled = initial_info is not None
         self._info_refresh_needed = initial_info is not None
         self.heating_metadata = ZontHeatingMetadataRefresher(client)
         self.mixer_metadata = ZontMixerMetadataRefresher(client)
         self.relay_metadata = ZontRelayMetadataRefresher(client)
-
-    @property
-    def disabled_sources(self) -> tuple[str, ...]:
-        """Return sources disabled until the integration is reloaded."""
-        return tuple(sorted(self._disabled_sources))
-
-    @property
-    def unsupported_sources(self) -> tuple[str, ...]:
-        """Return optional sources unsupported until the integration is reloaded."""
-        return tuple(sorted(self._unsupported_sources))
 
     def mark_connection_stale(self) -> None:
         """Mark connection-scoped metadata for refresh after reconnect."""
@@ -218,57 +207,38 @@ class ZontDataUpdater:
             )
         except asyncio.CancelledError:
             raise
-        except ZontConnectionError:
+        except (ZontConnectionError, ZontRequestTimeoutError):
             raise
-        except (ZontProtocolError, ZontRequestTimeoutError):
-            self._info_refresh_enabled = False
-            self._info_refresh_needed = False
-            _LOGGER.warning(
-                "Unable to refresh ZONT controller information; "
-                "further attempts are disabled until the integration is reloaded"
+        except ZontProtocolError:
+            self._log_source_error(
+                "controller_info",
+                "Unable to refresh ZONT controller information; retrying later",
             )
             return previous
 
         self._info_refresh_needed = False
+        self._source_error_sources.discard("controller_info")
         if info != previous:
             self._on_controller_info(info)
         return info
 
     async def _async_refresh_server_status(self) -> ZontServerStatus | None:
         """Refresh cloud and active communication-channel status."""
-        if _SOURCE_SERVER_STATUS in self._disabled_sources:
-            return None
-        try:
-            response = await self._client.async_send_system_command(
-                COMMAND_SERVER_INFO,
-                response_timeout=CONTROLLER_INFO_TIMEOUT,
-            )
-            return parse_server_status_response(response)
-        except asyncio.CancelledError:
-            raise
-        except ZontConnectionError:
-            raise
-        except (ValueError, ZontProtocolError, ZontRequestTimeoutError):
-            self._disable_source(_SOURCE_SERVER_STATUS, COMMAND_SERVER_INFO)
-            return None
+        return await self._async_refresh_status(
+            _SOURCE_SERVER_STATUS,
+            COMMAND_SERVER_INFO,
+            "#S224:!",
+            parse_server_status_response,
+        )
 
     async def _async_refresh_power_status(self) -> ZontPowerStatus | None:
         """Refresh controller supply voltage and source."""
-        if _SOURCE_SUPPLY_VOLTAGE in self._disabled_sources:
-            return None
-        try:
-            response = await self._client.async_send_system_command(
-                COMMAND_SUPPLY_VOLTAGE,
-                response_timeout=CONTROLLER_INFO_TIMEOUT,
-            )
-            return parse_power_status_response(response)
-        except asyncio.CancelledError:
-            raise
-        except ZontConnectionError:
-            raise
-        except (ValueError, ZontProtocolError, ZontRequestTimeoutError):
-            self._disable_source(_SOURCE_SUPPLY_VOLTAGE, COMMAND_SUPPLY_VOLTAGE)
-            return None
+        return await self._async_refresh_status(
+            _SOURCE_SUPPLY_VOLTAGE,
+            COMMAND_SUPPLY_VOLTAGE,
+            "#S6:!",
+            parse_power_status_response,
+        )
 
     async def _async_refresh_wifi_status(self) -> ZontWifiStatus | None:
         """Refresh optional Wi-Fi state."""
@@ -304,36 +274,61 @@ class ZontDataUpdater:
         unsupported_response: str,
         parser: Callable[[str], StatusT],
     ) -> StatusT | None:
-        """Refresh one optional controller source without affecting others."""
-        if source in self._disabled_sources or source in self._unsupported_sources:
-            return None
+        """Refresh one optional controller source without caching its absence."""
+        return await self._async_refresh_status(
+            source,
+            command,
+            unsupported_response,
+            parser,
+        )
+
+    async def _async_refresh_status[StatusT](
+        self,
+        source: str,
+        command: str,
+        unavailable_response: str,
+        parser: Callable[[str], StatusT],
+    ) -> StatusT | None:
+        """Refresh one controller source and retry every transient absence."""
         try:
             response = await self._client.async_send_system_command(
                 command,
                 response_timeout=CONTROLLER_INFO_TIMEOUT,
             )
-            if response == unsupported_response:
-                self._unsupported_sources.add(source)
-                return None
-            return parser(response)
         except asyncio.CancelledError:
             raise
-        except ZontConnectionError:
+        except (ZontConnectionError, ZontRequestTimeoutError):
             raise
-        except (ValueError, ZontProtocolError, ZontRequestTimeoutError):
-            self._disable_source(source, command)
+        except ZontProtocolError:
+            self._log_source_error(
+                source,
+                f"ZONT command {command} returned an invalid protocol response; "
+                "retrying during the next update",
+            )
             return None
 
-    def _disable_source(self, source: str, command: str) -> None:
-        """Disable one invalid source and log it once."""
-        if source in self._disabled_sources:
+        if response == unavailable_response:
+            self._source_error_sources.discard(source)
+            return None
+        try:
+            status = parser(response)
+        except ValueError:
+            self._log_source_error(
+                source,
+                f"ZONT command {command} returned unrecognized data; "
+                "retrying during the next update",
+            )
+            return None
+
+        self._source_error_sources.discard(source)
+        return status
+
+    def _log_source_error(self, source: str, message: str) -> None:
+        """Log one warning for a consecutive invalid-source response series."""
+        if source in self._source_error_sources:
             return
-        self._disabled_sources.add(source)
-        _LOGGER.warning(
-            "ZONT command %s did not return supported data; "
-            "further attempts are disabled until the integration is reloaded",
-            command,
-        )
+        self._source_error_sources.add(source)
+        _LOGGER.warning(message)
 
     def _log_object_error(self, object_type: int) -> None:
         """Log one warning per type for a consecutive protocol error series."""

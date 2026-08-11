@@ -48,8 +48,6 @@ async def test_diagnostics_exclude_credentials(hass: HomeAssistant) -> None:
     client.pending_count = 1
     coordinator = MagicMock(spec=ZontDataUpdateCoordinator)
     coordinator.last_update_success = True
-    coordinator.disabled_sources = ()
-    coordinator.unsupported_sources = ("ethernet_status",)
     coordinator.data = ZontData(
         controller=ZontControllerData(
             info=None,
@@ -87,8 +85,6 @@ async def test_diagnostics_exclude_credentials(hass: HomeAssistant) -> None:
         },
         "data": {
             "last_update_success": True,
-            "disabled_sources": (),
-            "unsupported_sources": ("ethernet_status",),
             "cloud_connected": True,
             "connection_channels": ["wifi"],
             "supply_voltage": 12.3,
