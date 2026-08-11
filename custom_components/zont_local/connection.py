@@ -91,6 +91,8 @@ class ZontConnectionManager:
     @callback
     def _async_handle_connection_state(self, connected: bool) -> None:
         """Notify entities about authenticated connection-state changes."""
+        if not connected and self._hass.is_stopping:
+            return
         async_dispatcher_send(
             self._hass,
             connection_signal(self._entry.entry_id),
