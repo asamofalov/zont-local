@@ -11,7 +11,7 @@ from typing import Any
 
 from aiohttp import ClientError, ClientSession, ClientWebSocketResponse, WSMsgType
 
-from .constants import COMMAND_TIMEOUT, RECONNECT_DELAYS
+from .constants import RECONNECT_DELAYS, REQUEST_TIMEOUT
 from .errors import (
     ZontAuthenticationError,
     ZontCommandTimeoutError,
@@ -363,7 +363,7 @@ class ZontClient:
         self,
         command_id: int,
         command: ZontCommand,
-        response_timeout: float = COMMAND_TIMEOUT,
+        response_timeout: float = REQUEST_TIMEOUT,
     ) -> dict[str, Any]:
         """Send a command and wait for the matching response."""
         async with self._async_transaction() as ws:
@@ -391,7 +391,7 @@ class ZontClient:
         name: str,
         object_type: int,
         command: ZontCommand,
-        response_timeout: float = COMMAND_TIMEOUT,
+        response_timeout: float = REQUEST_TIMEOUT,
         *,
         object_subtype: int | None = None,
     ) -> dict[str, Any]:
@@ -440,7 +440,7 @@ class ZontClient:
     async def async_get_object_ids(
         self,
         object_type: int,
-        response_timeout: float = COMMAND_TIMEOUT,
+        response_timeout: float = REQUEST_TIMEOUT,
     ) -> list[int]:
         """Request object identifiers of one type."""
         if type(object_type) is not int or not 0 <= object_type <= 255:
@@ -471,7 +471,7 @@ class ZontClient:
     async def async_get_object_state(
         self,
         object_id: int,
-        response_timeout: float = COMMAND_TIMEOUT,
+        response_timeout: float = REQUEST_TIMEOUT,
     ) -> dict[str, Any]:
         """Request the current state of one object."""
         if type(object_id) is not int or object_id < 0:
@@ -502,7 +502,7 @@ class ZontClient:
     async def async_send_system_command(
         self,
         command: str,
-        response_timeout: float = COMMAND_TIMEOUT,
+        response_timeout: float = REQUEST_TIMEOUT,
     ) -> str:
         """Send one serialized system command and return its text response."""
         if not isinstance(command, str) or not command.strip():

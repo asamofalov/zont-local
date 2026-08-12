@@ -14,7 +14,6 @@ from .protocol import (
     ZontProtocolError,
     ZontRequestTimeoutError,
 )
-from .protocol.constants import CONTROLLER_INFO_TIMEOUT
 from .protocol.controller import (
     COMMAND_ETHERNET_INFO,
     COMMAND_GSM_INFO,
@@ -315,10 +314,7 @@ class ZontDataUpdater:
     ) -> StatusT | None:
         """Refresh one controller source and retry every transient absence."""
         try:
-            response = await self._client.async_send_system_command(
-                command,
-                response_timeout=CONTROLLER_INFO_TIMEOUT,
-            )
+            response = await self._client.async_send_system_command(command)
         except asyncio.CancelledError:
             raise
         except (ZontConnectionError, ZontRequestTimeoutError):

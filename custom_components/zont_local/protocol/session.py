@@ -11,7 +11,7 @@ from typing import Any
 
 from aiohttp import ClientError, ClientSession, ClientWebSocketResponse, WSMsgType
 
-from .constants import COMMAND_TIMEOUT, CONNECTION_TIMEOUT, WS_HEARTBEAT
+from .constants import CONNECTION_TIMEOUT, REQUEST_TIMEOUT, WS_HEARTBEAT
 from .errors import (
     ZontAuthenticationError,
     ZontConnectionError,
@@ -93,7 +93,7 @@ class ZontTemporaryRequestSession:
         self._ws = ws
 
     async def async_get_object_ids(
-        self, object_type: int, response_timeout: float = COMMAND_TIMEOUT
+        self, object_type: int, response_timeout: float = REQUEST_TIMEOUT
     ) -> list[int]:
         """Return object identifiers for one type."""
         if type(object_type) is not int or not 0 <= object_type <= 255:
@@ -110,7 +110,7 @@ class ZontTemporaryRequestSession:
         return ids
 
     async def async_get_object_state(
-        self, object_id: int, response_timeout: float = COMMAND_TIMEOUT
+        self, object_id: int, response_timeout: float = REQUEST_TIMEOUT
     ) -> dict[str, Any]:
         """Return the current state of one object."""
         if type(object_id) is not int or object_id < 0:
@@ -123,7 +123,7 @@ class ZontTemporaryRequestSession:
         return dict(response)
 
     async def async_send_system_command(
-        self, command: str, response_timeout: float = COMMAND_TIMEOUT
+        self, command: str, response_timeout: float = REQUEST_TIMEOUT
     ) -> str:
         """Send one system command and return its text result."""
         if not isinstance(command, str) or not command.strip():
@@ -200,7 +200,7 @@ async def async_request_system_commands(
     url: str,
     credentials: ZontCredentials,
     commands: tuple[str, ...],
-    response_timeout: float = COMMAND_TIMEOUT,
+    response_timeout: float = REQUEST_TIMEOUT,
 ) -> list[str]:
     """Run serialized system commands on one temporary connection."""
     async with async_open_temporary_request_session(

@@ -12,7 +12,6 @@ from aiohttp import ClientSession
 from yarl import URL
 
 from .client import ZontClient
-from .constants import CONTROLLER_INFO_TIMEOUT
 from .errors import ZontProtocolError, ZontRequestTimeoutError
 from .session import ZontTemporaryRequestSession, async_request_system_commands
 from .types import ZontCredentials
@@ -320,7 +319,6 @@ async def async_identify_controller(
             url,
             credentials,
             ("#S54?", "#S7?"),
-            response_timeout=CONTROLLER_INFO_TIMEOUT,
         )
         serial_number = parse_serial_response(serial_response)
         return ZontControllerInfo(serial_number).with_identity_response(
@@ -337,12 +335,8 @@ async def async_identify_controller_from_requests(
 ) -> ZontControllerInfo:
     """Obtain controller identity through an already authenticated connection."""
     try:
-        serial_response = await requests.async_send_system_command(
-            "#S54?", CONTROLLER_INFO_TIMEOUT
-        )
-        identity_response = await requests.async_send_system_command(
-            "#S7?", CONTROLLER_INFO_TIMEOUT
-        )
+        serial_response = await requests.async_send_system_command("#S54?")
+        identity_response = await requests.async_send_system_command("#S7?")
         serial_number = parse_serial_response(serial_response)
         return ZontControllerInfo(serial_number).with_identity_response(
             identity_response
@@ -358,9 +352,7 @@ async def async_refresh_controller_info(
     serial_number: str,
 ) -> ZontControllerInfo:
     """Refresh descriptive data through an active protocol client."""
-    response = await client.async_send_system_command(
-        COMMAND_CONTROLLER_INFO, response_timeout=CONTROLLER_INFO_TIMEOUT
-    )
+    response = await client.async_send_system_command(COMMAND_CONTROLLER_INFO)
     try:
         return ZontControllerInfo(serial_number).with_identity_response(response)
     except ValueError as err:

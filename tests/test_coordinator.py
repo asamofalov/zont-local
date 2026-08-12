@@ -135,9 +135,9 @@ class _SystemCommandMock(AsyncMock):
 
 
 _OPTIONAL_STATUS_CALLS = [
-    call(COMMAND_WIFI_INFO, response_timeout=5.0),
-    call(COMMAND_ETHERNET_INFO, response_timeout=5.0),
-    call(COMMAND_GSM_INFO, response_timeout=5.0),
+    call(COMMAND_WIFI_INFO),
+    call(COMMAND_ETHERNET_INFO),
+    call(COMMAND_GSM_INFO),
 ]
 
 
@@ -256,8 +256,8 @@ async def test_refresh_builds_one_controller_snapshot(hass: HomeAssistant) -> No
     assert status.server_status.channel_state == "gsm_wifi"
     assert status.supply_voltage == 12.3
     assert client.async_send_system_command.await_args_list == [
-        call(COMMAND_SERVER_INFO, response_timeout=5.0),
-        call(COMMAND_SUPPLY_VOLTAGE, response_timeout=5.0),
+        call(COMMAND_SERVER_INFO),
+        call(COMMAND_SUPPLY_VOLTAGE),
         *_OPTIONAL_STATUS_CALLS,
     ]
     assert client.async_get_object_ids.await_args_list == [
@@ -294,11 +294,11 @@ async def test_unavailable_source_is_retried_during_next_update(
     assert coordinator.data.controller.server_status.cloud_connected
     assert coordinator.data.controller.supply_voltage == 12.4
     assert client.async_send_system_command.await_args_list == [
-        call(COMMAND_SERVER_INFO, response_timeout=5.0),
-        call(COMMAND_SUPPLY_VOLTAGE, response_timeout=5.0),
+        call(COMMAND_SERVER_INFO),
+        call(COMMAND_SUPPLY_VOLTAGE),
         *_OPTIONAL_STATUS_CALLS,
-        call(COMMAND_SERVER_INFO, response_timeout=5.0),
-        call(COMMAND_SUPPLY_VOLTAGE, response_timeout=5.0),
+        call(COMMAND_SERVER_INFO),
+        call(COMMAND_SUPPLY_VOLTAGE),
         *_OPTIONAL_STATUS_CALLS,
     ]
 
@@ -1084,8 +1084,8 @@ async def test_refresh_resolves_consumer_water_range(hass: HomeAssistant) -> Non
     assert state.has_sensor_fault
     assert state.is_summer_mode
     assert client.async_send_system_command.await_args_list == [
-        call(COMMAND_SERVER_INFO, response_timeout=5.0),
-        call(COMMAND_SUPPLY_VOLTAGE, response_timeout=5.0),
+        call(COMMAND_SERVER_INFO),
+        call(COMMAND_SUPPLY_VOLTAGE),
         *_OPTIONAL_STATUS_CALLS,
         call("#Z20496?"),
         call("#Y20496?"),
@@ -1517,8 +1517,8 @@ async def test_refresh_discovers_pump(hass: HomeAssistant) -> None:
     assert pump.running
     client.async_get_object_state.assert_awaited_once_with(9044)
     assert client.async_send_system_command.await_args_list == [
-        call(COMMAND_SERVER_INFO, response_timeout=5.0),
-        call(COMMAND_SUPPLY_VOLTAGE, response_timeout=5.0),
+        call(COMMAND_SERVER_INFO),
+        call(COMMAND_SUPPLY_VOLTAGE),
         *_OPTIONAL_STATUS_CALLS,
     ]
 
@@ -1576,8 +1576,8 @@ async def test_refresh_discovers_mixer_and_internal_state(
     assert state.is_fully_closed
     assert not state.is_fully_open
     assert client.async_send_system_command.await_args_list == [
-        call(COMMAND_SERVER_INFO, response_timeout=5.0),
-        call(COMMAND_SUPPLY_VOLTAGE, response_timeout=5.0),
+        call(COMMAND_SERVER_INFO),
+        call(COMMAND_SUPPLY_VOLTAGE),
         *_OPTIONAL_STATUS_CALLS,
         call("#Y9078?"),
     ]
