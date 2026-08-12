@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-from homeassistant.config_entries import (
-    ConfigEntry,
-    ConfigEntryAuthFailed,
-    ConfigEntryNotReady,
-)
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
@@ -26,11 +22,8 @@ from .export import ZontExportManager
 from .issues import async_delete_entry_issues
 from .presentation import controller_device_name
 from .protocol import (
-    ZontAuthenticationError,
     ZontClient,
-    ZontConnectionError,
     ZontCredentials,
-    ZontProtocolError,
 )
 from .protocol.controller import (
     ZontControllerInfo,
@@ -95,20 +88,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ZontConfigEntry) -> bool
         ),
     )
     connection = ZontConnectionManager(hass, entry, client, device.id)
-
-    try:
-        await connection.async_start()
-    except ZontAuthenticationError as err:
-        raise ConfigEntryAuthFailed(
-            translation_domain=DOMAIN,
-            translation_key="invalid_auth",
-        ) from err
-    except (ZontConnectionError, ZontProtocolError) as err:
-        raise ConfigEntryNotReady(
-            translation_domain=DOMAIN,
-            translation_key="cannot_connect",
-        ) from err
-
     coordinator = ZontDataUpdateCoordinator(
         hass,
         entry,
@@ -142,12 +121,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ZontConfigEntry) -> bool
     )
     try:
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        coordinator.async_start()
+        export_manager.async_start()
+        await connection.async_start()
     except BaseException:
         await entry.runtime_data.async_shutdown()
         raise
-
-    export_manager.async_start()
-    coordinator.async_start()
 
     return True
 

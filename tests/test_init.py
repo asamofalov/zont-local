@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from custom_components.zont_local import (
     _async_entry_updated,
     async_migrate_entry,
@@ -32,9 +32,7 @@ from custom_components.zont_local.device import (
     async_sync_object_devices,
 )
 from custom_components.zont_local.protocol import (
-    ZontAuthenticationError,
     ZontClient,
-    ZontConnectionError,
     ZontProtocolError,
 )
 from custom_components.zont_local.protocol.controller import ZontControllerInfo
@@ -60,7 +58,6 @@ from custom_components.zont_local.protocol.objects import (
     immutable_objects,
 )
 from custom_components.zont_local.runtime import ZontRuntimeData
-from homeassistant.config_entries import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.const import (
     CONF_HOST,
     CONF_PASSWORD,
@@ -1420,6 +1417,7 @@ async def test_setup_refreshes_controller_information(hass: HomeAssistant) -> No
 
     async def async_start(manager: ZontConnectionManager) -> None:
         manager._client._is_connected = True
+        async_dispatcher_send(hass, connection_signal(entry.entry_id), True)
 
     with (
         patch.object(ZontConnectionManager, "async_start", new=async_start),
@@ -1467,6 +1465,7 @@ async def test_failed_information_refresh_is_disabled_until_restart(
 
     async def async_start(manager: ZontConnectionManager) -> None:
         manager._client._is_connected = True
+        async_dispatcher_send(hass, connection_signal(entry.entry_id), True)
 
     with (
         patch.object(ZontConnectionManager, "async_start", new=async_start),
@@ -1501,30 +1500,36 @@ async def test_failed_information_refresh_is_disabled_until_restart(
     await entry.runtime_data.coordinator.async_shutdown()
 
 
-@pytest.mark.parametrize(
-    ("client_error", "expected_error"),
-    [
-        (ZontConnectionError(), ConfigEntryNotReady),
-        (ZontAuthenticationError(), ConfigEntryAuthFailed),
-    ],
-)
-async def test_setup_maps_client_errors(
+async def test_setup_does_not_require_an_initial_connection(
     hass: HomeAssistant,
-    client_error: Exception,
-    expected_error: type[Exception],
 ) -> None:
     entry = MockConfigEntry(domain=DOMAIN, data=ENTRY_DATA)
     entry.add_to_hass(hass)
+    supervision_started = asyncio.Event()
+
+    async def async_supervise(_client: ZontClient) -> None:
+        supervision_started.set()
+        await asyncio.Event().wait()
 
     with (
         patch.object(
-            ZontConnectionManager,
-            "async_start",
-            new=AsyncMock(side_effect=client_error),
+            ZontClient,
+            "async_supervise",
+            new=async_supervise,
         ),
-        pytest.raises(expected_error),
+        patch.object(
+            hass.config_entries,
+            "async_forward_entry_setups",
+            new=AsyncMock(),
+        ),
     ):
-        await async_setup_entry(hass, entry)
+        async with asyncio.timeout(1):
+            assert await async_setup_entry(hass, entry)
+        await supervision_started.wait()
+
+    assert not entry.runtime_data.client.is_connected
+    assert entry.runtime_data.coordinator.last_update_success
+    await entry.runtime_data.async_shutdown()
 
 
 async def test_unload_stops_client(hass: HomeAssistant) -> None:

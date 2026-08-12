@@ -53,6 +53,7 @@ from .protocol.objects import (
 from .updater import ZontDataUpdater
 
 _LOGGER = logging.getLogger(__name__)
+_FULL_REFRESH_DEBOUNCE_SECONDS = 10
 _SECURITY_ZONE_PUSH_DEBOUNCE_SECONDS = 0.25
 
 
@@ -89,6 +90,13 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
                 seconds=_scan_interval_seconds(entry.options.get(CONF_SCAN_INTERVAL))
             ),
             always_update=False,
+            request_refresh_debouncer=Debouncer(
+                hass,
+                _LOGGER,
+                cooldown=_FULL_REFRESH_DEBOUNCE_SECONDS,
+                immediate=True,
+                background=True,
+            ),
         )
         self.data = ZontData(controller=ZontControllerData(info=initial_info))
         self._entry = entry
@@ -122,7 +130,9 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
         self._unsubscribe_messages = self._client.async_add_message_listener(
             self._async_message_received
         )
-        self._async_create_refresh_task("initial data refresh")
+        if self._client.is_connected:
+            self._updater.mark_connection_stale()
+            self._async_create_refresh_task("initial data refresh")
 
     @callback
     def async_apply_options(self) -> None:

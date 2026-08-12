@@ -30,9 +30,6 @@ class FakeProtocolClient:
         self.connection_listener: Callable[[bool], None] | None = None
         self.removed = 0
 
-    async def async_connect(self) -> None:
-        self.is_connected = True
-
     async def async_supervise(self) -> None:
         if self.error is not None:
             raise self.error
@@ -83,7 +80,11 @@ async def test_manager_bridges_events_and_connection_dispatcher(
     await manager.async_start()
     assert client.message_listener is not None
     assert client.connection_listener is not None
+    assert connection_states == []
+    client.is_connected = True
+    client.connection_listener(True)
     client.message_listener({"id": 7, "type": 14, "s": 1})
+    client.is_connected = False
     client.connection_listener(False)
     await hass.async_block_till_done()
 
@@ -122,7 +123,10 @@ async def test_manager_ignores_disconnect_during_home_assistant_shutdown(
 
     await manager.async_start()
     assert client.connection_listener is not None
+    client.is_connected = True
+    client.connection_listener(True)
     hass.set_state(state)
+    client.is_connected = False
     client.connection_listener(False)
     await hass.async_block_till_done()
 

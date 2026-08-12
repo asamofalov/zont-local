@@ -2097,6 +2097,7 @@ async def test_start_and_shutdown_manage_message_listener(
     coordinator, client = _coordinator(hass)
     unsubscribe = MagicMock()
     client.async_add_message_listener.return_value = unsubscribe
+    coordinator._updater.mark_connection_stale = MagicMock()
     coordinator.async_request_refresh = AsyncMock()
 
     coordinator.async_start()
@@ -2105,9 +2106,62 @@ async def test_start_and_shutdown_manage_message_listener(
     client.async_add_message_listener.assert_called_once_with(
         coordinator._async_message_received
     )
+    coordinator._updater.mark_connection_stale.assert_called_once_with()
+    coordinator.async_request_refresh.assert_awaited_once_with()
 
     await coordinator.async_shutdown()
     unsubscribe.assert_called_once_with()
+
+
+async def test_start_offline_waits_for_connection_before_refresh(
+    hass: HomeAssistant,
+) -> None:
+    coordinator, client = _coordinator(hass)
+    client.is_connected = False
+    coordinator._updater.mark_connection_stale = MagicMock()
+    coordinator.async_request_refresh = AsyncMock()
+
+    coordinator.async_start()
+    await hass.async_block_till_done()
+
+    coordinator._updater.mark_connection_stale.assert_not_called()
+    coordinator.async_request_refresh.assert_not_awaited()
+    assert coordinator.last_update_success
+
+    coordinator._async_connection_changed(True)
+    await hass.async_block_till_done()
+
+    coordinator._updater.mark_connection_stale.assert_called_once_with()
+    coordinator.async_request_refresh.assert_awaited_once_with()
+    await coordinator.async_shutdown()
+
+
+async def test_initial_refresh_does_not_block_home_assistant_startup(
+    hass: HomeAssistant,
+) -> None:
+    coordinator, _ = _coordinator(hass)
+    refresh_started = asyncio.Event()
+    finish_refresh = asyncio.Event()
+    refresh_finished = asyncio.Event()
+
+    async def async_update() -> ZontData:
+        refresh_started.set()
+        await finish_refresh.wait()
+        refresh_finished.set()
+        return coordinator.data
+
+    coordinator._async_update_data = AsyncMock(side_effect=async_update)  # type: ignore[method-assign]
+
+    coordinator.async_start()
+    await refresh_started.wait()
+
+    async with asyncio.timeout(0.2):
+        await hass.async_block_till_done()
+    assert not refresh_finished.is_set()
+
+    finish_refresh.set()
+    await refresh_finished.wait()
+    await coordinator.async_shutdown()
 
 
 async def test_trigger_push_coalesces_addressed_refreshes_for_all_security_zones(

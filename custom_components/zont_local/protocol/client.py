@@ -58,6 +58,7 @@ class ZontClient:
         self._is_connected = False
         self._last_error: str | None = None
         self._reconnect_count = 0
+        self._has_connected_once = False
         self._outage_logged = False
 
     @property
@@ -82,21 +83,9 @@ class ZontClient:
             self._pending_named_command is not None
         )
 
-    async def async_connect(self) -> None:
-        """Open the initial authenticated connection."""
-        if self._ws is not None:
-            return
-
-        self._stop.clear()
-        self._ws = await _async_open_websocket(
-            self._session, self._url, self._credentials
-        )
-        self._set_connected(True)
-
     async def async_supervise(self) -> None:
-        """Read the connection and reconnect until stopped."""
-        if self._ws is None:
-            raise ZontConnectionError("The ZONT client is not connected")
+        """Own the initial connection and every reconnect until stopped."""
+        self._stop.clear()
         await self._async_supervisor()
 
     async def async_stop(self) -> None:
@@ -190,7 +179,10 @@ class ZontClient:
             return None
 
         self._ws = ws
-        self._reconnect_count += 1
+        if self._has_connected_once:
+            self._reconnect_count += 1
+        else:
+            self._has_connected_once = True
         self._set_connected(True)
         if self._outage_logged:
             _LOGGER.info("ZONT WebSocket connection restored")

@@ -159,7 +159,7 @@ async def test_initial_discovery_uses_one_authenticated_connection(
 
 
 async def test_user_flow_success(hass: HomeAssistant, monkeypatch) -> None:
-    monkeypatch.setattr(ZontClient, "async_connect", AsyncMock())
+    monkeypatch.setattr(ZontClient, "async_supervise", AsyncMock())
     discover = _mock_initial_discovery(monkeypatch)
 
     result = await hass.config_entries.flow.async_init(
@@ -249,7 +249,7 @@ async def test_user_flow_requires_an_all_off_mode(
 async def test_initial_flow_allows_empty_device_selection(
     hass: HomeAssistant, monkeypatch
 ) -> None:
-    monkeypatch.setattr(ZontClient, "async_connect", AsyncMock())
+    monkeypatch.setattr(ZontClient, "async_supervise", AsyncMock())
     _mock_initial_discovery(monkeypatch)
 
     result = await hass.config_entries.flow.async_init(
@@ -292,7 +292,7 @@ async def test_user_flow_rejects_invalid_host(
 
 
 async def test_user_flow_normalizes_ipv6(hass: HomeAssistant, monkeypatch) -> None:
-    monkeypatch.setattr(ZontClient, "async_connect", AsyncMock())
+    monkeypatch.setattr(ZontClient, "async_supervise", AsyncMock())
     discover = _mock_initial_discovery(monkeypatch)
 
     result = await hass.config_entries.flow.async_init(

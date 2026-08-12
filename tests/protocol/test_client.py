@@ -113,10 +113,15 @@ def make_client(
 
 
 async def async_start_client(client: ProtocolTestClient) -> asyncio.Task[None]:
-    """Connect and start supervision in a caller-owned task."""
-    await client.async_connect()
+    """Start supervision and wait for its first authenticated connection."""
     client.supervisor_task = asyncio.create_task(client.async_supervise())
-    await asyncio.sleep(0)
+    for _ in range(20):
+        if client.is_connected or client.supervisor_task.done():
+            break
+        await asyncio.sleep(0)
+    if client.supervisor_task.done():
+        await client.supervisor_task
+    assert client.is_connected
     return client.supervisor_task
 
 
@@ -385,6 +390,34 @@ async def test_client_reconnects_after_initial_setup(
 
     assert client.is_connected
     assert client.reconnect_count == 1
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_initial_connection_failure_is_retried_without_counting_reconnect(
+    fake_hass: Any,
+    auth_error_callback: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ws = auth_socket()
+    monkeypatch.setattr(
+        "custom_components.zont_local.protocol.client.RECONNECT_DELAYS", (0,)
+    )
+    client = make_client(
+        fake_hass,
+        FakeSession([ClientError("offline"), ws]),  # type: ignore[arg-type]
+        "ws://controller/ws",
+        ZontCredentials("user", "password"),
+        "entry",
+        "device",
+        auth_error_callback,
+    )
+
+    await async_start_client(client)
+
+    assert client.is_connected
+    assert client.reconnect_count == 0
+    assert client.last_error is None
     await client.async_stop()
 
 

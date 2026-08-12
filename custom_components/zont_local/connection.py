@@ -37,17 +37,15 @@ class ZontConnectionManager:
         self._reauth_requested = False
 
     async def async_start(self) -> None:
-        """Connect once, expose protocol events, and start supervision."""
+        """Expose protocol events and start connection supervision."""
         if self._supervisor_task is not None:
             return
-        await self._client.async_connect()
         self._remove_listeners = [
             self._client.async_add_message_listener(self._async_handle_message),
             self._client.async_add_connection_listener(
                 self._async_handle_connection_state
             ),
         ]
-        self._async_handle_connection_state(self._client.is_connected)
         self._supervisor_task = self._entry.async_create_background_task(
             self._hass,
             self._async_supervise(),
