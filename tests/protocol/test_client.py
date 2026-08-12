@@ -674,7 +674,7 @@ async def test_named_command_includes_optional_object_subtype(
 
 
 @pytest.mark.asyncio
-async def test_addressed_response_does_not_complete_named_command(
+async def test_named_and_addressed_commands_are_serialized(
     fake_hass: Any, auth_error_callback: Any
 ) -> None:
     ws = auth_socket()
@@ -693,12 +693,20 @@ async def test_addressed_response_does_not_complete_named_command(
     addressed = asyncio.create_task(client.async_send_command(7, "value"))
     await asyncio.sleep(0)
 
-    client._handle_incoming('{"id":7,"cmdres":0}')
-    assert await addressed == {"id": 7, "cmdres": 0}
-    assert not named.done()
+    assert ws.sent[-1] == {
+        "name": "HA - Кабинет",
+        "type": 1,
+        "cmd": 24,
+    }
+    assert not addressed.done()
 
     client._handle_incoming('{"id":4111,"cmdres":0}')
     assert (await named)["id"] == 4111
+    await asyncio.sleep(0)
+
+    assert ws.sent[-1] == {"id": 7, "cmd": "value"}
+    client._handle_incoming('{"id":7,"cmdres":0}')
+    assert await addressed == {"id": 7, "cmdres": 0}
     await client.async_stop()
 
 
@@ -864,7 +872,7 @@ async def test_same_ids_are_serialized(
 
 
 @pytest.mark.asyncio
-async def test_different_ids_can_be_in_flight(
+async def test_different_command_ids_are_serialized(
     fake_hass: Any, auth_error_callback: Any
 ) -> None:
     ws = auth_socket()
@@ -882,16 +890,22 @@ async def test_different_ids_can_be_in_flight(
     second = asyncio.create_task(client.async_send_command(8, "second"))
     await asyncio.sleep(0)
 
-    assert client.pending_count == 2
-    client._handle_incoming('{"id":8,"cmdres":0}')
+    assert client.pending_count == 1
+    assert ws.sent[-1] == {"id": 7, "cmd": "first"}
+    assert {"id": 8, "cmd": "second"} not in ws.sent
+
     client._handle_incoming('{"id":7,"cmdres":0}')
-    assert (await first)["id"] == 7
+    assert await first == {"id": 7, "cmdres": 0}
+    await asyncio.sleep(0)
+
+    assert ws.sent[-1] == {"id": 8, "cmd": "second"}
+    client._handle_incoming('{"id":8,"cmdres":0}')
     assert (await second)["id"] == 8
     await client.async_stop()
 
 
 @pytest.mark.asyncio
-async def test_command_and_state_for_same_id_are_routed_independently(
+async def test_command_and_state_for_same_id_are_serialized(
     fake_hass: Any, auth_error_callback: Any
 ) -> None:
     ws = auth_socket()
@@ -910,10 +924,114 @@ async def test_command_and_state_for_same_id_are_routed_independently(
     state_task = asyncio.create_task(client.async_get_object_state(7))
     await asyncio.sleep(0)
 
-    assert ws.sent[-2:] == [{"id": 7, "cmd": "1"}, {"id": 7, "req_state": 0}]
+    assert ws.sent[-1] == {"id": 7, "cmd": "1"}
+    assert {"id": 7, "req_state": 0} not in ws.sent
+
+    client._handle_incoming('{"id":7,"cmdres":0}')
+    assert await command_task == {"id": 7, "cmdres": 0}
+    await asyncio.sleep(0)
+
+    assert ws.sent[-1] == {"id": 7, "req_state": 0}
     client._handle_incoming('{"id":7,"type":14,"s":1}')
     assert await state_task == {"id": 7, "type": 14, "s": 1}
-    assert not command_task.done()
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_different_request_types_share_transaction_queue(
+    fake_hass: Any, auth_error_callback: Any
+) -> None:
+    ws = auth_socket()
+    client = make_client(
+        fake_hass,
+        FakeSession([ws]),  # type: ignore[arg-type]
+        "ws://controller/ws",
+        ZontCredentials("user", "password"),
+        "entry",
+        "device",
+        auth_error_callback,
+    )
+    await async_start_client(client)
+
+    ids_task = asyncio.create_task(client.async_get_object_ids(16))
+    scmd_task = asyncio.create_task(client.async_send_system_command("#S6?"))
+    await asyncio.sleep(0)
+
+    assert ws.sent[-1] == {"req_ids": 16}
+    assert {"scmd": "#S6?"} not in ws.sent
+
+    client._handle_incoming('{"ids":[20496]}')
+    assert await ids_task == [20496]
+    await asyncio.sleep(0)
+
+    assert ws.sent[-1] == {"scmd": "#S6?"}
+    client._handle_incoming('{"scmdres":"#S6:122 0"}')
+    assert await scmd_task == "#S6:122 0"
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_queue_wait_does_not_consume_response_timeout(
+    fake_hass: Any, auth_error_callback: Any
+) -> None:
+    ws = auth_socket()
+    client = make_client(
+        fake_hass,
+        FakeSession([ws]),  # type: ignore[arg-type]
+        "ws://controller/ws",
+        ZontCredentials("user", "password"),
+        "entry",
+        "device",
+        auth_error_callback,
+    )
+    await async_start_client(client)
+
+    command_task = asyncio.create_task(client.async_send_command(7, "value"))
+    state_task = asyncio.create_task(
+        client.async_get_object_state(8, response_timeout=0.01)
+    )
+    await asyncio.sleep(0.02)
+
+    assert not state_task.done()
+    assert {"id": 8, "req_state": 0} not in ws.sent
+
+    client._handle_incoming('{"id":7,"cmdres":0}')
+    assert await command_task == {"id": 7, "cmdres": 0}
+    await asyncio.sleep(0)
+
+    assert ws.sent[-1] == {"id": 8, "req_state": 0}
+    client._handle_incoming('{"id":8,"type":14,"s":1}')
+    assert await state_task == {"id": 8, "type": 14, "s": 1}
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_cancelling_queued_request_keeps_connection(
+    fake_hass: Any, auth_error_callback: Any
+) -> None:
+    ws = auth_socket()
+    client = make_client(
+        fake_hass,
+        FakeSession([ws]),  # type: ignore[arg-type]
+        "ws://controller/ws",
+        ZontCredentials("user", "password"),
+        "entry",
+        "device",
+        auth_error_callback,
+    )
+    await async_start_client(client)
+
+    command_task = asyncio.create_task(client.async_send_command(7, "value"))
+    queued_task = asyncio.create_task(client.async_get_object_ids(255))
+    await asyncio.sleep(0)
+
+    queued_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await queued_task
+
+    assert client.is_connected
+    assert not ws.closed
+    assert {"req_ids": 255} not in ws.sent
 
     client._handle_incoming('{"id":7,"cmdres":0}')
     assert await command_task == {"id": 7, "cmdres": 0}
@@ -1111,6 +1229,83 @@ async def test_system_command_requests_are_serialized(
     assert ws.sent[-1] == {"scmd": "SDATE?"}
     client._handle_incoming('{"scmdres":"SDATE=8 8 26 10 14 19"}')
     assert await second == "SDATE=8 8 26 10 14 19"
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_fire_and_forget_command_waits_for_active_transaction(
+    fake_hass: Any, auth_error_callback: Any
+) -> None:
+    ws = auth_socket()
+    client = make_client(
+        fake_hass,
+        FakeSession([ws]),  # type: ignore[arg-type]
+        "ws://controller/ws",
+        ZontCredentials("user", "password"),
+        "entry",
+        "device",
+        auth_error_callback,
+    )
+    await async_start_client(client)
+
+    state_task = asyncio.create_task(client.async_get_object_state(7))
+    restart_task = asyncio.create_task(
+        client.async_send_system_command_without_response("SRESTART?")
+    )
+    await asyncio.sleep(0)
+
+    assert ws.sent[-1] == {"id": 7, "req_state": 0}
+    assert {"scmd": "SRESTART?"} not in ws.sent
+
+    client._handle_incoming('{"id":7,"type":14,"s":1}')
+    assert await state_task == {"id": 7, "type": 14, "s": 1}
+    await restart_task
+
+    assert ws.sent[-1] == {"scmd": "SRESTART?"}
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_timed_out_transaction_drops_old_queued_request(
+    fake_hass: Any,
+    auth_error_callback: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_ws = auth_socket()
+    replacement_ws = auth_socket()
+    monkeypatch.setattr(
+        "custom_components.zont_local.protocol.client.RECONNECT_DELAYS", (0,)
+    )
+    client = make_client(
+        fake_hass,
+        FakeSession([first_ws, replacement_ws]),  # type: ignore[arg-type]
+        "ws://controller/ws",
+        ZontCredentials("user", "password"),
+        "entry",
+        "device",
+        auth_error_callback,
+    )
+    await async_start_client(client)
+
+    active_task = asyncio.create_task(
+        client.async_send_system_command("#S7?", response_timeout=0.01)
+    )
+    queued_task = asyncio.create_task(client.async_send_command(7, "value"))
+    await asyncio.sleep(0)
+
+    with pytest.raises(ZontRequestTimeoutError):
+        await active_task
+    with pytest.raises(ZontConnectionError):
+        await queued_task
+
+    for _ in range(20):
+        if client.reconnect_count == 1:
+            break
+        await asyncio.sleep(0)
+
+    assert client.is_connected
+    assert first_ws.closed
+    assert replacement_ws.sent == [{"user": "user", "pass": "password"}]
     await client.async_stop()
 
 

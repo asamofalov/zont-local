@@ -7,7 +7,6 @@ import json
 import logging
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager, suppress
-from dataclasses import dataclass
 from typing import Any
 
 from aiohttp import ClientError, ClientSession, ClientWebSocketResponse, WSMsgType
@@ -31,14 +30,6 @@ from .types import ZontCommand, ZontCredentials
 _LOGGER = logging.getLogger(__name__)
 
 
-@dataclass(slots=True)
-class _RequestSlot:
-    """Lock and reference count for one object identifier."""
-
-    lock: asyncio.Lock
-    users: int = 0
-
-
 class ZontClient:
     """Maintain a single authenticated WebSocket connection to ZONT."""
 
@@ -55,12 +46,7 @@ class ZontClient:
 
         self._ws: ClientWebSocketResponse | None = None
         self._stop = asyncio.Event()
-        self._send_lock = asyncio.Lock()
-        self._command_slots: dict[int, _RequestSlot] = {}
-        self._state_slots: dict[int, _RequestSlot] = {}
-        self._ids_lock = asyncio.Lock()
-        self._scmd_lock = asyncio.Lock()
-        self._named_command_lock = asyncio.Lock()
+        self._transaction_lock = asyncio.Lock()
         self._pending_commands: dict[int, asyncio.Future[dict[str, Any]]] = {}
         self._pending_named_command: asyncio.Future[dict[str, Any]] | None = None
         self._pending_states: dict[int, asyncio.Future[dict[str, Any]]] = {}
@@ -123,8 +109,6 @@ class ZontClient:
         self._ws = None
         await _async_close_websocket(ws)
 
-        self._command_slots.clear()
-        self._state_slots.clear()
         self._message_listeners.clear()
         self._connection_listeners.clear()
 
@@ -382,9 +366,7 @@ class ZontClient:
         response_timeout: float = COMMAND_TIMEOUT,
     ) -> dict[str, Any]:
         """Send a command and wait for the matching response."""
-        async with self._async_request_slot(self._command_slots, command_id):
-            ws = self._connected_websocket()
-
+        async with self._async_transaction() as ws:
             future: asyncio.Future[dict[str, Any]] = (
                 asyncio.get_running_loop().create_future()
             )
@@ -426,8 +408,7 @@ class ZontClient:
         ):
             raise ValueError("Object subtype must be an integer from 0 to 255")
 
-        async with self._named_command_lock:
-            ws = self._connected_websocket()
+        async with self._async_transaction() as ws:
             future: asyncio.Future[dict[str, Any]] = (
                 asyncio.get_running_loop().create_future()
             )
@@ -465,8 +446,7 @@ class ZontClient:
         if type(object_type) is not int or not 0 <= object_type <= 255:
             raise ValueError("Object type must be an integer from 0 to 255")
 
-        async with self._ids_lock:
-            ws = self._connected_websocket()
+        async with self._async_transaction() as ws:
             future: asyncio.Future[list[int]] = (
                 asyncio.get_running_loop().create_future()
             )
@@ -497,8 +477,7 @@ class ZontClient:
         if type(object_id) is not int or object_id < 0:
             raise ValueError("Object ID must be a non-negative integer")
 
-        async with self._async_request_slot(self._state_slots, object_id):
-            ws = self._connected_websocket()
+        async with self._async_transaction() as ws:
             future: asyncio.Future[dict[str, Any]] = (
                 asyncio.get_running_loop().create_future()
             )
@@ -529,8 +508,7 @@ class ZontClient:
         if not isinstance(command, str) or not command.strip():
             raise ValueError("System command must be non-empty text")
 
-        async with self._scmd_lock:
-            ws = self._connected_websocket()
+        async with self._async_transaction() as ws:
             future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
             self._pending_scmd = future
             try:
@@ -553,8 +531,7 @@ class ZontClient:
         if not isinstance(command, str) or not command.strip():
             raise ValueError("System command must be non-empty text")
 
-        async with self._scmd_lock:
-            ws = self._connected_websocket()
+        async with self._async_transaction() as ws:
             try:
                 await self._async_send_payload(ws, {"scmd": command})
             except asyncio.CancelledError:
@@ -573,20 +550,17 @@ class ZontClient:
         ws: ClientWebSocketResponse,
         payload: Mapping[str, Any],
     ) -> None:
-        """Serialize and send one payload through the expected connection."""
+        """Send one payload through the expected connection."""
         try:
-            async with self._send_lock:
-                if self._ws is not ws or ws.closed:
-                    raise ZontConnectionError(
-                        "The ZONT connection changed before sending"
-                    )
-                await ws.send_str(
-                    json.dumps(
-                        payload,
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                    )
+            if not self._is_connected or self._ws is not ws or ws.closed:
+                raise ZontConnectionError("The ZONT connection changed before sending")
+            await ws.send_str(
+                json.dumps(
+                    payload,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
                 )
+            )
         except asyncio.CancelledError:
             raise
         except ZontConnectionError:
@@ -635,23 +609,17 @@ class ZontClient:
         await _async_close_websocket(ws)
 
     @asynccontextmanager
-    async def _async_request_slot(
+    async def _async_transaction(
         self,
-        slots: dict[int, _RequestSlot],
-        object_id: int,
-    ) -> AsyncIterator[None]:
-        """Serialize requests of one class that share an object identifier."""
-        slot = slots.get(object_id)
-        if slot is None:
-            slot = slots[object_id] = _RequestSlot(asyncio.Lock())
-        slot.users += 1
-        try:
-            async with slot.lock:
-                yield
-        finally:
-            slot.users -= 1
-            if slot.users == 0 and slots.get(object_id) is slot:
-                slots.pop(object_id, None)
+    ) -> AsyncIterator[ClientWebSocketResponse]:
+        """Serialize one request on the connection active when it was queued."""
+        ws = self._connected_websocket()
+        async with self._transaction_lock:
+            if not self._is_connected or self._ws is not ws or ws.closed:
+                raise ZontConnectionError(
+                    "The ZONT connection changed while waiting to send"
+                )
+            yield ws
 
     async def _async_wait_before_reconnect(self, index: int) -> None:
         """Wait for the next reconnect without delaying shutdown."""
