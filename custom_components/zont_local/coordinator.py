@@ -370,6 +370,9 @@ class ZontDataUpdateCoordinator(DataUpdateCoordinator[ZontData]):
         if updated == self.data:
             return True
 
+        if previous is None:
+            self._updater.mark_configuration_stale()
+
         # Keep the periodic control poll deadline: async_set_updated_data()
         # intentionally resets it, which would let frequent push messages defer
         # discovery indefinitely.

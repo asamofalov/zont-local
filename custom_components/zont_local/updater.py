@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from time import monotonic
 
 from .data import ZontControllerData, ZontData
@@ -55,6 +56,17 @@ _SOURCE_WIFI_STATUS = "wifi_status"
 _SOURCE_ETHERNET_STATUS = "ethernet_status"
 _SOURCE_GSM_STATUS = "gsm_status"
 _CONFIGURATION_REFRESH_INTERVAL = 15 * 60
+_OBJECT_CATALOG_TYPE = 255
+
+
+@dataclass(frozen=True, slots=True)
+class _ObjectRefreshResult:
+    """One object refresh plus catalog state to commit with the snapshot."""
+
+    objects: Mapping[int, ZontObject]
+    catalog_ids: frozenset[int] | None
+    deferred_ids: frozenset[int]
+    catalog_changed: bool
 
 
 class ZontDataUpdater:
@@ -71,7 +83,9 @@ class ZontDataUpdater:
         self._client = client
         self._on_controller_info = on_controller_info
         self._source_error_sources: set[str] = set()
-        self._object_error_types: set[int] = set()
+        self._object_error_ids: set[int] = set()
+        self._object_catalog_ids: frozenset[int] | None = None
+        self._deferred_object_ids: frozenset[int] = frozenset()
         self._info_refresh_enabled = initial_info is not None
         self._info_refresh_needed = initial_info is not None
         self._monotonic_time = monotonic_time
@@ -113,7 +127,14 @@ class ZontDataUpdater:
         wifi_status = await self._async_refresh_wifi_status()
         ethernet_status = await self._async_refresh_ethernet_status()
         gsm_status = await self._async_refresh_gsm_status()
-        objects = await self._async_refresh_objects(previous.objects)
+        object_refresh = await self._async_refresh_objects(
+            previous.objects,
+            retry_deferred=configuration_refresh_due,
+        )
+        if object_refresh.catalog_changed:
+            configuration_refresh_due = True
+            self.mark_configuration_stale()
+        objects = object_refresh.objects
         mixer_states = await self.mixer_metadata.async_refresh(objects)
         relay_configurations, relay_states = await self.relay_metadata.async_refresh(
             objects
@@ -139,7 +160,7 @@ class ZontDataUpdater:
         if not self._client.is_connected:
             raise ZontConnectionError("The ZONT controller disconnected during update")
 
-        return ZontData(
+        updated = ZontData(
             controller=ZontControllerData(
                 info=info,
                 server_status=server_status,
@@ -161,56 +182,123 @@ class ZontDataUpdater:
             relay_configurations=relay_configurations,
             relay_states=relay_states,
         )
+        if object_refresh.catalog_ids is not None:
+            self._object_catalog_ids = object_refresh.catalog_ids
+            self._deferred_object_ids = object_refresh.deferred_ids
+        return updated
 
     async def _async_refresh_objects(
         self,
         previous: Mapping[int, ZontObject],
-    ) -> Mapping[int, ZontObject]:
-        """Discover and refresh all supported object types."""
-        objects = {
-            object_id: unavailable_object(obj) for object_id, obj in previous.items()
-        }
-        for object_type in SUPPORTED_OBJECT_TYPES:
-            had_protocol_error = False
+        *,
+        retry_deferred: bool,
+    ) -> _ObjectRefreshResult:
+        """Refresh known objects and classify additions from the full catalog."""
+        catalog_ids: frozenset[int] | None
+        inventory_confirmed = True
+        try:
+            catalog_ids = frozenset(
+                await self._client.async_get_object_ids(_OBJECT_CATALOG_TYPE)
+            )
+        except asyncio.CancelledError:
+            raise
+        except (ZontConnectionError, ZontRequestTimeoutError):
+            raise
+        except ZontProtocolError:
+            inventory_confirmed = False
+            catalog_ids = None
+            self._log_source_error(
+                "object_catalog",
+                "Unable to read the complete ZONT object catalog; preserving the "
+                "last confirmed catalog and retrying during the next update",
+            )
+        else:
+            self._source_error_sources.discard("object_catalog")
+
+        if inventory_confirmed:
+            assert catalog_ids is not None
+            catalog_changed = (
+                self._object_catalog_ids is not None
+                and catalog_ids != self._object_catalog_ids
+            )
+            deferred_ids = set(self._deferred_object_ids & catalog_ids)
+            known_ids = set(previous) & catalog_ids
+            if self._object_catalog_ids is None:
+                classification_ids = set(catalog_ids) - known_ids
+            else:
+                classification_ids = set(catalog_ids - self._object_catalog_ids)
+            if retry_deferred or catalog_changed:
+                classification_ids.update(deferred_ids)
+            query_ids = known_ids | classification_ids
+            objects = {
+                object_id: unavailable_object(previous[object_id])
+                for object_id in known_ids
+            }
+        else:
+            catalog_changed = False
+            deferred_ids = set(self._deferred_object_ids)
+            query_ids = set(previous)
+            objects = {
+                object_id: unavailable_object(obj)
+                for object_id, obj in previous.items()
+            }
+
+        for object_id in sorted(query_ids):
             try:
-                object_ids = await self._client.async_get_object_ids(object_type)
+                response = await self._client.async_get_object_state(object_id)
             except asyncio.CancelledError:
                 raise
             except (ZontConnectionError, ZontRequestTimeoutError):
                 raise
             except ZontProtocolError:
-                self._log_object_error(object_type)
+                self._log_object_error(object_id)
+                if object_id not in previous:
+                    deferred_ids.add(object_id)
                 continue
 
-            for object_id in object_ids:
-                try:
-                    response = await self._client.async_get_object_state(object_id)
-                except asyncio.CancelledError:
-                    raise
-                except (ZontConnectionError, ZontRequestTimeoutError):
-                    raise
-                except ZontProtocolError:
-                    had_protocol_error = True
-                    continue
+            if response.get("failed"):
+                if object_id not in previous:
+                    deferred_ids.add(object_id)
+                self._object_error_ids.discard(object_id)
+                continue
 
-                if response.get("failed"):
-                    continue
+            response_id = response.get("id")
+            object_type = response.get("type")
+            if type(response_id) is not int or response_id != object_id:
+                deferred_ids.add(object_id)
+                self._log_object_error(object_id)
+                continue
+            if object_type not in SUPPORTED_OBJECT_TYPES:
+                if object_id in previous:
+                    objects.pop(object_id, None)
+                    catalog_changed = True
+                deferred_ids.add(object_id)
+                self._object_error_ids.discard(object_id)
+                continue
 
-                try:
-                    obj = parse_zont_object(response, previous.get(object_id))
-                    if obj.object_type != object_type:
-                        raise ZontObjectParseError(
-                            "Object type does not match requested type"
-                        )
-                    objects[object_id] = obj
-                except ZontObjectParseError:
-                    had_protocol_error = True
-
-            if had_protocol_error:
-                self._log_object_error(object_type)
+            previous_object = previous.get(object_id)
+            if (
+                previous_object is not None
+                and previous_object.object_type != object_type
+            ):
+                previous_object = None
+                catalog_changed = True
+            try:
+                objects[object_id] = parse_zont_object(response, previous_object)
+            except ZontObjectParseError:
+                self._log_object_error(object_id)
+                if object_id not in previous:
+                    deferred_ids.add(object_id)
             else:
-                self._object_error_types.discard(object_type)
-        return immutable_objects(objects)
+                deferred_ids.discard(object_id)
+                self._object_error_ids.discard(object_id)
+
+        return _ObjectRefreshResult(
+            objects=immutable_objects(objects),
+            catalog_ids=catalog_ids if inventory_confirmed else None,
+            deferred_ids=frozenset(deferred_ids),
+            catalog_changed=catalog_changed,
+        )
 
     async def _async_refresh_info(
         self, previous: ZontControllerInfo | None
@@ -350,13 +438,13 @@ class ZontDataUpdater:
         self._source_error_sources.add(source)
         _LOGGER.warning(message)
 
-    def _log_object_error(self, object_type: int) -> None:
-        """Log one warning per type for a consecutive protocol error series."""
-        if object_type in self._object_error_types:
+    def _log_object_error(self, object_id: int) -> None:
+        """Log one warning per object for a consecutive protocol error series."""
+        if object_id in self._object_error_ids:
             return
-        self._object_error_types.add(object_type)
+        self._object_error_ids.add(object_id)
         _LOGGER.warning(
-            "Unable to read one or more ZONT objects of type %s; "
+            "Unable to read ZONT object %s; "
             "the integration will retry during the next update",
-            object_type,
+            object_id,
         )

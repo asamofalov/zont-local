@@ -28,10 +28,10 @@ def _client() -> MagicMock:
     return client
 
 
-async def test_heating_mode_ids_are_checked_during_every_refresh() -> None:
-    """A changed mode-ID set must refresh #Z before the periodic deadline."""
+async def test_heating_mode_ids_are_checked_only_when_configuration_is_stale() -> None:
+    """Mode discovery must follow the static-configuration refresh policy."""
     client = _client()
-    client.async_get_object_ids.side_effect = [[20501], [20501], [20502]]
+    client.async_get_object_ids.side_effect = [[20501], [20502]]
     client.async_send_system_command.side_effect = [
         "#Z20501:20,'Комфорт',[8362],[3330],[0],21,[0],10,0,10,1,0",
         "#Y8362$3330,3330,[],0,0,20501,4097,0,[20501],0,0",
@@ -46,13 +46,14 @@ async def test_heating_mode_ids_are_checked_during_every_refresh() -> None:
 
     _, _, modes = await refresher.async_refresh(objects, immutable_heating_modes())
     _, _, unchanged_modes = await refresher.async_refresh(objects, modes)
+    refresher.mark_stale()
     _, _, changed_modes = await refresher.async_refresh(objects, unchanged_modes)
 
     assert modes[20501].name == "Комфорт"
     assert unchanged_modes is modes
     assert set(changed_modes) == {20502}
     assert changed_modes[20502].name == "Эконом"
-    assert client.async_get_object_ids.await_args_list == [call(20), call(20), call(20)]
+    assert client.async_get_object_ids.await_args_list == [call(20), call(20)]
     commands = [
         item.args[0] for item in client.async_send_system_command.await_args_list
     ]

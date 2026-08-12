@@ -43,9 +43,6 @@ from custom_components.zont_local.protocol.mixer import (
     immutable_mixer_states,
 )
 from custom_components.zont_local.protocol.objects import (
-    OBJECT_TYPE_RELAY,
-    OBJECT_TYPE_SECURITY_ZONE,
-    OBJECT_TYPE_USER_ELEMENT,
     ZontAnalogInputData,
     ZontDigitalBusAdapterData,
     ZontDigitalBusState,
@@ -74,36 +71,11 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 
 class _ObjectIdsMock(AsyncMock):
-    """Keep legacy discovery fixtures focused on their original object types."""
-
-    relay_ids: list[int]
-    security_zone_ids: list[int]
-    user_element_ids: list[int]
+    """Represent full-catalog and heating-mode ID responses."""
 
     def __init__(self) -> None:
-        """Initialize an object-ID mock with no relays."""
+        """Initialize an object-ID mock with an empty catalog."""
         super().__init__(return_value=[])
-        self.relay_ids = []
-        self.security_zone_ids = []
-        self.user_element_ids = []
-
-    async def _execute_mock_call(self, *args: object, **kwargs: object) -> object:
-        special_ids = {
-            OBJECT_TYPE_RELAY: self.relay_ids,
-            OBJECT_TYPE_SECURITY_ZONE: self.security_zone_ids,
-            OBJECT_TYPE_USER_ELEMENT: self.user_element_ids,
-        }
-        if args and args[0] in special_ids:
-            side_effect = self.side_effect
-            return_value = self.return_value
-            self.side_effect = None
-            self.return_value = list(special_ids[int(args[0])])
-            try:
-                return await super()._execute_mock_call(*args, **kwargs)
-            finally:
-                self.side_effect = side_effect
-                self.return_value = return_value
-        return await super()._execute_mock_call(*args, **kwargs)
 
 
 class _SystemCommandMock(AsyncMock):
@@ -217,7 +189,7 @@ async def test_shutdown_cancels_active_poll_before_client_stop(
         "#S224:1 0 1 0",
         "#S6:123 0",
     ]
-    client.async_get_object_ids.side_effect = [[1001]]
+    client.async_get_object_ids.return_value = [1001]
     request_started = asyncio.Event()
 
     async def wait_for_shutdown(_object_id: int) -> dict[str, object]:
@@ -260,19 +232,7 @@ async def test_refresh_builds_one_controller_snapshot(hass: HomeAssistant) -> No
         call(COMMAND_SUPPLY_VOLTAGE),
         *_OPTIONAL_STATUS_CALLS,
     ]
-    assert client.async_get_object_ids.await_args_list == [
-        call(0),
-        call(1),
-        call(2),
-        call(6),
-        call(8),
-        call(10),
-        call(16),
-        call(17),
-        call(27),
-        call(15),
-        call(14),
-    ]
+    assert client.async_get_object_ids.await_args_list == [call(255)]
 
 
 async def test_unavailable_source_is_retried_during_next_update(
@@ -465,7 +425,7 @@ async def test_refresh_discovers_digital_bus_adapter(hass: HomeAssistant) -> Non
         "#S224:1 0 1 0",
         "#S6:123 0",
     ]
-    client.async_get_object_ids.side_effect = [[], [], [4097], [], [], [], [], []]
+    client.async_get_object_ids.return_value = [4097]
     client.async_get_object_state.return_value = {
         "id": 4097,
         "type": 6,
@@ -496,7 +456,7 @@ async def test_refresh_discovers_security_zone(hass: HomeAssistant) -> None:
         "#S224:1 0 1 0",
         "#S6:123 0",
     ]
-    client.async_get_object_ids.security_zone_ids = [10657]
+    client.async_get_object_ids.return_value = [10657]
     client.async_get_object_state.return_value = {
         "id": 10657,
         "type": 2,
@@ -520,7 +480,7 @@ async def test_refresh_discovers_user_element(hass: HomeAssistant) -> None:
         "#S224:1 0 1 0",
         "#S6:123 0",
     ]
-    client.async_get_object_ids.user_element_ids = [10691]
+    client.async_get_object_ids.return_value = [10691]
     client.async_get_object_state.return_value = {
         "id": 10691,
         "type": 10,
@@ -574,6 +534,28 @@ def test_push_updates_user_element_state_and_text(hass: HomeAssistant) -> None:
     assert element.text == "Включено"
 
 
+def test_push_of_unknown_object_marks_configuration_stale(
+    hass: HomeAssistant,
+) -> None:
+    """A newly pushed object must invalidate cached static metadata."""
+    coordinator, _ = _coordinator(hass)
+    coordinator._updater.mark_configuration_stale = MagicMock()
+
+    coordinator._async_message_received(
+        {
+            "id": 10691,
+            "type": 10,
+            "stype": 2,
+            "name": "Режим",
+            "s": 1,
+            "t": "Включено",
+        }
+    )
+
+    assert isinstance(coordinator.data.objects[10691], ZontUserElementData)
+    coordinator._updater.mark_configuration_stale.assert_called_once_with()
+
+
 async def test_failed_object_becomes_unavailable_without_losing_values(
     hass: HomeAssistant,
 ) -> None:
@@ -584,24 +566,7 @@ async def test_failed_object_becomes_unavailable_without_losing_values(
         "#S224:1 0 1 0",
         "#S6:123 0",
     ]
-    client.async_get_object_ids.side_effect = [
-        [],
-        [],
-        [4097],
-        [],
-        [],
-        [],
-        [],
-        [],
-        [],
-        [],
-        [4097],
-        [],
-        [],
-        [],
-        [],
-        [],
-    ]
+    client.async_get_object_ids.side_effect = [[4097], [4097]]
     client.async_get_object_state.side_effect = [
         {
             "id": 4097,
@@ -639,30 +604,16 @@ async def test_object_protocol_error_is_isolated_and_retried(
         "#S224:1 0 1 0",
         "#S6:123 0",
     ]
-    client.async_get_object_ids.side_effect = [
-        [],
-        [],
+    client.async_get_object_ids.side_effect = [[4097], [4097]]
+    client.async_get_object_state.side_effect = [
         ZontProtocolError,
-        [],
-        [],
-        [],
-        [],
-        [],
-        [],
-        [],
-        [4097],
-        [],
-        [],
-        [],
-        [],
-        [],
+        {
+            "id": 4097,
+            "type": 6,
+            "name": "Navien",
+            "water": 36,
+        },
     ]
-    client.async_get_object_state.return_value = {
-        "id": 4097,
-        "type": 6,
-        "name": "Navien",
-        "water": 36,
-    }
 
     await coordinator.async_refresh()
     assert coordinator.last_update_success
@@ -681,17 +632,14 @@ async def test_refresh_discovers_temperature_sensor_and_adapter(
         "#S224:1 0 1 0",
         "#S6:123 0",
     ]
-    client.async_get_object_ids.side_effect = [
-        [],
-        [8196],
-        [4097],
-        [],
-        [],
-        [],
-        [],
-        [],
-    ]
+    client.async_get_object_ids.return_value = [8196, 4097]
     client.async_get_object_state.side_effect = [
+        {
+            "id": 4097,
+            "type": 6,
+            "name": "Navien",
+            "water": 35,
+        },
         {
             "id": 8196,
             "type": 1,
@@ -699,12 +647,6 @@ async def test_refresh_discovers_temperature_sensor_and_adapter(
             "t": 19.7,
             "a": 1,
             "trig": 0,
-        },
-        {
-            "id": 4097,
-            "type": 6,
-            "name": "Navien",
-            "water": 35,
         },
     ]
 
@@ -715,22 +657,10 @@ async def test_refresh_discovers_temperature_sensor_and_adapter(
     assert sensor.temperature == 19.7
     assert sensor.available
     assert isinstance(coordinator.data.objects[4097], ZontDigitalBusAdapterData)
-    assert client.async_get_object_ids.await_args_list == [
-        call(0),
-        call(1),
-        call(2),
-        call(6),
-        call(8),
-        call(10),
-        call(16),
-        call(17),
-        call(27),
-        call(15),
-        call(14),
-    ]
+    assert client.async_get_object_ids.await_args_list == [call(255)]
     assert client.async_get_object_state.await_args_list == [
-        call(8196),
         call(4097),
+        call(8196),
     ]
 
 
@@ -755,22 +685,16 @@ async def test_temperature_type_error_does_not_block_adapter_refresh(
         "#S224:1 0 1 0",
         "#S6:123 0",
     ]
-    client.async_get_object_ids.side_effect = [
-        [],
+    client.async_get_object_ids.return_value = [4097, 8196]
+    client.async_get_object_state.side_effect = [
+        {
+            "id": 4097,
+            "type": 6,
+            "name": "Navien",
+            "water": 35,
+        },
         ZontProtocolError,
-        [4097],
-        [],
-        [],
-        [],
-        [],
-        [],
     ]
-    client.async_get_object_state.return_value = {
-        "id": 4097,
-        "type": 6,
-        "name": "Navien",
-        "water": 35,
-    }
 
     await coordinator.async_refresh()
 
@@ -787,16 +711,7 @@ async def test_refresh_discovers_analog_input_before_other_objects(
         "#S224:1 0 1 0",
         "#S6:123 0",
     ]
-    client.async_get_object_ids.side_effect = [
-        [20550],
-        [],
-        [],
-        [],
-        [],
-        [],
-        [],
-        [],
-    ]
+    client.async_get_object_ids.return_value = [20550]
     client.async_get_object_state.return_value = {
         "id": 20550,
         "type": 0,
@@ -816,19 +731,7 @@ async def test_refresh_discovers_analog_input_before_other_objects(
     assert analog_input.unit_code == 0
     assert analog_input.triggered is False
     assert analog_input.available
-    assert client.async_get_object_ids.await_args_list == [
-        call(0),
-        call(1),
-        call(2),
-        call(6),
-        call(8),
-        call(10),
-        call(16),
-        call(17),
-        call(27),
-        call(15),
-        call(14),
-    ]
+    assert client.async_get_object_ids.await_args_list == [call(255)]
 
 
 async def test_invalid_analog_input_does_not_block_other_object_types(
@@ -839,28 +742,19 @@ async def test_invalid_analog_input_does_not_block_other_object_types(
         "#S224:1 0 1 0",
         "#S6:123 0",
     ]
-    client.async_get_object_ids.side_effect = [
-        [20550],
-        [],
-        [4097],
-        [],
-        [],
-        [],
-        [],
-        [],
-    ]
+    client.async_get_object_ids.return_value = [20550, 4097]
     client.async_get_object_state.side_effect = [
-        {
-            "id": 20550,
-            "type": 0,
-            "stype": -1,
-            "name": "Некорректный вход",
-        },
         {
             "id": 4097,
             "type": 6,
             "name": "Navien",
             "water": 35,
+        },
+        {
+            "id": 20550,
+            "type": 0,
+            "stype": -1,
+            "name": "Некорректный вход",
         },
     ]
 
@@ -915,16 +809,7 @@ async def test_refresh_discovers_radio_sensor(hass: HomeAssistant) -> None:
         "#S224:1 0 1 0",
         "#S6:123 0",
     ]
-    client.async_get_object_ids.side_effect = [
-        [],
-        [],
-        [],
-        [12001],
-        [],
-        [],
-        [],
-        [],
-    ]
+    client.async_get_object_ids.return_value = [12001]
     client.async_get_object_state.return_value = {
         "id": 12001,
         "type": 8,
@@ -946,19 +831,7 @@ async def test_refresh_discovers_radio_sensor(hass: HomeAssistant) -> None:
     assert sensor.battery_voltage == 2.91
     assert sensor.signal_strength_raw == 86
     assert sensor.available
-    assert client.async_get_object_ids.await_args_list == [
-        call(0),
-        call(1),
-        call(2),
-        call(6),
-        call(8),
-        call(10),
-        call(16),
-        call(17),
-        call(27),
-        call(15),
-        call(14),
-    ]
+    assert client.async_get_object_ids.await_args_list == [call(255)]
 
 
 async def test_radio_type_error_does_not_block_ntc_refresh(
@@ -969,23 +842,17 @@ async def test_radio_type_error_does_not_block_ntc_refresh(
         "#S224:1 0 1 0",
         "#S6:123 0",
     ]
-    client.async_get_object_ids.side_effect = [
-        [],
-        [],
-        [],
+    client.async_get_object_ids.return_value = [12001, 20487]
+    client.async_get_object_state.side_effect = [
         ZontProtocolError,
-        [],
-        [],
-        [20487],
-        [],
+        {
+            "id": 20487,
+            "type": 27,
+            "name": "Температура котла",
+            "t": 45.6,
+            "a": 1,
+        },
     ]
-    client.async_get_object_state.return_value = {
-        "id": 20487,
-        "type": 27,
-        "name": "Температура котла",
-        "t": 45.6,
-        "a": 1,
-    }
 
     await coordinator.async_refresh()
 
@@ -1000,17 +867,7 @@ async def test_refresh_discovers_heating_circuit(hass: HomeAssistant) -> None:
         "#S6:123 0",
         "#Y8362$3330,3330,[],0,0,20501,4097,0,[20501,20504],0,0",
     ]
-    client.async_get_object_ids.side_effect = [
-        [],
-        [],
-        [],
-        [],
-        [8362],
-        [],
-        [],
-        [],
-        [],
-    ]
+    client.async_get_object_ids.side_effect = [[8362], []]
     client.async_get_object_state.return_value = {
         "id": 8362,
         "type": 16,
@@ -1049,17 +906,7 @@ async def test_refresh_resolves_consumer_water_range(hass: HomeAssistant) -> Non
         "2562,0,0,2730,0,0,0,0,0,0,0,3230,100,10,0,0,0,0,0",
         "#Y20496$3160,3140,[],0,0,0,4104,138,[20504],0,0",
     ]
-    client.async_get_object_ids.side_effect = [
-        [],
-        [],
-        [],
-        [],
-        [20496],
-        [],
-        [],
-        [],
-        [],
-    ]
+    client.async_get_object_ids.side_effect = [[20496], []]
     client.async_get_object_state.return_value = {
         "id": 20496,
         "type": 16,
@@ -1096,17 +943,7 @@ async def test_refresh_discovers_heating_modes_and_dhw_applicability(
     hass: HomeAssistant,
 ) -> None:
     coordinator, client = _coordinator(hass)
-    client.async_get_object_ids.side_effect = [
-        [],
-        [],
-        [],
-        [],
-        [8362, 20496],
-        [],
-        [],
-        [],
-        [20504],
-    ]
+    client.async_get_object_ids.side_effect = [[8362, 20496], [20504]]
     client.async_get_object_state.side_effect = [
         {
             "id": 8362,
@@ -1165,26 +1002,7 @@ async def test_air_sensor_configuration_is_cached_but_state_is_refreshed(
         "#S6:123 0",
         "#Y9825$2930,2960,[],0,0,20501,4110,1,[20501,20504],0,0",
     ]
-    client.async_get_object_ids.side_effect = [
-        [],
-        [],
-        [],
-        [],
-        [9825],
-        [],
-        [],
-        [],
-        [],
-        [],
-        [],
-        [],
-        [],
-        [9825],
-        [],
-        [],
-        [],
-        [],
-    ]
+    client.async_get_object_ids.side_effect = [[9825], [], [9825]]
     client.async_get_object_state.side_effect = [
         {
             "id": 9825,
@@ -1236,26 +1054,7 @@ async def test_failed_internal_state_read_clears_current_state_only(
         "#S6:123 0",
         "#Y20496:!",
     ]
-    client.async_get_object_ids.side_effect = [
-        [],
-        [],
-        [],
-        [],
-        [20496],
-        [],
-        [],
-        [],
-        [],
-        [],
-        [],
-        [],
-        [],
-        [20496],
-        [],
-        [],
-        [],
-        [],
-    ]
+    client.async_get_object_ids.side_effect = [[20496], [], [20496]]
     client.async_get_object_state.return_value = {
         "id": 20496,
         "type": 16,
@@ -1290,17 +1089,7 @@ async def test_invalid_consumer_configuration_does_not_block_other_circuit(
         "2562,0,0,2730,0,0,0,0,0,0,0,3230,100,10,0,0,0,0,0",
         "#Y20496$3160,3140,[],0,0,0,4104,1,[20504],0,0",
     ]
-    client.async_get_object_ids.side_effect = [
-        [],
-        [],
-        [],
-        [],
-        [9171, 20496],
-        [],
-        [],
-        [],
-        [],
-    ]
+    client.async_get_object_ids.side_effect = [[9171, 20496], []]
     client.async_get_object_state.side_effect = [
         {
             "id": 9171,
@@ -1501,7 +1290,7 @@ async def test_refresh_discovers_pump(hass: HomeAssistant) -> None:
         "#S224:1 0 1 0",
         "#S6:123 0",
     ]
-    client.async_get_object_ids.side_effect = [[], [], [], [], [], [9044], [], []]
+    client.async_get_object_ids.return_value = [9044]
     client.async_get_object_state.return_value = {
         "id": 9044,
         "type": 17,
@@ -1549,16 +1338,7 @@ async def test_refresh_discovers_mixer_and_internal_state(
         "#S6:123 0",
         "#Y9078$0,18",
     ]
-    client.async_get_object_ids.side_effect = [
-        [],
-        [],
-        [],
-        [],
-        [],
-        [],
-        [],
-        [9078],
-    ]
+    client.async_get_object_ids.return_value = [9078]
     client.async_get_object_state.return_value = {
         "id": 9078,
         "type": 15,
@@ -1587,7 +1367,7 @@ async def test_refresh_discovers_relay_and_caches_configuration(
     hass: HomeAssistant,
 ) -> None:
     coordinator, client = _coordinator(hass)
-    client.async_get_object_ids.relay_ids = [20488]
+    client.async_get_object_ids.return_value = [20488]
     client.async_get_object_state.return_value = {
         "id": 20488,
         "type": 14,
@@ -1625,7 +1405,7 @@ async def test_invalid_relay_configuration_does_not_hide_relay_state(
     hass: HomeAssistant,
 ) -> None:
     coordinator, client = _coordinator(hass)
-    client.async_get_object_ids.relay_ids = [20488]
+    client.async_get_object_ids.return_value = [20488]
     client.async_get_object_state.return_value = {
         "id": 20488,
         "type": 14,
@@ -1652,7 +1432,7 @@ async def test_invalid_relay_state_does_not_hide_configuration(
     hass: HomeAssistant,
 ) -> None:
     coordinator, client = _coordinator(hass)
-    client.async_get_object_ids.relay_ids = [20488]
+    client.async_get_object_ids.return_value = [20488]
     client.async_get_object_state.return_value = {
         "id": 20488,
         "type": 14,
@@ -1710,16 +1490,7 @@ async def test_invalid_mixer_state_is_isolated_from_other_mixers(
         "#Y9078:!",
         "#Y9079$0,1",
     ]
-    client.async_get_object_ids.side_effect = [
-        [],
-        [],
-        [],
-        [],
-        [],
-        [],
-        [],
-        [9078, 9079],
-    ]
+    client.async_get_object_ids.return_value = [9078, 9079]
     client.async_get_object_state.side_effect = [
         {"id": 9078, "type": 15, "name": "Смеситель 1", "s": 0},
         {"id": 9079, "type": 15, "name": "Смеситель 2", "s": 0},
@@ -1741,16 +1512,7 @@ async def test_refresh_clears_endpoint_flags_for_moving_mixer(
         "#S6:123 0",
         "#Y9078$1,19",
     ]
-    client.async_get_object_ids.side_effect = [
-        [],
-        [],
-        [],
-        [],
-        [],
-        [],
-        [],
-        [9078],
-    ]
+    client.async_get_object_ids.return_value = [9078]
     client.async_get_object_state.return_value = {
         "id": 9078,
         "type": 15,
@@ -1820,7 +1582,7 @@ async def test_refresh_discovers_ntc_temperature_sensor(
         "#S224:1 0 1 0",
         "#S6:123 0",
     ]
-    client.async_get_object_ids.side_effect = [[], [], [], [], [], [], [20487], []]
+    client.async_get_object_ids.return_value = [20487]
     client.async_get_object_state.return_value = {
         "id": 20487,
         "type": 27,
@@ -1835,19 +1597,7 @@ async def test_refresh_discovers_ntc_temperature_sensor(
     assert isinstance(sensor, ZontNtcTemperatureSensorData)
     assert sensor.temperature == 45.6
     assert sensor.available
-    assert client.async_get_object_ids.await_args_list == [
-        call(0),
-        call(1),
-        call(2),
-        call(6),
-        call(8),
-        call(10),
-        call(16),
-        call(17),
-        call(27),
-        call(15),
-        call(14),
-    ]
+    assert client.async_get_object_ids.await_args_list == [call(255)]
     client.async_get_object_state.assert_awaited_once_with(20487)
 
 
@@ -1872,22 +1622,16 @@ async def test_ntc_type_error_does_not_block_other_object_data(
         "#S224:1 0 1 0",
         "#S6:123 0",
     ]
-    client.async_get_object_ids.side_effect = [
-        [],
-        [],
-        [4097],
-        [],
-        [],
-        [],
+    client.async_get_object_ids.return_value = [4097, 20487]
+    client.async_get_object_state.side_effect = [
+        {
+            "id": 4097,
+            "type": 6,
+            "name": "Navien",
+            "water": 35,
+        },
         ZontProtocolError,
-        [],
     ]
-    client.async_get_object_state.return_value = {
-        "id": 4097,
-        "type": 6,
-        "name": "Navien",
-        "water": 35,
-    }
 
     await coordinator.async_refresh()
 
@@ -1917,7 +1661,7 @@ async def test_failed_ntc_sensor_preserves_last_temperature(
         "#S224:1 0 1 0",
         "#S6:123 0",
     ]
-    client.async_get_object_ids.side_effect = [[], [], [], [], [], [], [20487], []]
+    client.async_get_object_ids.return_value = [20487]
     client.async_get_object_state.return_value = {
         "id": 20487,
         "req_state": 0,

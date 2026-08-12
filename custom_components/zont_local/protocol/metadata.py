@@ -246,7 +246,32 @@ class ZontHeatingMetadataRefresher:
             for obj in objects.values()
             if isinstance(obj, ZontHeatingCircuitData) and obj.subtype in (1, 3)
         }
+        self._heating_configurations = {
+            object_id: configuration
+            for object_id, configuration in self._heating_configurations.items()
+            if object_id in circuit_ids
+        }
+        self._heating_target_sensor_ids = {
+            object_id: sensor_id
+            for object_id, sensor_id in self._heating_target_sensor_ids.items()
+            if object_id in circuit_ids
+        }
+        used_sensor_ids = {
+            sensor_id
+            for sensor_id in self._heating_target_sensor_ids.values()
+            if sensor_id is not None
+        }
+        self._temperature_sensor_configurations = {
+            sensor_id: configuration
+            for sensor_id, configuration in (
+                self._temperature_sensor_configurations.items()
+            )
+            if sensor_id in used_sensor_ids
+        }
         if not circuit_ids:
+            self._heating_configurations.clear()
+            self._heating_target_sensor_ids.clear()
+            self._temperature_sensor_configurations.clear()
             self._heating_configuration_refresh_needed = False
             return (
                 immutable_heating_controls(),
@@ -260,20 +285,21 @@ class ZontHeatingMetadataRefresher:
         states: dict[int, ZontHeatingCircuitInternalState] = {}
         modes = previous_modes
 
-        try:
-            mode_ids = await self._client.async_get_object_ids(OBJECT_TYPE_HEATING_MODE)
-        except asyncio.CancelledError:
-            raise
-        except (ZontConnectionError, ZontRequestTimeoutError):
-            raise
-        except ZontProtocolError:
-            mode_ids = None
-            refresh_incomplete = True
-            self._log_heating_metadata_error("mode discovery", 0)
-        else:
-            self._heating_metadata_errors.discard(("mode discovery", 0))
-            if set(mode_ids) != set(previous_modes):
-                force_configuration = True
+        mode_ids: list[int] | None = None
+        if force_configuration:
+            try:
+                mode_ids = await self._client.async_get_object_ids(
+                    OBJECT_TYPE_HEATING_MODE
+                )
+            except asyncio.CancelledError:
+                raise
+            except (ZontConnectionError, ZontRequestTimeoutError):
+                raise
+            except ZontProtocolError:
+                refresh_incomplete = True
+                self._log_heating_metadata_error("mode discovery", 0)
+            else:
+                self._heating_metadata_errors.discard(("mode discovery", 0))
 
         if force_configuration and mode_ids is not None:
             modes, modes_incomplete = await self._async_refresh_heating_modes(
@@ -381,6 +407,18 @@ class ZontHeatingMetadataRefresher:
                 sensor_configuration,
             )
 
+        used_sensor_ids = {
+            sensor_id
+            for sensor_id in self._heating_target_sensor_ids.values()
+            if sensor_id is not None
+        }
+        self._temperature_sensor_configurations = {
+            sensor_id: configuration
+            for sensor_id, configuration in (
+                self._temperature_sensor_configurations.items()
+            )
+            if sensor_id in used_sensor_ids
+        }
         self._heating_configuration_refresh_needed = refresh_incomplete
         return (
             immutable_heating_controls(controls),
