@@ -11,7 +11,11 @@ from typing import Any
 
 from aiohttp import ClientError, ClientSession, ClientWebSocketResponse, WSMsgType
 
-from .constants import RECONNECT_DELAYS, REQUEST_TIMEOUT
+from .constants import (
+    RECONNECT_DELAYS,
+    RECONNECT_STABLE_SECONDS,
+    REQUEST_TIMEOUT,
+)
 from .errors import (
     ZontAuthenticationError,
     ZontCommandTimeoutError,
@@ -145,9 +149,11 @@ class ZontClient:
                         reconnect_index = self._next_reconnect_index(reconnect_index)
                         continue
 
+                connection_was_stable = await self._async_run_connection_until_stable(
+                    ws
+                )
+                if connection_was_stable:
                     reconnect_index = 0
-
-                await self._async_run_connection(ws)
 
                 if not self._stop.is_set():
                     await self._async_wait_before_reconnect(reconnect_index)
@@ -184,10 +190,34 @@ class ZontClient:
         else:
             self._has_connected_once = True
         self._set_connected(True)
-        if self._outage_logged:
-            _LOGGER.info("ZONT WebSocket connection restored")
-            self._outage_logged = False
         return ws
+
+    async def _async_run_connection_until_stable(
+        self,
+        ws: ClientWebSocketResponse,
+    ) -> bool:
+        """Run one connection and report whether it passed the stable window."""
+        connection_task = asyncio.create_task(
+            self._async_run_connection(ws),
+            name="ZONT WebSocket connection reader",
+        )
+        try:
+            done, _ = await asyncio.wait(
+                (connection_task,),
+                timeout=RECONNECT_STABLE_SECONDS,
+            )
+            if connection_task in done:
+                await connection_task
+                return False
+
+            self._mark_connection_stable(ws)
+            await connection_task
+            return True
+        finally:
+            if not connection_task.done():
+                connection_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await connection_task
 
     async def _async_run_connection(self, ws: ClientWebSocketResponse) -> None:
         """Read one connection until it fails, then release its resources."""
@@ -196,9 +226,11 @@ class ZontClient:
         except asyncio.CancelledError:
             raise
         except ZontProtocolError as err:
-            self._record_error("protocol", err)
+            if not self._stop.is_set():
+                self._record_error("protocol", err)
         except ZontConnectionError as err:
-            self._record_error("connection", err)
+            if not self._stop.is_set():
+                self._record_error("connection", err)
         finally:
             if self._ws is ws:
                 self._ws = None
@@ -633,6 +665,13 @@ class ZontClient:
                 category,
             )
             self._outage_logged = True
+
+    def _mark_connection_stable(self, ws: ClientWebSocketResponse) -> None:
+        """Finish one outage only after the authenticated connection is stable."""
+        if self._ws is not ws or not self._is_connected or not self._outage_logged:
+            return
+        _LOGGER.info("ZONT WebSocket connection restored")
+        self._outage_logged = False
 
     def _set_connected(self, connected: bool) -> None:
         """Update connection state and notify protocol listeners."""

@@ -22,6 +22,10 @@ from custom_components.zont_local.protocol import (
     async_open_temporary_request_session,
     async_request_system_commands,
 )
+from custom_components.zont_local.protocol.constants import (
+    RECONNECT_DELAYS,
+    RECONNECT_STABLE_SECONDS,
+)
 from custom_components.zont_local.protocol.controller import (
     async_refresh_controller_info,
 )
@@ -312,6 +316,30 @@ async def test_supervisor_is_owned_by_the_caller(auth_error_callback: Any) -> No
 
 
 @pytest.mark.asyncio
+async def test_stop_connected_client_does_not_log_an_outage(
+    auth_error_callback: Any,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client = make_client(
+        None,
+        FakeSession([auth_socket()]),  # type: ignore[arg-type]
+        "ws://controller/ws",
+        ZontCredentials("user", "password"),
+        auth_error_callback,
+    )
+    caplog.set_level(
+        logging.WARNING,
+        logger="custom_components.zont_local.protocol.client",
+    )
+    await async_start_client(client)
+    caplog.clear()
+
+    await client.async_stop()
+
+    assert "connection lost" not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_unsolicited_payloads_are_wrapped(
     fake_hass: Any, auth_error_callback: Any
 ) -> None:
@@ -419,6 +447,173 @@ async def test_initial_connection_failure_is_retried_without_counting_reconnect(
     assert client.reconnect_count == 0
     assert client.last_error is None
     await client.async_stop()
+
+
+def test_reconnect_policy_uses_capped_delays_and_stable_window() -> None:
+    assert RECONNECT_DELAYS == (5, 10, 20, 30, 60)
+    assert RECONNECT_STABLE_SECONDS == 60
+
+
+@pytest.mark.asyncio
+async def test_reconnect_backoff_increases_and_stays_at_cap(
+    fake_hass: Any,
+    auth_error_callback: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = make_client(
+        fake_hass,
+        FakeSession([ClientError("offline") for _ in range(6)]),  # type: ignore[arg-type]
+        "ws://controller/ws",
+        ZontCredentials("user", "password"),
+        "entry",
+        "device",
+        auth_error_callback,
+    )
+    waited_indexes: list[int] = []
+
+    async def async_wait(index: int) -> None:
+        waited_indexes.append(index)
+        if len(waited_indexes) == 6:
+            await client.async_stop()
+
+    monkeypatch.setattr(client, "_async_wait_before_reconnect", async_wait)
+
+    await client.async_supervise()
+
+    assert waited_indexes == [0, 1, 2, 3, 4, 4]
+
+
+@pytest.mark.asyncio
+async def test_short_connection_does_not_reset_backoff_or_outage_log(
+    fake_hass: Any,
+    auth_error_callback: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    ws = auth_socket()
+    client = make_client(
+        fake_hass,
+        FakeSession([ClientError("offline"), ws]),  # type: ignore[arg-type]
+        "ws://controller/ws",
+        ZontCredentials("user", "password"),
+        "entry",
+        "device",
+        auth_error_callback,
+    )
+    waited_indexes: list[int] = []
+
+    async def async_wait(index: int) -> None:
+        waited_indexes.append(index)
+        if len(waited_indexes) == 2:
+            await client.async_stop()
+
+    monkeypatch.setattr(client, "_async_wait_before_reconnect", async_wait)
+    caplog.set_level(
+        logging.INFO,
+        logger="custom_components.zont_local.protocol.client",
+    )
+
+    supervisor = asyncio.create_task(client.async_supervise())
+    for _ in range(20):
+        if client.is_connected:
+            break
+        await asyncio.sleep(0)
+    assert client.is_connected
+    await ws.close()
+    await supervisor
+
+    warnings = [
+        record
+        for record in caplog.records
+        if record.levelno == logging.WARNING
+        and "reconnecting in the background" in record.message
+    ]
+    assert waited_indexes == [0, 1]
+    assert len(warnings) == 1
+    assert "connection restored" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_stable_connection_resets_backoff_and_outage_log(
+    fake_hass: Any,
+    auth_error_callback: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    ws = auth_socket()
+    client = make_client(
+        fake_hass,
+        FakeSession([ClientError("offline"), ws]),  # type: ignore[arg-type]
+        "ws://controller/ws",
+        ZontCredentials("user", "password"),
+        "entry",
+        "device",
+        auth_error_callback,
+    )
+    waited_indexes: list[int] = []
+
+    async def async_wait(index: int) -> None:
+        waited_indexes.append(index)
+        if len(waited_indexes) == 2:
+            await client.async_stop()
+
+    monkeypatch.setattr(client, "_async_wait_before_reconnect", async_wait)
+    monkeypatch.setattr(
+        "custom_components.zont_local.protocol.client.RECONNECT_STABLE_SECONDS",
+        0.01,
+    )
+    caplog.set_level(
+        logging.INFO,
+        logger="custom_components.zont_local.protocol.client",
+    )
+
+    supervisor = asyncio.create_task(client.async_supervise())
+    for _ in range(20):
+        if client.is_connected:
+            break
+        await asyncio.sleep(0)
+    assert client.is_connected
+    await asyncio.sleep(0.02)
+    assert "ZONT WebSocket connection restored" in caplog.text
+
+    await ws.close()
+    await supervisor
+
+    warnings = [
+        record
+        for record in caplog.records
+        if record.levelno == logging.WARNING
+        and "reconnecting in the background" in record.message
+    ]
+    assert waited_indexes == [0, 0]
+    assert len(warnings) == 2
+
+
+@pytest.mark.asyncio
+async def test_stop_interrupts_reconnect_wait(
+    fake_hass: Any,
+    auth_error_callback: Any,
+) -> None:
+    client = make_client(
+        fake_hass,
+        FakeSession([ClientError("offline")]),  # type: ignore[arg-type]
+        "ws://controller/ws",
+        ZontCredentials("user", "password"),
+        "entry",
+        "device",
+        auth_error_callback,
+    )
+
+    supervisor = asyncio.create_task(client.async_supervise())
+    for _ in range(20):
+        if client.last_error is not None:
+            break
+        await asyncio.sleep(0)
+    assert client.last_error == "connection"
+
+    await client.async_stop()
+    async with asyncio.timeout(0.1):
+        await supervisor
 
 
 @pytest.mark.asyncio
