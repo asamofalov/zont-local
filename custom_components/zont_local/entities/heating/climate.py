@@ -45,7 +45,7 @@ from ...protocol.objects import ZontHeatingCircuitData, ZontHeatingCircuitMode
 from ...runtime import ZontRuntimeData
 from .mode_options import heating_mode_options
 
-TARGET_TEMPERATURE_STEP = 1.0
+TARGET_TEMPERATURE_STEP = 0.5
 
 
 class ZontConsumerClimate(ZontObjectCoordinatorEntity, ClimateEntity):

@@ -13,7 +13,6 @@ from custom_components.zont_local.coordinator import (
 )
 from custom_components.zont_local.data import ZontControllerData, ZontData
 from custom_components.zont_local.entities.heating.climate import (
-    TARGET_TEMPERATURE_STEP,
     ZontConsumerClimate,
 )
 from custom_components.zont_local.protocol import (
@@ -144,10 +143,27 @@ def test_climate_exposes_target_only_and_observed_mode() -> None:
     assert entity.temperature_unit is UnitOfTemperature.CELSIUS
     assert entity.min_temp == 41
     assert entity.max_temp == 80
-    assert entity.target_temperature_step == TARGET_TEMPERATURE_STEP
+    assert entity.target_temperature_step == 0.5
     assert entity.unique_id == "ABCDEF123456_20496_climate"
     assert entity.suggested_object_id is None
     assert entity.device_info["identifiers"] == {(DOMAIN, "ABCDEF123456:object:20496")}
+
+
+@pytest.mark.parametrize("control_mode", list(ZontConsumerControlMode))
+async def test_climate_exposes_half_degree_step_and_fractional_state(
+    hass: HomeAssistant,
+    control_mode: ZontConsumerControlMode,
+) -> None:
+    circuit = replace(_circuit(target_temperature=22.5), current_temperature=22.4)
+    control = replace(_control(5, 40), control_mode=control_mode)
+    entry, _, _ = _entry({20496: circuit}, {20496: control})
+    entity = ZontConsumerClimate(entry, 20496)
+    entity.hass = hass
+
+    assert entity.target_temperature_step == 0.5
+    assert entity.capability_attributes["target_temp_step"] == 0.5
+    assert entity.target_temperature == 22.5
+    assert entity.current_temperature == 22.4
 
 
 def test_climate_exposes_standard_on_off_with_valid_binding() -> None:
@@ -546,18 +562,36 @@ async def test_preset_protocol_errors_are_translated(
     "mode",
     [ZontHeatingCircuitMode.HEAT, ZontHeatingCircuitMode.OFF],
 )
+@pytest.mark.parametrize(
+    ("control_mode", "temperature", "expected_command"),
+    [
+        (ZontConsumerControlMode.AIR, 22.5, 2955),
+        (ZontConsumerControlMode.AIR_PID, 22.5, 2955),
+        (ZontConsumerControlMode.WATER, 42.5, 3155),
+        (ZontConsumerControlMode.AIR, 22.3, 2953),
+        (ZontConsumerControlMode.WATER, 42, 3150),
+    ],
+)
 async def test_set_temperature_works_in_heat_and_off_modes(
     mode: ZontHeatingCircuitMode,
+    control_mode: ZontConsumerControlMode,
+    temperature: float,
+    expected_command: int,
 ) -> None:
+    control = (
+        _control()
+        if control_mode is ZontConsumerControlMode.WATER
+        else replace(_control(5, 40), control_mode=control_mode)
+    )
     entry, client, coordinator = _entry(
         {20496: _circuit(mode=mode)},
-        {20496: _control()},
+        {20496: control},
     )
     entity = ZontConsumerClimate(entry, 20496)
 
-    await entity.async_set_temperature(**{ATTR_TEMPERATURE: 42})
+    await entity.async_set_temperature(**{ATTR_TEMPERATURE: temperature})
 
-    client.async_send_command.assert_awaited_once_with(20496, 3150)
+    client.async_send_command.assert_awaited_once_with(20496, expected_command)
     coordinator.async_refresh_object.assert_awaited_once_with(20496)
     assert entity.target_temperature == 42
 
