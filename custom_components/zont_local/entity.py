@@ -82,7 +82,7 @@ class ZontObjectCoordinatorEntity(CoordinatorEntity[ZontDataUpdateCoordinator]):
                     object_device_identifier(controller_identifier, object_id),
                 )
             },
-            via_device=(DOMAIN, controller_identifier),
+            via_device_id=entry.runtime_data.controller_device_id,
         )
         self._zont_object_id_suffix = suggested_object_id
 

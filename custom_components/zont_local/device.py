@@ -45,7 +45,7 @@ def async_sync_object_devices(
             name=obj.name,
             manufacturer=descriptor.manufacturer,
             model=descriptor.model,
-            via_device=(DOMAIN, controller_identifier),
+            via_device_id=entry.runtime_data.controller_device_id,
         )
 
 

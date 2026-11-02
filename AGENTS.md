@@ -9,8 +9,8 @@ WebSocket-интерфейса контроллеров ZONT.
 - Исходный код — `custom_components/zont_local`.
 - Автоматические тесты — `tests`.
 - Среда разработки — `.devcontainer`.
-- Минимальная поддерживаемая версия Home Assistant — 2026.3.0, текущая версия
-  среды разработки и основного набора тестов — 2026.8.0.
+- Минимальная поддерживаемая версия Home Assistant — 2026.8.0, текущая версия
+  среды разработки и основного набора тестов — 2026.10.4.
 - Интеграция представляет один локальный hub, использует `local_push`, одну
   config entry и один постоянный WebSocket-клиент.
 
@@ -96,6 +96,11 @@ README, roadmap, архитектурная и протокольная доку
 проектные команды внутри контейнера. Зависимости закреплены в
 `requirements_test.txt` и устанавливаются `postCreateCommand`.
 
+Для обновления среды скачайте свежий образ командой
+`docker pull mcr.microsoft.com/devcontainers/python:3.14-bookworm`, затем
+выполните **Dev Containers: Rebuild Container**. Тег сохраняет ветку Python 3.14
+и получает обновления базового образа.
+
 Не создавайте `.venv` и не устанавливайте зависимости проекта на хосте.
 
 Для запуска локального Home Assistant используйте:
@@ -159,13 +164,12 @@ python -m homeassistant --script check_config --config .devcontainer/config
 
 ```bash
 (
-  min_ha_env=$(mktemp -d /tmp/zont-ha-2026.3.0-XXXXXX)
+  min_ha_env=$(mktemp -d /tmp/zont-ha-2026.8.0-XXXXXX)
   min_ha_config=$(mktemp -d /tmp/zont-ha-config-XXXXXX)
   trap 'rm -rf "$min_ha_env" "$min_ha_config"' EXIT
   python -m venv "$min_ha_env"
   "$min_ha_env/bin/python" -m pip install -r requirements_test_min.txt
-  "$min_ha_env/bin/python" -m pip install --no-deps --force-reinstall homeassistant==2026.3.0
-  "$min_ha_env/bin/python" -c 'from importlib.metadata import version; assert version("homeassistant") == "2026.3.0"'
+  "$min_ha_env/bin/python" -c 'from importlib.metadata import version; assert version("homeassistant") == "2026.8.0"'
   "$min_ha_env/bin/python" -m pytest -q
   mkdir -p "$min_ha_config/custom_components"
   cp .devcontainer/config/configuration.yaml "$min_ha_config/configuration.yaml"
