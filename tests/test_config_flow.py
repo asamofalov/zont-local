@@ -45,7 +45,8 @@ from homeassistant.const import (
     CONF_USERNAME,
 )
 from homeassistant.core import HomeAssistant
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+from tests.ha_compat import MockConfigEntry
 
 USER_DATA = {
     CONF_HOST: "192.0.2.10",

@@ -84,7 +84,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_registry import async_get as async_get_registry
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+from tests.ha_compat import MockConfigEntry
 
 
 def _object_entry(obj: ZontObject) -> MockConfigEntry:

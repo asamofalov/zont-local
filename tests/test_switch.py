@@ -33,7 +33,8 @@ from custom_components.zont_local.runtime import ZontRuntimeData
 from custom_components.zont_local.switch import async_setup_entry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+from tests.ha_compat import MockConfigEntry
 
 
 def _entry(

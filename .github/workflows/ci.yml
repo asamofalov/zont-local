@@ -18,7 +18,7 @@ env:
 
 jobs:
   current:
-    name: Home Assistant 2026.10.4
+    name: Home Assistant 2026.11.1
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -39,7 +39,7 @@ jobs:
       - name: Verify Home Assistant version
         run: >-
           python -c "from importlib.metadata import version;
-          assert version('homeassistant') == '2026.10.4'"
+          assert version('homeassistant') == '2026.11.1'"
 
       - name: Run Ruff
         run: ruff check .

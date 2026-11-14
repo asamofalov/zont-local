@@ -59,6 +59,8 @@ from custom_components.zont_local.protocol.objects import (
     immutable_objects,
 )
 from custom_components.zont_local.runtime import ZontRuntimeData
+from homeassistant.components.climate import ClimateEntity
+from homeassistant.components.water_heater import WaterHeaterEntity
 from homeassistant.const import (
     CONF_HOST,
     CONF_PASSWORD,
@@ -70,7 +72,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_send
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from homeassistant.util.unit_system import (
+    METRIC_SYSTEM,
+    US_CUSTOMARY_SYSTEM,
+    UnitSystem,
+)
+
+from tests.ha_compat import MockConfigEntry
 
 ENTRY_DATA = {
     CONF_HOST: "192.0.2.10",
@@ -1154,9 +1162,18 @@ async def test_discovered_radio_sensor_creates_prefixed_entities(
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
+@pytest.mark.parametrize(
+    ("units", "current_temperature", "target_temperature"),
+    [(METRIC_SYSTEM, 29, 60), (US_CUSTOMARY_SYSTEM, 84, 140)],
+)
 async def test_discovered_dhw_circuit_creates_water_heater_and_fault_entities(
     hass: HomeAssistant,
+    caplog: pytest.LogCaptureFixture,
+    units: UnitSystem,
+    current_temperature: float,
+    target_temperature: float,
 ) -> None:
+    hass.config.units = units
     entry = MockConfigEntry(
         domain=DOMAIN,
         version=CONFIG_ENTRY_VERSION,
@@ -1220,12 +1237,29 @@ async def test_discovered_dhw_circuit_creates_water_heater_and_fault_entities(
     assert fault_state is not None
     assert fault_state.state == "on"
 
+    state = hass.states.get("water_heater.gvs")
+    assert state is not None
+    assert state.attributes["current_temperature"] == pytest.approx(current_temperature)
+    assert state.attributes["temperature"] == pytest.approx(target_temperature)
+    if hasattr(WaterHeaterEntity, "native_temperature_unit"):
+        assert state.attributes["temperature_unit"] == units.temperature_unit
+    assert "deprecated" not in caplog.text
+
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
+@pytest.mark.parametrize(
+    ("units", "current_temperature", "target_temperature"),
+    [(METRIC_SYSTEM, 42.5, 41), (US_CUSTOMARY_SYSTEM, 108, 106)],
+)
 async def test_discovered_consumer_circuit_creates_primary_and_diagnostic_entities(
     hass: HomeAssistant,
+    caplog: pytest.LogCaptureFixture,
+    units: UnitSystem,
+    current_temperature: float,
+    target_temperature: float,
 ) -> None:
+    hass.config.units = units
     entry = MockConfigEntry(
         domain=DOMAIN,
         version=CONFIG_ENTRY_VERSION,
@@ -1299,6 +1333,14 @@ async def test_discovered_consumer_circuit_creates_primary_and_diagnostic_entiti
         )
         == "climate.radiatory"
     )
+    state = hass.states.get("climate.radiatory")
+    assert state is not None
+    assert state.attributes["current_temperature"] == pytest.approx(current_temperature)
+    assert state.attributes["temperature"] == pytest.approx(target_temperature)
+    if hasattr(ClimateEntity, "native_temperature_unit"):
+        assert state.attributes["temperature_unit"] == units.temperature_unit
+    assert "deprecated" not in caplog.text
+
     expected_entities = {
         "sensor": {"control_mode"},
         "binary_sensor": {

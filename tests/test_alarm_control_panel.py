@@ -43,7 +43,8 @@ from homeassistant.components.alarm_control_panel import (
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+from tests.ha_compat import MockConfigEntry
 
 ZONE_ID = 10657
 

@@ -13,7 +13,8 @@ from custom_components.zont_local.const import DOMAIN, EVENT_MESSAGE, connection
 from custom_components.zont_local.protocol import ZontAuthenticationError
 from homeassistant.core import CoreState, HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
-from pytest_homeassistant_custom_component.common import (
+
+from tests.ha_compat import (
     MockConfigEntry,
     async_capture_events,
 )

@@ -45,7 +45,8 @@ from custom_components.zont_local.user_element_control import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+from tests.ha_compat import MockConfigEntry
 
 STATUS_ID = 10705
 BUTTON_ID = 10676

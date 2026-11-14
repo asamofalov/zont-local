@@ -4,11 +4,16 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from importlib.util import find_spec
 from typing import Any
 
 import pytest
 
-pytest_plugins = "pytest_homeassistant_custom_component"
+pytest_plugins = (
+    ("pytest_homeassistant_custom_component",)
+    if find_spec("pytest_homeassistant") is None
+    else ()
+)
 
 
 @dataclass

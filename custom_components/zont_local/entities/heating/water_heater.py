@@ -54,7 +54,6 @@ class ZontDhwWaterHeater(ZontObjectCoordinatorEntity, WaterHeaterEntity):
     """Represent one ZONT domestic hot water circuit."""
 
     _attr_name = None
-    _attr_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_min_temp = MIN_TARGET_TEMPERATURE
     _attr_max_temp = MAX_TARGET_TEMPERATURE
     _attr_target_temperature_step = TARGET_TEMPERATURE_STEP
@@ -155,16 +154,27 @@ class ZontDhwWaterHeater(ZontObjectCoordinatorEntity, WaterHeaterEntity):
         }
 
     @property
-    def current_temperature(self) -> float | None:
+    def native_temperature_unit(self) -> str:
+        """Return the temperature unit used by the controller."""
+        return UnitOfTemperature.CELSIUS
+
+    @property
+    def native_current_temperature(self) -> float | None:
         """Return the current hot water temperature."""
         circuit = self._circuit
         return circuit.current_temperature if circuit is not None else None
 
     @property
-    def target_temperature(self) -> float | None:
+    def native_target_temperature(self) -> float | None:
         """Return the target hot water temperature."""
         circuit = self._circuit
         return circuit.target_temperature if circuit is not None else None
+
+    # Home Assistant before 2026.11 consumes the legacy temperature properties.
+    if not hasattr(WaterHeaterEntity, "native_temperature_unit"):
+        temperature_unit = native_temperature_unit
+        current_temperature = native_current_temperature
+        target_temperature = native_target_temperature
 
     @property
     def _off_mode_id(self) -> int | None:

@@ -35,7 +35,8 @@ from custom_components.zont_local.water_heater import (
     async_setup_entry as setup_water_heater,
 )
 from homeassistant.core import HomeAssistant
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+from tests.ha_compat import MockConfigEntry
 
 type SetupPlatform = Callable[..., Awaitable[None]]
 

@@ -63,7 +63,8 @@ from homeassistant.const import (
     UnitOfTemperature,
 )
 from homeassistant.core import HomeAssistant
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+from tests.ha_compat import MockConfigEntry
 
 SERIAL_NUMBER = "ABCDEF123456"
 CONTROLLER_INFO = ZontControllerInfo(

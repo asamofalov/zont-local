@@ -31,7 +31,8 @@ from custom_components.zont_local.protocol.objects import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+from tests.ha_compat import MockConfigEntry
 
 OFF_MODE_ID = 20504
 CIRCUIT_ID = 8362

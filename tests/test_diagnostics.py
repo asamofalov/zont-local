@@ -23,7 +23,8 @@ from custom_components.zont_local.protocol.controller import (
 from custom_components.zont_local.runtime import ZontRuntimeData
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+from tests.ha_compat import MockConfigEntry
 
 
 async def test_diagnostics_exclude_credentials(hass: HomeAssistant) -> None:

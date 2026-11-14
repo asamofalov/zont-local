@@ -50,7 +50,8 @@ from homeassistant.components.water_heater import (
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+from tests.ha_compat import MockConfigEntry
 
 
 def _entry(
@@ -134,13 +135,13 @@ def test_water_heater_exposes_only_target_temperature() -> None:
     entity = ZontDhwWaterHeater(entry, 8362)
 
     assert entity.available
-    assert entity.current_temperature == 29
-    assert entity.target_temperature == 60
+    assert entity.native_current_temperature == 29
+    assert entity.native_target_temperature == 60
     assert entity.current_operation == STATE_ON
     assert entity.state == STATE_ON
     assert entity.operation_list is None
     assert entity.supported_features is WaterHeaterEntityFeature.TARGET_TEMPERATURE
-    assert entity.temperature_unit is UnitOfTemperature.CELSIUS
+    assert entity.native_temperature_unit is UnitOfTemperature.CELSIUS
     assert entity.min_temp == MIN_TARGET_TEMPERATURE
     assert entity.max_temp == MAX_TARGET_TEMPERATURE
     assert entity.target_temperature_step == TARGET_TEMPERATURE_STEP
@@ -299,8 +300,8 @@ def test_water_heater_tracks_object_availability() -> None:
     )
 
     assert not entity.available
-    assert entity.current_temperature == 29
-    assert entity.target_temperature == 60
+    assert entity.native_current_temperature == 29
+    assert entity.native_target_temperature == 60
 
 
 async def test_setup_adds_only_dhw_circuits(hass: HomeAssistant) -> None:
@@ -611,7 +612,7 @@ async def test_turn_off_and_on_restore_session_target() -> None:
         ((8362,),),
     ]
     assert entity.current_operation == MANUAL_OPERATION
-    assert entity.target_temperature == 58
+    assert entity.native_target_temperature == 58
 
 
 async def test_turn_on_after_restart_uses_configured_temperature() -> None:
@@ -648,7 +649,7 @@ async def test_turn_on_after_restart_uses_configured_temperature() -> None:
 
     client.async_send_command.assert_awaited_once_with(8362, 3280)
     assert entity.current_operation == MANUAL_OPERATION
-    assert entity.target_temperature == 55
+    assert entity.native_target_temperature == 55
 
 
 async def test_turn_on_old_entry_uses_default_temperature() -> None:
@@ -781,7 +782,7 @@ async def test_set_temperature_waits_for_command_and_refreshes_state() -> None:
 
     client.async_send_command.assert_awaited_once_with(8362, 3335)
     coordinator.async_refresh_object.assert_awaited_once_with(8362)
-    assert entity.target_temperature == 60
+    assert entity.native_target_temperature == 60
 
 
 @pytest.mark.parametrize("temperature", [4.9, 75.1, float("nan"), None, True])

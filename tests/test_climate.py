@@ -44,7 +44,8 @@ from homeassistant.components.climate import (
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+from tests.ha_compat import MockConfigEntry
 
 
 def _entry(
@@ -134,13 +135,13 @@ def test_climate_exposes_target_only_and_observed_mode() -> None:
     entity = ZontConsumerClimate(entry, 20496)
 
     assert entity.available
-    assert entity.current_temperature == 38.5
-    assert entity.target_temperature == 42
+    assert entity.native_current_temperature == 38.5
+    assert entity.native_target_temperature == 42
     assert entity.hvac_mode is HVACMode.HEAT
     assert entity.hvac_modes == []
     assert entity.hvac_action is None
     assert entity.supported_features == ClimateEntityFeature.TARGET_TEMPERATURE
-    assert entity.temperature_unit is UnitOfTemperature.CELSIUS
+    assert entity.native_temperature_unit is UnitOfTemperature.CELSIUS
     assert entity.min_temp == 41
     assert entity.max_temp == 80
     assert entity.target_temperature_step == 0.5
@@ -162,8 +163,8 @@ async def test_climate_exposes_half_degree_step_and_fractional_state(
 
     assert entity.target_temperature_step == 0.5
     assert entity.capability_attributes["target_temp_step"] == 0.5
-    assert entity.target_temperature == 22.5
-    assert entity.current_temperature == 22.4
+    assert entity.native_target_temperature == 22.5
+    assert entity.native_current_temperature == 22.4
 
 
 def test_climate_exposes_standard_on_off_with_valid_binding() -> None:
@@ -593,7 +594,7 @@ async def test_set_temperature_works_in_heat_and_off_modes(
 
     client.async_send_command.assert_awaited_once_with(20496, expected_command)
     coordinator.async_refresh_object.assert_awaited_once_with(20496)
-    assert entity.target_temperature == 42
+    assert entity.native_target_temperature == 42
 
 
 async def test_turn_off_and_on_restore_previous_named_mode() -> None:

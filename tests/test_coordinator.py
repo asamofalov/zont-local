@@ -67,7 +67,8 @@ from custom_components.zont_local.protocol.relay import (
 )
 from homeassistant.const import CONF_SCAN_INTERVAL
 from homeassistant.core import HomeAssistant
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+from tests.ha_compat import MockConfigEntry
 
 
 class _ObjectIdsMock(AsyncMock):

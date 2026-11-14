@@ -52,7 +52,6 @@ class ZontConsumerClimate(ZontObjectCoordinatorEntity, ClimateEntity):
     """Represent one ZONT consumer heating circuit."""
 
     _attr_name = None
-    _attr_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_target_temperature_step = TARGET_TEMPERATURE_STEP
 
     def __init__(
@@ -142,16 +141,27 @@ class ZontConsumerClimate(ZontObjectCoordinatorEntity, ClimateEntity):
         }
 
     @property
-    def current_temperature(self) -> float | None:
+    def native_temperature_unit(self) -> str:
+        """Return the temperature unit used by the controller."""
+        return UnitOfTemperature.CELSIUS
+
+    @property
+    def native_current_temperature(self) -> float | None:
         """Return the current circuit temperature."""
         circuit = self._circuit
         return circuit.current_temperature if circuit is not None else None
 
     @property
-    def target_temperature(self) -> float | None:
+    def native_target_temperature(self) -> float | None:
         """Return the target circuit temperature."""
         circuit = self._circuit
         return circuit.target_temperature if circuit is not None else None
+
+    # Home Assistant before 2026.11 consumes the legacy temperature properties.
+    if not hasattr(ClimateEntity, "native_temperature_unit"):
+        temperature_unit = native_temperature_unit
+        current_temperature = native_current_temperature
+        target_temperature = native_target_temperature
 
     @property
     def min_temp(self) -> float:
