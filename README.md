@@ -58,16 +58,14 @@
 
 ### Через HACS
 
-ZONT Local пока распространяется как пользовательский репозиторий и не входит
-в стандартный каталог HACS.
+ZONT Local доступна в стандартном каталоге HACS.
 
 [![Открыть ZONT Local в HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=asamofalov&repository=zont-local&category=integration)
 
-Если ссылка недоступна, откройте в HACS меню **Пользовательские репозитории**,
-добавьте `https://github.com/asamofalov/zont-local` с типом **Интеграция**,
-затем найдите **ZONT Local** и нажмите **Скачать**.
-
-После установки перезапустите Home Assistant.
+1. Откройте HACS.
+2. Найдите **ZONT Local** через поиск.
+3. Откройте интеграцию и нажмите **Скачать**.
+4. После установки перезапустите Home Assistant.
 
 ### Вручную
 
