@@ -119,12 +119,12 @@ class ZontDigitalBusFaultBinarySensor(
 
     @property
     def available(self) -> bool:
-        """Return whether the adapter provides a fault source."""
+        """Return whether the adapter provides a known operating state."""
         return super().available and self.is_on is not None
 
     @property
     def is_on(self) -> bool | None:
-        """Return whether the adapter state or error code reports a fault."""
+        """Return whether the current adapter state reports a fault."""
         obj = self.object_data
         return obj.has_fault if isinstance(obj, ZontDigitalBusAdapterData) else None
 

@@ -761,17 +761,16 @@ def test_parse_complete_digital_bus_adapter() -> None:
 
 
 @pytest.mark.parametrize(
-    ("state", "error_code", "has_fault"),
+    ("state", "has_fault"),
     [
-        (ZontDigitalBusState.ERROR, 0, True),
-        (ZontDigitalBusState.RUNNING, 7, True),
-        (ZontDigitalBusState.OFF, 0, False),
-        (ZontDigitalBusState.RUNNING, None, False),
-        (None, 0, False),
-        (None, None, None),
+        (ZontDigitalBusState.ERROR, True),
+        (ZontDigitalBusState.RUNNING, False),
+        (ZontDigitalBusState.OFF, False),
+        (None, None),
     ],
 )
-def test_digital_bus_adapter_exposes_explicit_fault(
+@pytest.mark.parametrize("error_code", [None, 0, 2])
+def test_digital_bus_adapter_fault_uses_current_state(
     state: ZontDigitalBusState | None,
     error_code: int | None,
     has_fault: bool | None,
@@ -785,6 +784,17 @@ def test_digital_bus_adapter_exposes_explicit_fault(
     )
 
     assert adapter.has_fault is has_fault
+
+
+@pytest.mark.parametrize("state", [None, True, 3, "error"])
+def test_digital_bus_fault_is_unknown_for_invalid_state(state: object) -> None:
+    adapter = parse_digital_bus_adapter(
+        {"id": 4097, "type": 6, "name": "Котёл", "state": state, "err": 2}
+    )
+
+    assert adapter.state is None
+    assert adapter.error_code == 2
+    assert adapter.has_fault is None
 
 
 def test_partial_update_preserves_absent_fields() -> None:

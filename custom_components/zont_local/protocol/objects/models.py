@@ -109,14 +109,10 @@ class ZontDigitalBusAdapterData(ZontObjectData):
 
     @property
     def has_fault(self) -> bool | None:
-        """Return whether the adapter reports an explicit boiler fault."""
-        if self.state is ZontDigitalBusState.ERROR or (
-            self.error_code is not None and self.error_code != 0
-        ):
-            return True
-        if self.state is not None or self.error_code is not None:
-            return False
-        return None
+        """Return the current fault state; error codes may outlive a fault."""
+        if self.state is None:
+            return None
+        return self.state is ZontDigitalBusState.ERROR
 
 
 @dataclass(frozen=True, slots=True)

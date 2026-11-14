@@ -115,13 +115,12 @@ async def async_setup_entry(
                 )
                 continue
             if isinstance(obj, ZontDigitalBusAdapterData):
-                if obj.has_fault is not None:
-                    identity = (obj.object_id, "fault")
-                    factories[identity] = partial(
-                        ZontDigitalBusFaultBinarySensor,
-                        entry,
-                        obj.object_id,
-                    )
+                identity = (obj.object_id, "fault")
+                factories[identity] = partial(
+                    ZontDigitalBusFaultBinarySensor,
+                    entry,
+                    obj.object_id,
+                )
                 continue
             if isinstance(obj, ZontHeatingCircuitData):
                 descriptions = (

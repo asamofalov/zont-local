@@ -450,6 +450,82 @@ async def test_refresh_discovers_digital_bus_adapter(hass: HomeAssistant) -> Non
     client.async_get_object_state.assert_awaited_once_with(4097)
 
 
+@pytest.mark.parametrize("partial", [False, True])
+async def test_digital_bus_fault_clears_with_retained_error_code(
+    hass: HomeAssistant,
+    partial: bool,
+) -> None:
+    coordinator, client = _coordinator(hass)
+    previous = ZontDigitalBusAdapterData(
+        4097, 6, "Котёл", state=ZontDigitalBusState.ERROR, error_code=2
+    )
+    coordinator.data = ZontData(
+        controller=ZontControllerData(info=None),
+        objects=immutable_objects({4097: previous}),
+    )
+    listener = MagicMock()
+    unsubscribe = coordinator.async_add_listener(listener)
+
+    for state, expected in (
+        (0, ZontDigitalBusState.OFF),
+        (1, ZontDigitalBusState.RUNNING),
+    ):
+        if partial:
+            coordinator._async_message_received({"id": 4097, "state": state})
+        else:
+            client.async_get_object_state.return_value = {
+                "id": 4097,
+                "type": 6,
+                "name": "Котёл",
+                "state": state,
+                "err": 2,
+            }
+            assert await coordinator.async_refresh_object(4097)
+
+        adapter = coordinator.data.objects[4097]
+        assert adapter.state is expected
+        assert adapter.has_fault is False
+        assert adapter.error_code == 2
+
+    assert previous.has_fault is True
+    assert listener.call_count == 2
+    unsubscribe()
+    await coordinator.async_shutdown()
+
+
+@pytest.mark.parametrize(
+    ("state", "has_fault"),
+    [
+        (ZontDigitalBusState.ERROR, True),
+        (ZontDigitalBusState.RUNNING, False),
+        (ZontDigitalBusState.OFF, False),
+        (None, None),
+    ],
+)
+async def test_digital_bus_error_code_push_does_not_change_fault(
+    hass: HomeAssistant,
+    state: ZontDigitalBusState | None,
+    has_fault: bool | None,
+) -> None:
+    coordinator, _ = _coordinator(hass)
+    coordinator.data = ZontData(
+        controller=ZontControllerData(info=None),
+        objects=immutable_objects(
+            {4097: ZontDigitalBusAdapterData(4097, 6, "Котёл", state=state)}
+        ),
+    )
+
+    for error_code in (2, 0):
+        coordinator._async_message_received({"id": 4097, "err": error_code})
+
+        adapter = coordinator.data.objects[4097]
+        assert adapter.state is state
+        assert adapter.has_fault is has_fault
+        assert adapter.error_code == error_code
+
+    await coordinator.async_shutdown()
+
+
 async def test_refresh_discovers_security_zone(hass: HomeAssistant) -> None:
     coordinator, client = _coordinator(hass)
     client.async_send_system_command.side_effect = [

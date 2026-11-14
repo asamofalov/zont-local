@@ -83,6 +83,7 @@ from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.entity import EntityCategory
+from homeassistant.helpers.entity_registry import async_get as async_get_registry
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 
@@ -375,12 +376,16 @@ def test_analog_trigger_tracks_field_and_object_availability() -> None:
     ("state", "error_code", "available", "is_on"),
     [
         (ZontDigitalBusState.ERROR, 0, True, True),
-        (ZontDigitalBusState.RUNNING, 12, True, True),
+        (ZontDigitalBusState.ERROR, 2, True, True),
+        (ZontDigitalBusState.RUNNING, 2, True, False),
+        (ZontDigitalBusState.OFF, 2, True, False),
         (ZontDigitalBusState.OFF, 0, True, False),
+        (None, 0, False, None),
+        (None, 2, False, None),
         (None, None, False, None),
     ],
 )
-def test_digital_bus_fault_uses_documented_sources(
+def test_digital_bus_fault_uses_current_state(
     state: ZontDigitalBusState | None,
     error_code: int | None,
     available: bool,
@@ -418,7 +423,7 @@ def test_digital_bus_fault_tracks_object_availability() -> None:
     assert entity.is_on
 
 
-async def test_setup_adds_digital_bus_fault_after_first_source(
+async def test_digital_bus_fault_keeps_registry_entry_when_state_is_unknown(
     hass: HomeAssistant,
 ) -> None:
     adapter = ZontDigitalBusAdapterData(4097, 6, "Navien")
@@ -428,33 +433,53 @@ async def test_setup_adds_digital_bus_fault_after_first_source(
 
     await async_setup_entry(hass, entry, async_add_entities)
 
-    assert async_add_entities.call_count == 1
-
-    entry.runtime_data.coordinator.data = ZontData(
-        controller=ZontControllerData(info=None),
-        objects=immutable_objects(
-            {
-                4097: ZontDigitalBusAdapterData(
-                    4097,
-                    6,
-                    "Navien",
-                    state=ZontDigitalBusState.RUNNING,
-                    error_code=0,
-                )
-            }
-        ),
-    )
-    listener = entry.runtime_data.coordinator.async_add_listener.call_args.args[0]
-    listener()
-    await hass.async_block_till_done()
-
+    assert async_add_entities.call_count == 2
     entities = async_add_entities.call_args_list[1].args[0]
     assert len(entities) == 1
-    assert isinstance(entities[0], ZontDigitalBusFaultBinarySensor)
+    entity = entities[0]
+    assert isinstance(entity, ZontDigitalBusFaultBinarySensor)
+    assert not entity.available
+    assert entity.is_on is None
 
-    listener()
-    await hass.async_block_till_done()
-    assert async_add_entities.call_count == 2
+    registry = async_get_registry(hass)
+    registry_entry = registry.async_get_or_create(
+        "binary_sensor",
+        DOMAIN,
+        entity.unique_id,
+        config_entry=entry,
+        suggested_object_id="zont_navien_fault",
+    )
+    entity.entity_id = registry_entry.entity_id
+    listener = entry.runtime_data.coordinator.async_add_listener.call_args.args[0]
+
+    for state, is_on in (
+        (ZontDigitalBusState.ERROR, True),
+        (ZontDigitalBusState.OFF, False),
+        (ZontDigitalBusState.RUNNING, False),
+        (None, None),
+        (ZontDigitalBusState.RUNNING, False),
+    ):
+        entry.runtime_data.coordinator.data = ZontData(
+            controller=ZontControllerData(info=None),
+            objects=immutable_objects(
+                {
+                    4097: ZontDigitalBusAdapterData(
+                        4097,
+                        6,
+                        "Navien",
+                        state=state,
+                        error_code=2,
+                    )
+                }
+            ),
+        )
+        listener()
+        await hass.async_block_till_done()
+
+        assert entity.available is (state is not None)
+        assert entity.is_on is is_on
+        assert registry.async_get(entity.entity_id) is registry_entry
+        assert async_add_entities.call_count == 2
 
 
 async def test_setup_adds_analog_trigger_without_duplicates(
